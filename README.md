@@ -4,7 +4,7 @@ Using One Docker container to bootstrap a HA Kubernetes cluster
 
 `$ git clone https://github.com/hsfeng/k8sup`
 
-`$ cd hyperkube-utils-on-coreos`
+`$ cd k8sup`
 
 `$ docker build -t k8sup .`
 
