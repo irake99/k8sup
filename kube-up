@@ -1,0 +1,52 @@
+#!/bin/bash
+
+RUN_CMD="$@"
+[ -z "${RUN_CMD:-}" ] && echo "No cluster IP address or hostname supplied" && exit 1
+
+
+wget https://raw.githubusercontent.com/kubernetes/kubernetes/master/cluster/images/hyperkube/static-pods/master-multi.json -O master.json
+
+echo "Updating master.json"
+
+export REGISTRY=gcr.io/google_containers
+export ARCH=amd64
+export VERSION=1.4.0-alpha.1
+export K8S_VERSION=1.4.0-alpha.1
+
+sed -i.back "s|REGISTRY|${REGISTRY}|g" master.json
+sed -i.back "s|ARCH|${ARCH}|g" master.json
+sed -i.back "s|VERSION|${VERSION}|g" master.json
+sed -i.back "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--master=127.0.0.1:8080\"\,|g" master.json
+
+echo "Running Kubernetes ..."
+
+docker run \
+    --volume=/:/rootfs:ro \
+    --volume=/sys:/sys:ro \
+    --volume=/var/lib/docker/:/var/lib/docker:rw \
+    --volume=/var/lib/kubelet/:/var/lib/kubelet:rw \
+    --volume=/var/run:/var/run:rw \
+    --volume=/run/flannel:/run/flannel:rw \
+    --volume=/dev:/dev:rw \
+    --volume=/etc/cni/net.d:/etc/cni/net.d:rw \
+    --volume=/opt/cni/bin:/opt/cni/bin:rw \
+    --volume=${PWD}/master.json:/etc/kubernetes/manifests-multi/master.json:rw \
+    --net=host \
+    --privileged=true \
+    --pid=host \
+    --restart=always \
+    -d \
+    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
+    /hyperkube kubelet \
+        --allow-privileged=true \
+        --api-servers=http://127.0.0.1:8080 \
+        --v=2 \
+        --address=0.0.0.0 \
+        --enable-server \
+        --hostname-override=$1 \
+        --config=/etc/kubernetes/manifests-multi \
+        --containerized \
+        --network-plugin=cni \
+        --network-plugin-dir=/etc/cni/net.d \
+        --cluster-dns=10.0.0.10 \
+        --cluster-domain=cluster.local
