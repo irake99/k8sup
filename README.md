@@ -1,4 +1,4 @@
-# k8s-up
+# k8sup
 
 Using One Docker container to bootstrap a HA Kubernetes cluster
 
