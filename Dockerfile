@@ -3,19 +3,19 @@ MAINTAINER hsfeng@gmail.com
 
 RUN apt-get -y update
 
-RUN apt-get -y install net-tools jq iptables vim
+RUN apt-get -y install net-tools jq iptables bc module-init-tools
 
 RUN git clone https://github.com/containernetworking/cni.git
 
 ADD 10-containernet.conf /go/10-containernet.conf
 ADD 99-loopback.conf /go/99-loopback.conf
-ADD kube-up /go/kube-up
 
 WORKDIR /go/cni
-
 RUN ./build
 
+ADD kube-up /go/kube-up
 ADD entrypoint.sh /go/entrypoint.sh
+
 RUN chmod +x /go/entrypoint.sh
 RUN chmod +x /go/kube-up
 
