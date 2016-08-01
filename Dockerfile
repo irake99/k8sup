@@ -7,8 +7,8 @@ RUN apt-get -y install net-tools jq iptables bc module-init-tools
 
 RUN git clone https://github.com/containernetworking/cni.git
 
-ADD 10-containernet.conf /go/10-containernet.conf
-ADD 99-loopback.conf /go/99-loopback.conf
+COPY cni-conf /go/cni-conf 
+COPY kube-conf /go/kube-conf
 
 WORKDIR /go/cni
 RUN ./build

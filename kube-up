@@ -3,20 +3,21 @@
 RUN_CMD="$@"
 [ -z "${RUN_CMD:-}" ] && echo "No cluster IP address or hostname supplied" && exit 1
 
-
-wget https://raw.githubusercontent.com/kubernetes/kubernetes/master/cluster/images/hyperkube/static-pods/master-multi.json -O /etc/k8s/master.json
-
-echo "Updating master.json"
-
 export REGISTRY=gcr.io/google_containers
 export ARCH=amd64
 export VERSION=1.3.3
 export K8S_VERSION=1.3.3
 
-sed -i.back "s|REGISTRY|${REGISTRY}|g" /etc/k8s/master.json
-sed -i.back "s|ARCH|${ARCH}|g" /etc/k8s/master.json
-sed -i.back "s|VERSION|${VERSION}|g" /etc/k8s/master.json
-sed -i.back "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--master=127.0.0.1:8080\"\,|g" /etc/k8s/master.json
+sed -i.back "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/*
+sed -i.back "s|ARCH|${ARCH}|g" /go/kube-conf/*
+sed -i.back "s|VERSION|v${VERSION}|g" /go/kube-conf/*
+sed -i.back "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--master=127.0.0.1:8080\"\,|g" /go/kube-conf/master-multi.json
+
+if [ ! -d "/etc/kubernetes/manifests-multi" ]; then
+echo "Copy manifests-multi to /etc/kubernetes"
+mkdir -p /etc/kubernetes/manifests-multi
+cp -rf /go/kube-conf/*.json /etc/kubernetes/manifests-multi
+fi
 
 echo "Running Kubernetes ..."
 
@@ -28,9 +29,10 @@ docker run \
     --volume=/var/run:/var/run:rw \
     --volume=/run/flannel:/run/flannel:rw \
     --volume=/dev:/dev:rw \
-    --volume=/etc/cni/net.d:/etc/cni/net.d:rw \
     --volume=/opt/cni/bin:/opt/cni/bin:rw \
-    --volume=/etc/k8s/master.json:/etc/kubernetes/manifests-multi/master.json:rw \
+    --volume=/etc/cni:/etc/cni:rw \
+    --volume=/etc/kubernetes/manifests-multi/master-multi.json:/etc/kubernetes/manifests-multi/master-multi.json \
+    --volume=/etc/kubernetes/manifests-multi/kube-proxy.json:/etc/kubernetes/manifests-multi/kube-proxy.json \
     --net=host \
     --privileged=true \
     --pid=host \

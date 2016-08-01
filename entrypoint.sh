@@ -4,8 +4,8 @@ set -e
 echo "Copy cni plugins"
 cp -rf bin /opt/cni
 mkdir -p /etc/cni/net.d/
-cp -f /go/10-containernet.conf /etc/cni/net.d/
-cp -f /go/99-loopback.conf /etc/cni/net.d/
+cp -f /go/cni-conf/10-containernet.conf /etc/cni/net.d/
+cp -f /go/cni-conf/99-loopback.conf /etc/cni/net.d/
 mkdir -p /var/lib/cni/networks/mynet; echo "" > /var/lib/cni/networks/mynet/last_reserved_ip
 
 sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true 
@@ -20,9 +20,9 @@ echo "Setting etcd"
 KERNEL_SHORT_VERSION=$(uname -r | cut -d '.' -f 1-2)
 VXLAN=`echo "$KERNEL_SHORT_VERSION >= 3.9" | bc`
 if [ $VXLAN -eq 1 ] && [ -n `lsmod | grep vxlan &> /dev/null` ]; then
-    docker exec -it ${etcdCID} /usr/local/bin/etcdctl --endpoint http://127.0.0.1:4001 set /coreos.com/network/config '{ "Network": "10.1.0.0/16", "Backend": { "Type": "vxlan"}}'
+    docker exec -it ${etcdCID} /usr/local/bin/etcdctl --endpoints http://127.0.0.1:4001 set /coreos.com/network/config '{ "Network": "10.1.0.0/16", "Backend": { "Type": "vxlan"}}'
 else
-     docker exec -it ${etcdCID} /usr/local/bin/etcdctl --endpoint http://127.0.0.1:4001 set /coreos.com/network/config '{ "Network": "10.1.0.0/16"}'
+     docker exec -it ${etcdCID} /usr/local/bin/etcdctl --endpoints http://127.0.0.1:4001 set /coreos.com/network/config '{ "Network": "10.1.0.0/16"}'
 fi
 
 echo "Running flanneld"
