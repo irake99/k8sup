@@ -3,7 +3,7 @@ MAINTAINER hsfeng@gmail.com
 
 RUN apt-get -y update
 
-RUN apt-get -y install net-tools jq iptables bc module-init-tools
+RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime
 
 RUN git clone https://github.com/containernetworking/cni.git
 

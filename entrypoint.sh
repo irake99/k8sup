@@ -3,7 +3,7 @@ set -e
 
 function etcd_creator(){
   local IPADDR="$1"
-  local ETCD_NAME="$2"
+  local ETCD_NAME="node-$(uuidgen -r | cut -c1-6)"
 
   docker run \
     -d \
@@ -37,13 +37,13 @@ function flanneld(){
       "${ETCD_CID}" \
       /usr/local/bin/etcdctl \
       --endpoints http://127.0.0.1:2379 \
-      set /coreos.com/network/config '{ "Network": "10.1.0.0/16", "Backend": { "Type": "vxlan"}}'
+      set /coreos.com/network/config "{ \"Network\": \"10.1.0.0/16\", \"Backend\": { \"Type\": \"vxlan\"}}"
   else
     docker exec -it \
       "${ETCD_CID}" \
       /usr/local/bin/etcdctl \
       --endpoints http://127.0.0.1:2379 \
-      set /coreos.com/network/config '{ "Network": "10.1.0.0/16"}'
+      set /coreos.com/network/config "{ \"Network\": \"10.1.0.0/16\" }"
   fi
 
   docker run \
@@ -82,9 +82,9 @@ function main(){
   sh -c 'docker rm k8sup-flannel' >/dev/null 2>&1 || true
 
   echo "Running etcd"
-  local ETCD_CID=$(etcd_creator "${IPADDR}" "${HOSTNAME}")
+  local ETCD_CID=$(etcd_creator "${IPADDR}")
 
-  until curl -s 127.0.0.1:2379/v2/keys; do
+  until curl -s 127.0.0.1:2379/v2/keys 1>/dev/null 2>&1; do
     echo "Waiting for etcd ready..."
     sleep 1
   done
