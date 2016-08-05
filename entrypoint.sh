@@ -69,6 +69,12 @@ function main(){
   export ENV_FLANNELD_IMAGE="quay.io/coreos/flannel:${ENV_FLANNELD_VERSION}"
 #  export ENV_HYPERKUBE_IMAGE="gcr.io/google_containers/hyperkube-amd64:v${ENV_K8S_VERSION}"
 
+  local IPADDR="$1"
+  if [[ -z "${IPADDR}" ]]; then
+    echo "Need IP address as argument, exiting..." 1>&2
+    exit 1
+  fi
+
   echo "Copy cni plugins"
   cp -rf bin /opt/cni
   mkdir -p /etc/cni/net.d/
