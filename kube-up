@@ -5,8 +5,8 @@ RUN_CMD="$@"
 
 export REGISTRY=gcr.io/google_containers
 export ARCH=amd64
-export VERSION=1.3.3
-export K8S_VERSION=1.3.3
+export VERSION=1.3.4
+export K8S_VERSION=1.3.4
 
 sed -i.back "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/*
 sed -i.back "s|ARCH|${ARCH}|g" /go/kube-conf/*

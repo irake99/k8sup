@@ -7,7 +7,7 @@ RUN apt-get -y install net-tools jq iptables bc module-init-tools
 
 RUN git clone https://github.com/containernetworking/cni.git
 
-COPY cni-conf /go/cni-conf 
+COPY cni-conf /go/cni-conf
 COPY kube-conf /go/kube-conf
 
 WORKDIR /go/cni
