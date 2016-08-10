@@ -3,7 +3,7 @@ set -e
 
 function etcd_creator(){
   local IPADDR="$1"
-  local ETCD_NAME="node-$(uuidgen -r | cut -c1-6)"
+  local ETCD_NAME="$2"
 
   docker run \
     -d \
@@ -27,8 +27,8 @@ function etcd_creator(){
 
 function etcd_follower(){
   local IPADDR="$1"
-  local ETCD_MEMBER="$(echo "$2" | cut -d ':' -f 1)"
-  local ETCD_NAME="node-$(uuidgen -r | cut -c1-6)"
+  local ETCD_NAME="$2"
+  local ETCD_MEMBER="$(echo "$3" | cut -d ':' -f 1)"
   local PORT="2379"
   local PEER_PORT="2380"
   local PROXY="off"
@@ -162,6 +162,12 @@ function main(){
     exit 1
   fi
 
+  echo "Discovering etcd cluster..."
+  local DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go)"
+  echo "${DISCOVERY_RESULTS}"
+  local EXISTED_ETCD_MEMBER="$(echo "${DISCOVERY_RESULTS}" | head -n 1 | awk '{print $2}')"
+  echo "etcd member: ${EXISTED_ETCD_MEMBER}"
+
   echo "Copy cni plugins"
   cp -rf bin /opt/cni
   mkdir -p /etc/cni/net.d/
@@ -174,12 +180,13 @@ function main(){
   sh -c 'docker stop k8sup-flannel' >/dev/null 2>&1 || true
   sh -c 'docker rm k8sup-flannel' >/dev/null 2>&1 || true
 
+  local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
+
   echo "Running etcd"
-  local EXISTED_ETCD_MEMBER="$2"
   if [[ -z "${EXISTED_ETCD_MEMBER}" ]]; then
-    local ETCD_CID=$(etcd_creator "${IPADDR}")
+    local ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}")
   else
-    local ETCD_CID=$(etcd_follower "${IPADDR}" "${EXISTED_ETCD_MEMBER}")
+    local ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_MEMBER}")
   fi
 
   until curl -s 127.0.0.1:2379/v2/keys 1>/dev/null 2>&1; do
@@ -191,6 +198,9 @@ function main(){
 
 #  echo "Running Kubernetes"
   /go/kube-up "${IPADDR}"
+
+  local CLUSTER_ID="$(curl 127.0.0.1:2379/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
+  go run /go/dnssd/registering.go "${NODE_NAME}" "${IPADDR}" "2379" "${CLUSTER_ID}"
 
 }
 

@@ -5,7 +5,7 @@ RUN apt-get -y update
 
 RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime
 
-RUN git clone https://github.com/containernetworking/cni.git
+RUN git clone https://github.com/containernetworking/cni.git && go get "github.com/oleksandr/bonjour"
 
 COPY cni-conf /go/cni-conf
 COPY kube-conf /go/kube-conf
@@ -15,6 +15,7 @@ RUN ./build
 
 ADD kube-up /go/kube-up
 ADD entrypoint.sh /go/entrypoint.sh
+ADD dnssd /go/dnssd
 
 RUN chmod +x /go/entrypoint.sh
 RUN chmod +x /go/kube-up
