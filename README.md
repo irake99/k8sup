@@ -17,7 +17,7 @@ $ sudo docker run -it \
     --pid=host \
     -v $(which docker):/bin/docker \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /usr/lib/libdevmapper.so.1.02:/usr/lib/libdevmapper.so.1.02 \
+    -v /usr/lib/libdevmapper.so:/usr/lib/libdevmapper.so \
     -v /etc/cni:/etc/cni \
     -v /opt/cni:/opt/cni \
     -v /var/lib/cni:/var/lib/cni \
