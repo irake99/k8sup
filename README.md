@@ -1,8 +1,18 @@
 # k8sup
 
-Using One Docker container to bootstrap a HA Kubernetes cluster.
+Using One Docker container to bootstrap a HA Kubernetes cluster with auto service discovery.
 
-Auto discovery and add to the first discovered etcd cluster.
+Default behavior: If only one cluster is discovered, auto join it. If more than one cluster are discovered, start a new cluster.
+
+You still can join a specified cluster or force to start a new cluster.
+
+<pre>
+Options:
+-i, --ip=IPADDR           Host IP address (Required)
+-c, --cluster=CLUSTER_ID  Join a specified cluster
+-n, --new                 Force to start a new cluster
+-h, --help                This help text
+</pre>
 
 <pre>
 $ git clone https://github.com/irake99/k8sup.git
@@ -23,7 +33,7 @@ $ sudo docker run -it \
     -v /var/lib/cni:/var/lib/cni \
     -v /etc/kubernetes:/etc/kubernetes \
     k8sup \
-    {your-host-ip}
+    --ip={your-host-ip}
 </pre>
 
 If you want to delete etcd data:

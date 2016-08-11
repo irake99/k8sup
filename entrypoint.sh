@@ -29,7 +29,7 @@ function etcd_follower(){
   local IPADDR="$1"
   local ETCD_NAME="$2"
   local ETCD_MEMBER="$(echo "$3" | cut -d ':' -f 1)"
-  local PORT="2379"
+  local PORT="$(echo "$3" | cut -d ':' -f 2)"
   local PEER_PORT="2380"
   local PROXY="off"
   local ETCD2_MAX_MEMBER_SIZE="5"
@@ -39,6 +39,11 @@ function etcd_follower(){
   # Check if cluster is full
   local ETCD_EXISTED_MEMBER_SIZE="$(curl -sf --retry 10 \
     http://${ETCD_MEMBER}:${PORT}/v2/members | jq '.[] | length')"
+  if [[ -z "${ETCD_EXISTED_MEMBER_SIZE}" ]]; then
+    echo "Can not connect to the etcd member, exiting..." 1>&2
+    sh -c 'docker rm -f k8sup-etcd' >/dev/null 2>&1 || true
+    exit 1
+  fi
   if [ "${ETCD_EXISTED_MEMBER_SIZE}" -lt "${ETCD2_MAX_MEMBER_SIZE}" ]; then
     # If cluster is not full, Disable proxy
     local PROXY="off"
@@ -79,7 +84,7 @@ function etcd_follower(){
   local ENDPOINTS="${ETCD_NAME}=http://${IPADDR}:${PEER_PORT}"
   for PEER_IDX in $(seq 0 "$((${SIZE}-1))"); do
     local PEER_NAME="$(echo "${MEMBERS}" | jq -r ".members["${PEER_IDX}"].name")"
-    local PEER_URL="$(echo "${MEMBERS}" | jq -r ".members["${PEER_IDX}"].peerURLs[] | select(contains("\"${PEER_PORT}\""))")"
+    local PEER_URL="$(echo "${MEMBERS}" | jq -r ".members["${PEER_IDX}"].peerURLs[]" | head -n 1)"
     if [ -n "${PEER_URL}" ] && [ "${PEER_URL}" != "http://${IPADDR}:${PEER_PORT}" ]; then
       ENDPOINTS="${ENDPOINTS},${PEER_NAME}=${PEER_URL}"
     fi
@@ -147,6 +152,64 @@ function flanneld(){
       --iface=${IPADDR}
 }
 
+function show_usage(){
+  USAGE="Usage: ${0##*/} [options...]
+Options:
+-i, --ip=IPADDR           Host IP address (Required)
+-c, --cluster=CLUSTER_ID  Join a specified cluster
+-n, --new                 Force to start a new cluster
+-h, --help                This help text
+"
+
+  echo "${USAGE}"
+}
+
+function get_options(){
+  local PROGNAME="${0##*/}"
+  local SHORTOPTS="i:c:nh"
+  local LONGOPTS="ip:,cluster:,new,help"
+  local PARSED_OPTIONS=""
+
+  PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
+  eval set -- "${PARSED_OPTIONS}"
+
+  # extract options and their arguments into variables.
+  while true ; do
+      case "$1" in
+          -i|--ip)
+              export EX_IPADDR="$2"
+              shift 2
+              ;;
+          -c|--cluster)
+              export EX_CLUSTER_ID="$2"
+              shift 2
+              ;;
+          -n|--new)
+              export EX_NEW_CLUSTER="true"
+              shift
+              ;;
+          -h|--help)
+              show_usage
+              exit 0
+              shift
+              ;;
+          --)
+              shift
+              break
+              ;;
+          *)
+              echo "Option error!" 1>&2
+              exit 1
+              ;;
+      esac
+  done
+
+  if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
+    echo "Error! Either join a existed etcd cluster or start a new etcd cluster, exiting..." 1>&2
+    exit 1
+  fi
+}
+
 function main(){
 
   export ENV_ETCD_VERSION="3.0.4"
@@ -156,17 +219,35 @@ function main(){
   export ENV_FLANNELD_IMAGE="quay.io/coreos/flannel:${ENV_FLANNELD_VERSION}"
 #  export ENV_HYPERKUBE_IMAGE="gcr.io/google_containers/hyperkube-amd64:v${ENV_K8S_VERSION}"
 
-  local IPADDR="$1"
-  if [[ -z "${IPADDR}" ]]; then
-    echo "Need IP address as argument, exiting..." 1>&2
+  get_options "$@"
+  local IPADDR="${EX_IPADDR}"
+  local CLUSTER_ID="${EX_CLUSTER_ID}"
+  local NEW_CLUSTER="${EX_NEW_CLUSTER}"
+
+  if [[ -z "$(ip addr | sed -nr "s/.*inet ([^ ]+)\/.*/\1/p" | grep -w "${IPADDR}")" ]]; then
+    echo "IP address error, exiting..." 1>&2
     exit 1
   fi
 
-  echo "Discovering etcd cluster..."
-  local DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go)"
-  echo "${DISCOVERY_RESULTS}"
-  local EXISTED_ETCD_MEMBER="$(echo "${DISCOVERY_RESULTS}" | head -n 1 | awk '{print $2}')"
-  echo "etcd member: ${EXISTED_ETCD_MEMBER}"
+  if [[ "${NEW_CLUSTER}" != "true" ]]; then
+    # If do not force to start an etcd cluster, make a discovery.
+    echo "Discovering etcd cluster..."
+    local DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go)"
+    echo "${DISCOVERY_RESULTS}"
+
+    # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
+    local EXISTED_ETCD_MEMBER=""
+    if [[ -n "${CLUSTER_ID}" ]]; then
+      EXISTED_ETCD_MEMBER="$(echo "${DISCOVERY_RESULTS}" | grep -w "${CLUSTER_ID}" | head -n 1 | awk '{print $2}')"
+      if [[ -z "${EXISTED_ETCD_MEMBER}" ]]; then
+        echo "No such the etcd cluster that user specified, exiting..." 1>&2
+        exit 1
+      fi
+    elif [[ "$(echo "${DISCOVERY_RESULTS}" | wc -l)" -eq "1" ]]; then
+      EXISTED_ETCD_MEMBER="$(echo "${DISCOVERY_RESULTS}" | awk '{print $2}')"
+    fi
+    echo "etcd member: ${EXISTED_ETCD_MEMBER}"
+  fi
 
   echo "Copy cni plugins"
   cp -rf bin /opt/cni
@@ -183,10 +264,11 @@ function main(){
   local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
 
   echo "Running etcd"
-  if [[ -z "${EXISTED_ETCD_MEMBER}" ]]; then
-    local ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}")
+  local ETCD_CID=""
+  if [[ -z "${EXISTED_ETCD_MEMBER}" ]] || [[ "${NEW_CLUSTER}" == "true" ]]; then
+    ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}") || exit 1
   else
-    local ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_MEMBER}")
+    ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_MEMBER}") || exit 1
   fi
 
   until curl -s 127.0.0.1:2379/v2/keys 1>/dev/null 2>&1; do
@@ -200,6 +282,7 @@ function main(){
   /go/kube-up "${IPADDR}"
 
   local CLUSTER_ID="$(curl 127.0.0.1:2379/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
+  echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
   go run /go/dnssd/registering.go "${NODE_NAME}" "${IPADDR}" "2379" "${CLUSTER_ID}"
 
 }
