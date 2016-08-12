@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set -x
 
 function etcd_creator(){
   local IPADDR="$1"
@@ -260,6 +261,7 @@ function main(){
   sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
   sh -c 'docker stop k8sup-flannel' >/dev/null 2>&1 || true
   sh -c 'docker rm k8sup-flannel' >/dev/null 2>&1 || true
+  sh -c 'ip link delete cni0' >/dev/null 2>&1 || true
 
   local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
 
