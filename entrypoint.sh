@@ -126,18 +126,15 @@ function flanneld(){
   local KERNEL_SHORT_VERSION="$(uname -r | cut -d '.' -f 1-2)"
   local VXLAN="$(echo "${KERNEL_SHORT_VERSION} >= 3.9" | bc)"
   if [ "${VXLAN}" -eq 1 ] && [ -n "$(lsmod | grep vxlan &> /dev/null)" ]; then
-    docker exec -it \
-      "${ETCD_CID}" \
-      /usr/local/bin/etcdctl \
-      --endpoints http://127.0.0.1:2379 \
-      set /coreos.com/network/config "{ \"Network\": \"10.1.0.0/16\", \"Backend\": { \"Type\": \"vxlan\"}}"
+    local FLANNDL_CONF="$(cat /go/flannel-conf/network-vxlan.json)"
   else
-    docker exec -it \
-      "${ETCD_CID}" \
-      /usr/local/bin/etcdctl \
-      --endpoints http://127.0.0.1:2379 \
-      set /coreos.com/network/config "{ \"Network\": \"10.1.0.0/16\" }"
+    local FLANNDL_CONF="$(cat /go/flannel-conf/network.json)"
   fi
+  docker exec -it \
+    "${ETCD_CID}" \
+    /usr/local/bin/etcdctl \
+    --endpoints http://127.0.0.1:2379 \
+    set /coreos.com/network/config "${FLANNDL_CONF}"
 
   docker run \
     -d \

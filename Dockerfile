@@ -9,13 +9,14 @@ RUN git clone https://github.com/containernetworking/cni.git && go get "github.c
 
 COPY cni-conf /go/cni-conf
 COPY kube-conf /go/kube-conf
+COPY dnssd /go/dnssd
+COPY flannel-conf /go/flannel-conf
 
 WORKDIR /go/cni
 RUN ./build
 
 ADD kube-up /go/kube-up
 ADD entrypoint.sh /go/entrypoint.sh
-ADD dnssd /go/dnssd
 
 RUN chmod +x /go/entrypoint.sh
 RUN chmod +x /go/kube-up
