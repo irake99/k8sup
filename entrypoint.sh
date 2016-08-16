@@ -1,6 +1,5 @@
 #!/bin/bash
 set -e
-set -x
 
 function etcd_creator(){
   local IPADDR="$1"
