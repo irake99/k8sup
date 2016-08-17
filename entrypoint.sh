@@ -124,7 +124,7 @@ function flanneld(){
   echo "Setting flannel parameters to etcd"
   local KERNEL_SHORT_VERSION="$(uname -r | cut -d '.' -f 1-2)"
   local VXLAN="$(echo "${KERNEL_SHORT_VERSION} >= 3.9" | bc)"
-  if [ "${VXLAN}" -eq 1 ] && [ -n "$(lsmod | grep vxlan &> /dev/null)" ]; then
+  if [ "${VXLAN}" -eq "1" ] && [ "$(modinfo vxlan &>/dev/null; echo $?)" -eq "0" ]; then
     local FLANNDL_CONF="$(cat /go/flannel-conf/network-vxlan.json)"
   else
     local FLANNDL_CONF="$(cat /go/flannel-conf/network.json)"
