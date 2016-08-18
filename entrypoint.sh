@@ -92,21 +92,23 @@ function etcd_follower(){
 
   docker run \
     -d \
-    --net=host \
-    --name=k8sup-etcd \
     -v /usr/share/ca-certificates/:/etc/ssl/certs \
+    -v /var/lib/etcd:/var/lib/etcd \
+    --net=host \
+    --restart=always \
+    --name=k8sup-etcd \
     "${ENV_ETCD_IMAGE}" \
     /usr/local/bin/etcd \
-    --name "${ETCD_NAME}" \
-    --advertise-client-urls http://${IPADDR}:2379,http://${IPADDR}:4001 \
-    --listen-client-urls http://0.0.0.0:2379,http://0.0.0.0:4001 \
-    --initial-advertise-peer-urls http://${IPADDR}:2380 \
-    --listen-peer-urls http://0.0.0.0:2380 \
-    --initial-cluster-token etcd-cluster-1 \
-    --initial-cluster "${ENDPOINTS}" \
-    --initial-cluster-state existing \
-    --data-dir /var/lib/etcd \
-    --proxy "${PROXY}"
+      --name "${ETCD_NAME}" \
+      --advertise-client-urls http://${IPADDR}:2379,http://${IPADDR}:4001 \
+      --listen-client-urls http://0.0.0.0:2379,http://0.0.0.0:4001 \
+      --initial-advertise-peer-urls http://${IPADDR}:2380 \
+      --listen-peer-urls http://0.0.0.0:2380 \
+      --initial-cluster-token etcd-cluster-1 \
+      --initial-cluster "${ENDPOINTS}" \
+      --initial-cluster-state existing \
+      --data-dir /var/lib/etcd \
+      --proxy "${PROXY}"
 
 
   if [ "${PROXY}" == "off" ]; then
@@ -129,7 +131,7 @@ function flanneld(){
   else
     local FLANNDL_CONF="$(cat /go/flannel-conf/network.json)"
   fi
-  docker exec -it \
+  docker exec -d \
     "${ETCD_CID}" \
     /usr/local/bin/etcdctl \
     --endpoints http://127.0.0.1:2379 \
