@@ -3,12 +3,14 @@ MAINTAINER hsfeng@gmail.com
 
 RUN apt-get -y update
 
-RUN apt-get -y install net-tools jq iptables bc module-init-tools
+RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime
 
-RUN git clone https://github.com/containernetworking/cni.git
+RUN git clone https://github.com/containernetworking/cni.git && go get "github.com/oleksandr/bonjour"
 
-COPY cni-conf /go/cni-conf 
+COPY cni-conf /go/cni-conf
 COPY kube-conf /go/kube-conf
+COPY dnssd /go/dnssd
+COPY flannel-conf /go/flannel-conf
 
 WORKDIR /go/cni
 RUN ./build
