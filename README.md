@@ -15,12 +15,6 @@ Options:
 </pre>
 
 <pre>
-$ git clone https://github.com/cdxvirt/k8sup.git
-
-$ cd k8sup
-
-$ docker build -t k8sup .
-
 $ sudo docker run -it \
     --privileged \
     --net=host \
@@ -33,7 +27,7 @@ $ sudo docker run -it \
     -v /opt/cni:/opt/cni \
     -v /var/lib/cni:/var/lib/cni \
     -v /etc/kubernetes:/etc/kubernetes \
-    k8sup \
+    cdxvirt/k8sup \
     --ip={your-host-ip}
 </pre>
 
