@@ -15,7 +15,7 @@ Options:
 </pre>
 
 <pre>
-$ git clone https://github.com/irake99/k8sup.git
+$ git clone https://github.com/cdxvirt/k8sup.git
 
 $ cd k8sup
 
