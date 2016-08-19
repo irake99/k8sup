@@ -117,20 +117,23 @@ function etcd_follower(){
 function flanneld(){
   local IPADDR="$1"
   local ETCD_CID="$2"
+  local ROLE="$3"
 
-  echo "Setting flannel parameters to etcd"
-  local KERNEL_SHORT_VERSION="$(uname -r | cut -d '.' -f 1-2)"
-  local VXLAN="$(echo "${KERNEL_SHORT_VERSION} >= 3.9" | bc)"
-  if [ "${VXLAN}" -eq "1" ] && [ "$(modinfo vxlan &>/dev/null; echo $?)" -eq "0" ]; then
-    local FLANNDL_CONF="$(cat /go/flannel-conf/network-vxlan.json)"
-  else
-    local FLANNDL_CONF="$(cat /go/flannel-conf/network.json)"
+  if [[ "${ROLE}" == "creator" ]]; then
+    echo "Setting flannel parameters to etcd"
+    local KERNEL_SHORT_VERSION="$(uname -r | cut -d '.' -f 1-2)"
+    local VXLAN="$(echo "${KERNEL_SHORT_VERSION} >= 3.9" | bc)"
+    if [ "${VXLAN}" -eq "1" ] && [ "$(modinfo vxlan &>/dev/null; echo $?)" -eq "0" ]; then
+      local FLANNDL_CONF="$(cat /go/flannel-conf/network-vxlan.json)"
+    else
+      local FLANNDL_CONF="$(cat /go/flannel-conf/network.json)"
+    fi
+    docker exec -d \
+      "${ETCD_CID}" \
+      /usr/local/bin/etcdctl \
+      --endpoints http://127.0.0.1:2379 \
+      set /coreos.com/network/config "${FLANNDL_CONF}"
   fi
-  docker exec -d \
-    "${ETCD_CID}" \
-    /usr/local/bin/etcdctl \
-    --endpoints http://127.0.0.1:2379 \
-    set /coreos.com/network/config "${FLANNDL_CONF}"
 
   docker run \
     -d \
@@ -142,8 +145,8 @@ function flanneld(){
     -v /run/flannel:/run/flannel \
     "${ENV_FLANNELD_IMAGE}" \
     /opt/bin/flanneld \
-      --etcd-endpoints=http://${IPADDR}:4001 \
-      --iface=${IPADDR}
+      --etcd-endpoints="http://${IPADDR}:4001" \
+      --iface="${IPADDR}"
 }
 
 function show_usage(){
@@ -265,6 +268,13 @@ function main(){
     exit 1
   fi
 
+  local ROLE=""
+  if [[ -z "${EXISTED_ETCD_MEMBER}" ]] || [[ "${NEW_CLUSTER}" == "true" ]]; then
+    local ROLE="creator"
+  else
+    local ROLE="follower"
+  fi
+
   echo "Copy cni plugins"
   cp -rf bin /opt/cni
   mkdir -p /etc/cni/net.d/
@@ -282,7 +292,7 @@ function main(){
 
   echo "Running etcd"
   local ETCD_CID=""
-  if [[ -z "${EXISTED_ETCD_MEMBER}" ]] || [[ "${NEW_CLUSTER}" == "true" ]]; then
+  if [[ "${ROLE}" == "creator" ]]; then
     ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}") || exit 1
   else
     ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_MEMBER}" "${PROXY}") || exit 1
@@ -293,7 +303,7 @@ function main(){
     sleep 1
   done
   echo "Running flanneld"
-  flanneld "${IPADDR}" "${ETCD_CID}"
+  flanneld "${IPADDR}" "${ETCD_CID}" "${ROLE}"
 
   #echo "Running Kubernetes"
   local APISERVER="$(echo "${EXISTED_ETCD_MEMBER}" | cut -d ':' -f 1):8080"
