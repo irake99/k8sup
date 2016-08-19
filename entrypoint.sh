@@ -30,8 +30,8 @@ function etcd_follower(){
   local ETCD_NAME="$2"
   local ETCD_MEMBER="$(echo "$3" | cut -d ':' -f 1)"
   local PORT="$(echo "$3" | cut -d ':' -f 2)"
+  local PROXY="$4"
   local PEER_PORT="2380"
-  local PROXY="off"
   local ETCD2_MAX_MEMBER_SIZE="5"
 
   docker pull "${ENV_ETCD_IMAGE}" 1>&2
@@ -44,12 +44,10 @@ function etcd_follower(){
     sh -c 'docker rm -f k8sup-etcd' >/dev/null 2>&1 || true
     exit 1
   fi
-  if [ "${ETCD_EXISTED_MEMBER_SIZE}" -lt "${ETCD2_MAX_MEMBER_SIZE}" ]; then
-    # If cluster is not full, Disable proxy
-    local PROXY="off"
-  else
-    # If cluster is full, use proxy mode
-    local PROXY="on"
+  if [[ "${PROXY}" == "off" ]] \
+   && [[ "${ETCD_EXISTED_MEMBER_SIZE}" -ge "${ETCD2_MAX_MEMBER_SIZE}" ]]; then
+    # If cluster is not full, proxy mode off. If cluster is full, proxy mode on
+    PROXY="on"
   fi
 
   # If cluster is not full, Use locker (etcd atomic CAS) to get a privilege for joining etcd cluster
@@ -63,12 +61,9 @@ function etcd_follower(){
       # Check if cluster is full
       local ETCD_EXISTED_MEMBER_SIZE="$(curl -sf --retry 10 \
         http://${ETCD_MEMBER}:${PORT}/v2/members | jq '.[] | length')"
-      if [ "${ETCD_EXISTED_MEMBER_SIZE}" -lt "${ETCD2_MAX_MEMBER_SIZE}" ]; then
-        # If cluster is not full, Disable proxy
-        local PROXY="off"
-      else
-        # If cluster is full, use proxy mode
-        local PROXY="on"
+      if [ "${ETCD_EXISTED_MEMBER_SIZE}" -ge "${ETCD2_MAX_MEMBER_SIZE}" ]; then
+        # If cluster is not full, proxy mode off. If cluster is full, proxy mode on
+        PROXY="on"
       fi
   done
   if [[ "${PROXY}" == "off" ]]; then
@@ -157,6 +152,7 @@ Options:
 -i, --ip=IPADDR           Host IP address (Required)
 -c, --cluster=CLUSTER_ID  Join a specified cluster
 -n, --new                 Force to start a new cluster
+-p, --proxy               Force to run as etcd and k8s proxy
 -h, --help                This help text
 "
 
@@ -165,8 +161,8 @@ Options:
 
 function get_options(){
   local PROGNAME="${0##*/}"
-  local SHORTOPTS="i:c:nh"
-  local LONGOPTS="ip:,cluster:,new,help"
+  local SHORTOPTS="i:c:nph"
+  local LONGOPTS="ip:,cluster:,new,proxy,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -187,6 +183,10 @@ function get_options(){
               export EX_NEW_CLUSTER="true"
               shift
               ;;
+          -p|--proxy)
+              export EX_PROXY="on"
+              shift
+              ;;
           -h|--help)
               show_usage
               exit 0
@@ -198,14 +198,30 @@ function get_options(){
               ;;
           *)
               echo "Option error!" 1>&2
+              echo $1
               exit 1
               ;;
       esac
   done
 
+
+  if [[ -z "${EX_IPADDR}" ]] || \
+   [[ -z "$(ip addr | sed -nr "s/.*inet ([^ ]+)\/.*/\1/p" | grep -w "${EX_IPADDR}")" ]]; then
+    echo "IP address error, exiting..." 1>&2
+    exit 1
+  fi
+
   if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
     echo "Error! Either join a existed etcd cluster or start a new etcd cluster, exiting..." 1>&2
     exit 1
+  fi
+  if [[ "${EX_PROXY}" == "on" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
+    echo "Error! Either run as proxy or start a new etcd cluster, exiting..." 1>&2
+    exit 1
+  fi
+
+  if [[ "${EX_PROXY}" != "on" ]]; then
+    export EX_PROXY="off"
   fi
 }
 
@@ -222,11 +238,7 @@ function main(){
   local IPADDR="${EX_IPADDR}"
   local CLUSTER_ID="${EX_CLUSTER_ID}"
   local NEW_CLUSTER="${EX_NEW_CLUSTER}"
-
-  if [[ -z "$(ip addr | sed -nr "s/.*inet ([^ ]+)\/.*/\1/p" | grep -w "${IPADDR}")" ]]; then
-    echo "IP address error, exiting..." 1>&2
-    exit 1
-  fi
+  local PROXY="${EX_PROXY}"
 
   if [[ "${NEW_CLUSTER}" != "true" ]]; then
     # If do not force to start an etcd cluster, make a discovery.
@@ -246,6 +258,11 @@ function main(){
       EXISTED_ETCD_MEMBER="$(echo "${DISCOVERY_RESULTS}" | awk '{print $2}')"
     fi
     echo "etcd member: ${EXISTED_ETCD_MEMBER}"
+  fi
+
+  if [[ -z "${EXISTED_ETCD_MEMBER}" ]] && [[ "${PROXY}" == "on" ]]; then
+    echo "Proxy mode needs a cluster to join, exiting..." 1>&2
+    exit 1
   fi
 
   echo "Copy cni plugins"
@@ -268,7 +285,7 @@ function main(){
   if [[ -z "${EXISTED_ETCD_MEMBER}" ]] || [[ "${NEW_CLUSTER}" == "true" ]]; then
     ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}") || exit 1
   else
-    ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_MEMBER}") || exit 1
+    ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_MEMBER}" "${PROXY}") || exit 1
   fi
 
   until curl -s 127.0.0.1:2379/v2/keys 1>/dev/null 2>&1; do
@@ -278,8 +295,14 @@ function main(){
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CID}"
 
-#  echo "Running Kubernetes"
-  /go/kube-up "${IPADDR}"
+  #echo "Running Kubernetes"
+  local APISERVER="$(echo "${EXISTED_ETCD_MEMBER}" | cut -d ':' -f 1):8080"
+  if [[ "${PROXY}" == "on" ]]; then
+    /go/kube-up --ip="${IPADDR}" --worker --apiserver="${APISERVER}"
+  else
+    /go/kube-up --ip="${IPADDR}"
+  fi
+
 
   local CLUSTER_ID="$(curl 127.0.0.1:2379/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
