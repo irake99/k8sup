@@ -1,54 +1,160 @@
 #!/bin/bash
+set -x
 
-RUN_CMD="$@"
-[ -z "${RUN_CMD:-}" ] && echo "No cluster IP address or hostname supplied" && exit 1
+function show_usage(){
+  USAGE="Usage: ${0##*/} [options...]
+Options:
+-i, --ip=IPADDR                Host IP address (Required)
+-p, --worker                   Run as k8s worker
+-a, --apiserver=IPADDR:PORT    K8S Apiserver (Worker mode required)
+-h, --help                     This help text
+"
 
-export REGISTRY=gcr.io/google_containers
-export ARCH=amd64
-export VERSION=1.3.4
-export K8S_VERSION=1.3.4
+  echo "${USAGE}"
+}
 
-sed -i.back "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/*
-sed -i.back "s|ARCH|${ARCH}|g" /go/kube-conf/*
-sed -i.back "s|VERSION|v${VERSION}|g" /go/kube-conf/*
-sed -i.back "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--master=127.0.0.1:8080\"\,|g" /go/kube-conf/master-multi.json
+function get_options(){
+  local PROGNAME="${0##*/}"
+  local SHORTOPTS="i:wa:h"
+  local LONGOPTS="ip:,worker,apiserver:,help"
+  local PARSED_OPTIONS=""
 
-if [ ! -d "/etc/kubernetes/manifests-multi" ]; then
-echo "Copy manifests-multi to /etc/kubernetes"
-mkdir -p /etc/kubernetes/manifests-multi
-cp -rf /go/kube-conf/*.json /etc/kubernetes/manifests-multi
-fi
+  PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
+  eval set -- "${PARSED_OPTIONS}"
 
-echo "Running Kubernetes ..."
+  # extract options and their arguments into variables.
+  while true ; do
+      case "$1" in
+          -i|--ip)
+              export EX_IPADDR="$2"
+              shift 2
+              ;;
+          -a|--apiserver)
+              export EX_APISERVER="$2"
+              shift 2
+              ;;
+          -p|--worker)
+              export EX_WORKER="true"
+              shift
+              ;;
+          -h|--help)
+              show_usage
+              exit 0
+              shift
+              ;;
+          --)
+              shift
+              break
+              ;;
+          *)
+              echo "Option error!" 1>&2
+              echo $1
+              exit 1
+              ;;
+      esac
+  done
 
-docker run \
-    --volume=/:/rootfs:ro \
-    --volume=/sys:/sys:ro \
-    --volume=/var/lib/docker/:/var/lib/docker:rw \
-    --volume=/var/lib/kubelet/:/var/lib/kubelet:rw,rslave \
-    --volume=/var/run:/var/run:rw \
-    --volume=/run/flannel:/run/flannel:rw \
-    --volume=/dev:/dev:rw \
-    --volume=/opt/cni/bin:/opt/cni/bin:rw \
-    --volume=/etc/cni:/etc/cni:rw \
-    --volume=/etc/kubernetes/manifests-multi/master-multi.json:/etc/kubernetes/manifests-multi/master-multi.json \
-    --volume=/etc/kubernetes/manifests-multi/kube-proxy.json:/etc/kubernetes/manifests-multi/kube-proxy.json \
-    --net=host \
-    --privileged=true \
-    --pid=host \
-    --restart=always \
-    -d \
-    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
-    /hyperkube kubelet \
-        --allow-privileged=true \
-        --api-servers=http://127.0.0.1:8080 \
-        --v=2 \
-        --address=0.0.0.0 \
-        --enable-server \
-        --hostname-override=$1 \
-        --config=/etc/kubernetes/manifests-multi \
-        --containerized \
-        --network-plugin=cni \
-        --network-plugin-dir=/etc/cni/net.d \
-        --cluster-dns=10.0.0.10 \
-        --cluster-domain=cluster.local
+
+  if [[ -z "${EX_IPADDR}" ]] || \
+   [[ -z "$(ip addr | sed -nr "s/.*inet ([^ ]+)\/.*/\1/p" | grep -w "${EX_IPADDR}")" ]]; then
+    echo "IP address error, exiting..." 1>&2
+    exit 1
+  fi
+
+  if [[ "${EX_WORKER}" == "true" ]] && [[ -z "${EX_APISERVER}" ]]; then
+    echo "Error! Either run as worker or start a new etcd cluster, exiting..." 1>&2
+    exit 1
+  fi
+
+  if [[ "${EX_WORKER}" != "true" ]]; then
+    export EX_WORKER="false"
+  fi
+}
+
+# Get k8s apiservers form the list of etcd members
+function get_API_Servers(){
+  local ETCD_MEMBER="$(echo "$1" | cut -d ':' -f 1)"
+  local ETCD_PORT="2379"
+  local APISERVERS=""
+  local APISERVER_PORT="8080"
+
+  local MEMBERS="$(curl -s http://${ETCD_MEMBER}:${ETCD_PORT}/v2/members \
+    | jq ".members[].peerURLs[0]" \
+    | sed -n "s/.*http:\/\/\(.*\):.*/\1/p")"
+  for MEMBER in ${MEMBERS}; do
+    local APISERVER="${MEMBER}:${APISERVER_PORT}"
+    if curl -sf -m 1 "${APISERVER}" &>/dev/null; then
+      APISERVERS="${APISERVERS}","${APISERVER}"
+    fi
+  done
+
+  APISERVERS="$(echo "${APISERVERS}" | cut -c 2-)"
+  echo "${APISERVERS}"
+}
+
+function main(){
+
+  get_options "$@"
+  local IPADDR="${EX_IPADDR}"
+  local WORKER="${EX_WORKER}"
+  local APISERVER="${EX_APISERVER}"
+  local APISERVERS=""
+
+  export REGISTRY=gcr.io/google_containers
+  export ARCH=amd64
+  export VERSION=1.3.4
+  export K8S_VERSION=1.3.4
+
+
+  sed -i.back "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/*
+  sed -i.back "s|ARCH|${ARCH}|g" /go/kube-conf/*
+  sed -i.back "s|VERSION|v${VERSION}|g" /go/kube-conf/*
+  sed -i.back "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--master=127.0.0.1:8080\"\,|g" /go/kube-conf/master-multi.json
+
+  echo "Copy manifests-multi to /etc/kubernetes"
+  mkdir -p /etc/kubernetes/manifests-multi
+  cp -rf /go/kube-conf/*.json /etc/kubernetes/manifests-multi
+
+  if [[ "${WORKER}" == "false" ]]; then
+    APISERVERS="http://127.0.0.1:8080"
+  else
+    echo '' > /etc/kubernetes/manifests-multi/master-multi.json
+    APISERVERS="$(get_API_Servers "${APISERVER}")"
+  fi
+
+  echo "Running Kubernetes ..."
+
+  docker run \
+      --volume=/:/rootfs:ro \
+      --volume=/sys:/sys:ro \
+      --volume=/var/lib/docker/:/var/lib/docker:rw \
+      --volume=/var/lib/kubelet/:/var/lib/kubelet:rw,rslave \
+      --volume=/var/run:/var/run:rw \
+      --volume=/run/flannel:/run/flannel:rw \
+      --volume=/dev:/dev:rw \
+      --volume=/opt/cni/bin:/opt/cni/bin:rw \
+      --volume=/etc/cni:/etc/cni:rw \
+      --volume=/etc/kubernetes/manifests-multi/master-multi.json:/etc/kubernetes/manifests-multi/master-multi.json \
+      --volume=/etc/kubernetes/manifests-multi/kube-proxy.json:/etc/kubernetes/manifests-multi/kube-proxy.json \
+      --net=host \
+      --privileged=true \
+      --pid=host \
+      --restart=always \
+      -d \
+      "gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION}" \
+      /hyperkube kubelet \
+          --allow-privileged=true \
+          --api-servers="${APISERVERS}" \
+          --v=2 \
+          --address=0.0.0.0 \
+          --enable-server \
+          --hostname-override="${IPADDR}" \
+          --config=/etc/kubernetes/manifests-multi \
+          --containerized \
+          --network-plugin=cni \
+          --network-plugin-dir=/etc/cni/net.d \
+          --cluster-dns=10.0.0.10 \
+          --cluster-domain=cluster.local
+}
+
+main "$@"

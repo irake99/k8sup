@@ -11,6 +11,7 @@ Options:
 -i, --ip=IPADDR           Host IP address (Required)
 -c, --cluster=CLUSTER_ID  Join a specified cluster
 -n, --new                 Force to start a new cluster
+-p, --proxy               Force to run as etcd and k8s proxy
 -h, --help                This help text
 </pre>
 
