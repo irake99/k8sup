@@ -114,17 +114,18 @@ function main(){
   sed -i.back "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" /go/kube-conf/master-multi.json
   sed -i.back "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" /go/kube-conf/addon-manager.json
 
-  echo "Copy manifests-multi to /etc/kubernetes"
-  mkdir -p /etc/kubernetes/manifests-multi
-  cp -rf /go/kube-conf/*.json /etc/kubernetes/manifests-multi
-
   if [[ "${WORKER}" == "false" ]]; then
     APISERVERS="http://127.0.0.1:8080"
   else
-    echo '' > /etc/kubernetes/manifests-multi/master-multi.json
-    echo '' > /etc/kubernetes/manifests-multi/addon-manager.json
+    echo '' > /go/kube-conf/master-multi.json
+    echo '' > /go/kube-conf/addon-manager.json
     APISERVERS="$(get_API_Servers "${APISERVER}")"
+    sed -i.back "s|\"--master=.*\",|\"--master=${APISERVERS}\",|g" /go/kube-conf/kube-proxy.json
   fi
+
+  echo "Copy manifests-multi to /etc/kubernetes"
+  mkdir -p /etc/kubernetes/manifests-multi
+  cp -rf /go/kube-conf/*.json /etc/kubernetes/manifests-multi
 
   echo "Running Kubernetes ..."
 
