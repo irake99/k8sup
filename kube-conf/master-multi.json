@@ -44,6 +44,7 @@
               "--tls-private-key-file=/srv/kubernetes/server.key",
               "--token-auth-file=/srv/kubernetes/known_tokens.csv",
               "--allow-privileged=true",
+              "--apiserver-count=1",
               "--v=2"
       ],
       "volumeMounts": [

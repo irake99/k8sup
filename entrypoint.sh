@@ -280,7 +280,7 @@ function main(){
   mkdir -p /etc/cni/net.d/
   cp -f /go/cni-conf/10-containernet.conf /etc/cni/net.d/
   cp -f /go/cni-conf/99-loopback.conf /etc/cni/net.d/
-  mkdir -p /var/lib/cni/networks/mynet; echo "" > /var/lib/cni/networks/mynet/last_reserved_ip
+  mkdir -p /var/lib/cni/networks/containernet; echo "" > /var/lib/cni/networks/containernet/last_reserved_ip
 
   sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true
   sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
