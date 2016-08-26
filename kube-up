@@ -119,8 +119,8 @@ function main(){
   else
     echo '' > /go/kube-conf/master-multi.json
     echo '' > /go/kube-conf/addon-manager.json
+    sed -i.back "s|\"--master=.*\",|\"--master=${APISERVER}\",|g" /go/kube-conf/kube-proxy.json
     APISERVERS="$(get_API_Servers "${APISERVER}")"
-    sed -i.back "s|\"--master=.*\",|\"--master=${APISERVERS}\",|g" /go/kube-conf/kube-proxy.json
   fi
 
   echo "Copy manifests-multi to /etc/kubernetes"
@@ -135,12 +135,14 @@ function main(){
       --volume=/var/lib/docker/:/var/lib/docker:rw \
       --volume=/var/lib/kubelet/:/var/lib/kubelet:rw,rslave \
       --volume=/var/run:/var/run:rw \
+      --volume=/var/run/dbus:/var/run/dbus:rw \
       --volume=/run/flannel:/run/flannel:rw \
       --volume=/dev:/dev:rw \
       --volume=/opt/cni/bin:/opt/cni/bin:rw \
+      --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
-      --volume=/etc/kubernetes/manifests-multi/master-multi.json:/etc/kubernetes/manifests-multi/master-multi.json \
       --volume=/etc/kubernetes/manifests-multi/kube-proxy.json:/etc/kubernetes/manifests-multi/kube-proxy.json \
+      --volume=/etc/kubernetes/manifests-multi/master-multi.json:/etc/kubernetes/manifests-multi/master-multi.json \
       --volume=/etc/kubernetes/manifests-multi/addon-manager.json:/etc/kubernetes/manifests-multi/addon-manager.json \
       --net=host \
       --privileged=true \
