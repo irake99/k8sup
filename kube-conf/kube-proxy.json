@@ -12,14 +12,28 @@
         "name": "kube-proxy",
         "image": "REGISTRY/hyperkube-ARCH:VERSION",
         "command": [
-                "/hyperkube",
-                "proxy",
-                "--master=http://127.0.0.1:8080",
-                "--v=2",
-                "--resource-container=\"\""
+          "/hyperkube",
+          "proxy",
+          "--master=http://127.0.0.1:8080",
+          "--v=2",
+          "--resource-container=\"\""
         ],
         "securityContext": {
           "privileged": true
+        },
+        "volumeMounts": [
+          {
+            "name": "dbus",
+            "mountPath": "/var/run/dbus"
+          }
+        ]
+      }
+    ],
+    "volumes": [
+      {
+        "name": "dbus",
+        "hostPath": {
+          "path": "/var/run/dbus"
         }
       }
     ]
