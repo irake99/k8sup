@@ -36,44 +36,54 @@ function etcd_follower(){
 
   docker pull "${ENV_ETCD_IMAGE}" 1>&2
 
-  # Check if cluster is full
-  local ETCD_EXISTED_MEMBER_SIZE="$(curl -sf --retry 10 \
-    http://${ETCD_MEMBER}:${PORT}/v2/members | jq '.[] | length')"
-  if [[ -z "${ETCD_EXISTED_MEMBER_SIZE}" ]]; then
+  # Check if this node has joined etcd this cluster
+  local MEMBERS="$(curl -sf --retry 10 http://${ETCD_MEMBER}:${PORT}/v2/members)"
+  if [[ -z "${MEMBERS}" ]]; then
     echo "Can not connect to the etcd member, exiting..." 1>&2
     sh -c 'docker rm -f k8sup-etcd' >/dev/null 2>&1 || true
     exit 1
   fi
-  if [[ "${PROXY}" == "off" ]] \
-   && [[ "${ETCD_EXISTED_MEMBER_SIZE}" -ge "${ETCD2_MAX_MEMBER_SIZE}" ]]; then
-    # If cluster is not full, proxy mode off. If cluster is full, proxy mode on
-    PROXY="on"
+  if [[ "${MEMBERS}" == *"${IPADDR}:${PORT}"* ]]; then
+    local ALREADY_MEMBER="true"
+    PROXY="off"
+  else
+    local ALREADY_MEMBER="false"
   fi
 
-  # If cluster is not full, Use locker (etcd atomic CAS) to get a privilege for joining etcd cluster
-  local LOCKER_ETCD_KEY="vsdx/locker-etcd-member-add"
-  until [[ "${PROXY}" == "on" ]] || curl -sf \
-    "http://${ETCD_MEMBER}:${PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevExist=false" \
-    -XPUT -d value="${IPADDR}" 1>&2; do
-      echo "Another node is joining etcd cluster, Waiting for it done..." 1>&2
-      sleep 1
+  if [[ "${ALREADY_MEMBER}" != "true" ]]; then
+    # Check if cluster is full
+    local ETCD_EXISTED_MEMBER_SIZE="$(echo "${MEMBERS}" | jq '.[] | length')"
+    if [[ "${PROXY}" == "off" ]] \
+     && [[ "${ETCD_EXISTED_MEMBER_SIZE}" -ge "${ETCD2_MAX_MEMBER_SIZE}" ]]; then
+      # If cluster is not full, proxy mode off. If cluster is full, proxy mode on
+      PROXY="on"
+    fi
 
-      # Check if cluster is full
-      local ETCD_EXISTED_MEMBER_SIZE="$(curl -sf --retry 10 \
-        http://${ETCD_MEMBER}:${PORT}/v2/members | jq '.[] | length')"
-      if [ "${ETCD_EXISTED_MEMBER_SIZE}" -ge "${ETCD2_MAX_MEMBER_SIZE}" ]; then
-        # If cluster is not full, proxy mode off. If cluster is full, proxy mode on
-        PROXY="on"
-      fi
-  done
-  if [[ "${PROXY}" == "off" ]]; then
-    # Run etcd member add
-    curl -s "http://${ETCD_MEMBER}:${PORT}/v2/members" -XPOST \
-      -H "Content-Type: application/json" -d "{\"peerURLs\":[\"http://${IPADDR}:${PEER_PORT}\"]}" 1>&2
+    # If cluster is not full, Use locker (etcd atomic CAS) to get a privilege for joining etcd cluster
+    local LOCKER_ETCD_KEY="locker-etcd-member-add"
+    until [[ "${PROXY}" == "on" ]] || curl -sf \
+      "http://${ETCD_MEMBER}:${PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevExist=false" \
+      -XPUT -d value="${IPADDR}" 1>&2; do
+        echo "Another node is joining etcd cluster, Waiting for it done..." 1>&2
+        sleep 1
+
+        # Check if cluster is full
+        local ETCD_EXISTED_MEMBER_SIZE="$(curl -sf --retry 10 \
+          http://${ETCD_MEMBER}:${PORT}/v2/members | jq '.[] | length')"
+        if [ "${ETCD_EXISTED_MEMBER_SIZE}" -ge "${ETCD2_MAX_MEMBER_SIZE}" ]; then
+          # If cluster is not full, proxy mode off. If cluster is full, proxy mode on
+          PROXY="on"
+        fi
+    done
+    if [[ "${PROXY}" == "off" ]]; then
+      # Run etcd member add
+      curl -s "http://${ETCD_MEMBER}:${PORT}/v2/members" -XPOST \
+        -H "Content-Type: application/json" -d "{\"peerURLs\":[\"http://${IPADDR}:${PEER_PORT}\"]}" 1>&2
+    fi
   fi
 
   # Update Endpoints to etcd2 parameters
-  local MEMBERS="$(curl -s http://${ETCD_MEMBER}:${PORT}/v2/members)"
+  MEMBERS="$(curl -sf http://${ETCD_MEMBER}:${PORT}/v2/members)"
   local SIZE="$(echo "${MEMBERS}" | jq '.[] | length')"
   local PEER_IDX=0
   local ENDPOINTS="${ETCD_NAME}=http://${IPADDR}:${PEER_PORT}"
@@ -106,7 +116,7 @@ function etcd_follower(){
       --proxy "${PROXY}"
 
 
-  if [ "${PROXY}" == "off" ]; then
+  if [[ "${ALREADY_MEMBER}" != "true" ]] && [[ "${PROXY}" == "off" ]]; then
     # Unlock and release the privilege for joining etcd cluster
     until curl -sf "http://${ETCD_MEMBER}:${PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevValue=${IPADDR}" -XDELETE 1>&2; do
         sleep 1
