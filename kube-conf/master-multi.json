@@ -68,13 +68,17 @@
       "name": "setup",
       "image": "REGISTRY/hyperkube-ARCH:VERSION",
       "command": [
-              "/setup-files.sh",
+              "/cp-certs.sh",
               "IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local"
       ],
       "volumeMounts": [
         {
           "name": "data",
           "mountPath": "/data"
+        },
+        {
+          "name": "cp-certs",
+          "mountPath": "/cp-certs.sh"
         }
       ]
     }
@@ -83,6 +87,12 @@
     {
       "name": "data",
       "emptyDir": {}
+    },
+    {
+      "name": "cp-certs",
+      "hostPath": {
+        "path": "/etc/kubernetes/cp-certs.sh"
+      }
     }
   ]
  }
