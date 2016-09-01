@@ -17,6 +17,7 @@ RUN ./build
 
 ADD kube-up /go/kube-up
 ADD entrypoint.sh /go/entrypoint.sh
+ADD cp-certs.sh /go/cp-certs.sh
 
 RUN chmod +x /go/entrypoint.sh
 RUN chmod +x /go/kube-up
