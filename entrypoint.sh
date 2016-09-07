@@ -239,6 +239,7 @@ Options:
                              e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                              or \"eth0\" (Required option)
 -c, --cluster=CLUSTER_ID     Join a specified cluster
+-v, --version=VERSION        Specify k8s version (Default: 1.3.4)
     --new                    Force to start a new cluster
 -p, --proxy                  Force to run as etcd and k8s proxy
 -h, --help                   This help text
@@ -249,8 +250,8 @@ Options:
 
 function get_options(){
   local PROGNAME="${0##*/}"
-  local SHORTOPTS="n:c:ph"
-  local LONGOPTS="network:,cluster:,new,proxy,help"
+  local SHORTOPTS="n:c:v:ph"
+  local LONGOPTS="network:,cluster:,version:,new,proxy,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -265,6 +266,10 @@ function get_options(){
               ;;
           -c|--cluster)
               export EX_CLUSTER_ID="$2"
+              shift 2
+              ;;
+          -v|--version)
+              export EX_K8S_VERSION="$2"
               shift 2
               ;;
              --new)
@@ -310,6 +315,10 @@ function get_options(){
   if [[ "${EX_PROXY}" != "on" ]]; then
     export EX_PROXY="off"
   fi
+
+  if [[ -z "${EX_K8S_VERSION}" ]]; then
+    export EX_K8S_VERSION="1.3.4"
+  fi
 }
 
 function main(){
@@ -327,6 +336,7 @@ function main(){
   local CLUSTER_ID="${EX_CLUSTER_ID}"
   local NEW_CLUSTER="${EX_NEW_CLUSTER}"
   local PROXY="${EX_PROXY}"
+  local K8S_VERSION="${EX_K8S_VERSION}"
 
   if [[ "${NEW_CLUSTER}" != "true" ]]; then
     # If do not force to start an etcd cluster, make a discovery.
@@ -393,9 +403,9 @@ function main(){
   #echo "Running Kubernetes"
   local APISERVER="$(echo "${EXISTED_ETCD_MEMBER}" | cut -d ':' -f 1):8080"
   if [[ "${PROXY}" == "on" ]]; then
-    /go/kube-up --ip="${IPADDR}" --worker --apiserver="${APISERVER}"
+    /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" --worker --apiserver="${APISERVER}"
   else
-    /go/kube-up --ip="${IPADDR}"
+    /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}"
   fi
 
 
