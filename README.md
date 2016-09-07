@@ -8,11 +8,13 @@ You still can join a specified cluster or force to start a new cluster.
 
 <pre>
 Options:
--i, --ip=IPADDR           Host IP address (Required)
--c, --cluster=CLUSTER_ID  Join a specified cluster
--n, --new                 Force to start a new cluster
--p, --proxy               Force to run as etcd and k8s proxy
--h, --help                This help text
+-n, --network=NETINFO        SubnetID/Mask or Host IP address or NIC name
+                             e. g. "192.168.11.0/24" or "192.168.11.1"
+                             or "eth0" (Required option)
+-c, --cluster=CLUSTER_ID     Join a specified cluster
+    --new                    Force to start a new cluster
+-p, --proxy                  Force to run as etcd and k8s proxy
+-h, --help                   This help text
 </pre>
 
 <pre>
@@ -29,7 +31,7 @@ $ sudo docker run -it \
     -v /var/lib/cni:/var/lib/cni \
     -v /etc/kubernetes:/etc/kubernetes \
     cdxvirt/k8sup \
-    --ip={your-host-ip}
+    --network={your-subnet-id/mask}
 </pre>
 
 If you want to delete etcd data:

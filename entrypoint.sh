@@ -159,14 +159,89 @@ function flanneld(){
       --iface="${IPADDR}"
 }
 
+# Convert CIDR to submask format. e.g. 23 => 255.255.254.0
+function cidr2mask(){
+   # Number of args to shift, 255..255, first non-255 byte, zeroes
+   set -- $(( 5 - ($1 / 8) )) 255 255 255 255 $(( (255 << (8 - ($1 % 8))) & 255 )) 0 0 0
+   [ $1 -gt 1 ] && shift $1 || shift
+   echo ${1-0}.${2-0}.${3-0}.${4-0}
+}
+
+# Convert IP address from decimal to heximal. e.g. 192.168.1.200 => 0xC0A801C8
+function addr2hex(){
+  local IPADDR="$1"
+  echo "0x$(printf '%02X' ${IPADDR//./ } ; echo)"
+}
+
+# Convert IP/Mask to SubnetID/Mask. e.g. 192.168.1.200/24 => 192.168.0.0/23
+function get_subnetID_mask(){
+  local NETADDR_AND_MASK="$1"
+  local NETADDR="$(echo "${NETADDR_AND_MASK}" | cut -d '/' -f 1)"
+  local MASK="$(echo "${NETADDR_AND_MASK}" | cut -d '/' -f 2)"
+
+  local HEX_NETADDR=$(addr2hex "${NETADDR}")
+  local HEX_MASK=$(addr2hex $(cidr2mask "${MASK}"))
+  local HEX_NETWORK=$(printf '%02X' $((${HEX_NETADDR} & ${HEX_MASK})))
+
+  local NETWORK=$(printf '%d.' 0x${HEX_NETWORK:0:2} 0x${HEX_NETWORK:2:2} 0x${HEX_NETWORK:4:2} 0x${HEX_NETWORK:6:2})
+  NETWORK="${NETWORK:0:-1}"
+  echo "${NETWORK}/${MASK}"
+}
+
+function get_ipaddr_from_netinfo(){
+  local NETINFO="$1"
+  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  local IPADDR=""
+
+  if [[ -z "${NETINFO}" ]]; then
+    echo "Getting network info error, exiting..." 1>&2
+    exit 1
+  fi
+
+  # If NETINFO is NIC name
+  IPADDR="$(ip addr show "${NETINFO}" 2>/dev/null | grep -o "${IPMASK_PATTERN}" 2>/dev/null | head -n 1 | cut -d '/' -f 1)"
+  if [[ -n "${IPADDR}" ]] ; then
+    echo "${IPADDR}"
+    return 0
+  fi
+
+  # If NETINFO is IPADDR
+  IPADDR="$(ip addr | sed -nr "s/.*inet ([^ ]+)\/.*/\1/p" | grep -w "${NETINFO}" 2>/dev/null)"
+  if [[ -n "${IPADDR}" ]] ; then
+    echo "${IPADDR}"
+    return 0
+  fi
+
+  # If NETINFO is SubnetID/MASK
+  echo "${NETINFO}" | grep -o "${IPMASK_PATTERN}" &>/dev/null || { echo "Wrong NETINFO, exiting..." 1>&2 && exit 1; }
+  local HOST_NET_LIST="$(ip addr show | grep -o "${IPMASK_PATTERN}")"
+  local HOST_NET=""
+  for NET in ${HOST_NET_LIST}; do
+    HOST_NET="$(get_subnetID_mask "${NET}")"
+    if [[ "${NETINFO}" == "${HOST_NET}" ]]; then
+      IPADDR="$(echo "${NET}" | cut -d '/' -f 1)"
+      break
+    fi
+  done
+
+  if [[ -z "${IPADDR}" ]]; then
+    echo "No such host IP address, exiting..." 1>&2
+    exit 1
+  fi
+
+  echo "${IPADDR}"
+}
+
 function show_usage(){
-  USAGE="Usage: ${0##*/} [options...]
+  local USAGE="Usage: ${0##*/} [options...]
 Options:
--i, --ip=IPADDR           Host IP address (Required)
--c, --cluster=CLUSTER_ID  Join a specified cluster
--n, --new                 Force to start a new cluster
--p, --proxy               Force to run as etcd and k8s proxy
--h, --help                This help text
+-n, --network=NETINFO        SubnetID/Mask or Host IP address or NIC name
+                             e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
+                             or \"eth0\" (Required option)
+-c, --cluster=CLUSTER_ID     Join a specified cluster
+    --new                    Force to start a new cluster
+-p, --proxy                  Force to run as etcd and k8s proxy
+-h, --help                   This help text
 "
 
   echo "${USAGE}"
@@ -174,8 +249,8 @@ Options:
 
 function get_options(){
   local PROGNAME="${0##*/}"
-  local SHORTOPTS="i:c:nph"
-  local LONGOPTS="ip:,cluster:,new,proxy,help"
+  local SHORTOPTS="n:c:ph"
+  local LONGOPTS="network:,cluster:,new,proxy,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -184,15 +259,15 @@ function get_options(){
   # extract options and their arguments into variables.
   while true ; do
       case "$1" in
-          -i|--ip)
-              export EX_IPADDR="$2"
+          -n|--network)
+              export EX_NETWORK="$2"
               shift 2
               ;;
           -c|--cluster)
               export EX_CLUSTER_ID="$2"
               shift 2
               ;;
-          -n|--new)
+             --new)
               export EX_NEW_CLUSTER="true"
               shift
               ;;
@@ -218,9 +293,8 @@ function get_options(){
   done
 
 
-  if [[ -z "${EX_IPADDR}" ]] || \
-   [[ -z "$(ip addr | sed -nr "s/.*inet ([^ ]+)\/.*/\1/p" | grep -w "${EX_IPADDR}")" ]]; then
-    echo "IP address error, exiting..." 1>&2
+  if [[ -z "${EX_NETWORK}" ]]; then
+    echo "--network (-n) is required, exiting..." 1>&2
     exit 1
   fi
 
@@ -248,7 +322,8 @@ function main(){
 #  export ENV_HYPERKUBE_IMAGE="gcr.io/google_containers/hyperkube-amd64:v${ENV_K8S_VERSION}"
 
   get_options "$@"
-  local IPADDR="${EX_IPADDR}"
+  local IPADDR=""
+  IPADDR="$(get_ipaddr_from_netinfo "${EX_NETWORK}")" || exit 1
   local CLUSTER_ID="${EX_CLUSTER_ID}"
   local NEW_CLUSTER="${EX_NEW_CLUSTER}"
   local PROXY="${EX_PROXY}"
