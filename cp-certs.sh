@@ -57,7 +57,7 @@ function download_kube_certs(){
   local RAWDATA=""
   local CERT=""
 
-   mkdir-p "${CERTS_DIR}"
+  mkdir -p "${CERTS_DIR}"
 
   for FILE in ${FILE_LIST}; do
     until RAWDATA="$(curl -sf "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/${FILE}")"; do
