@@ -5,6 +5,8 @@ function etcd_creator(){
   local IPADDR="$1"
   local ETCD_NAME="$2"
 
+  rm -rf "/var/lib/etcd/"*
+
   docker run \
     -d \
     -v /usr/share/ca-certificates/:/etc/ssl/certs \
@@ -48,6 +50,7 @@ function etcd_follower(){
     PROXY="off"
   else
     local ALREADY_MEMBER="false"
+    rm -rf "/var/lib/etcd/"*
   fi
 
   if [[ "${ALREADY_MEMBER}" != "true" ]]; then

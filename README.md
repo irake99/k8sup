@@ -29,6 +29,7 @@ $ sudo docker run -it \
     -v /etc/cni:/etc/cni \
     -v /opt/cni:/opt/cni \
     -v /var/lib/cni:/var/lib/cni \
+    -v /var/lib/etcd:/var/lib/etcd \
     -v /etc/kubernetes:/etc/kubernetes \
     cdxvirt/k8sup \
     --network={your-subnet-id/mask}
