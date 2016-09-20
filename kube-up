@@ -124,8 +124,8 @@ function main(){
   if [[ "${WORKER}" == "false" ]]; then
     APISERVERS="http://127.0.0.1:8080"
   else
-    echo '' > /go/kube-conf/master-multi.json
-    echo '' > /go/kube-conf/addon-manager.json
+    echo '{}' > /go/kube-conf/master-multi.json
+    echo '{}' > /go/kube-conf/addon-manager.json
     sed -i.back "s|\"--master=.*\",|\"--master=${APISERVER}\",|g" /go/kube-conf/kube-proxy.json
     APISERVERS="$(get_API_Servers "${APISERVER}")"
   fi
