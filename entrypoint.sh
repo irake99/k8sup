@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set -x
 
 function etcd_creator(){
   local IPADDR="$1"
@@ -134,9 +135,16 @@ function flanneld(){
 
   if [[ "${ROLE}" == "creator" ]]; then
     echo "Setting flannel parameters to etcd"
-    local KERNEL_SHORT_VERSION="$(uname -r | cut -d '.' -f 1-2)"
-    local VXLAN="$(echo "${KERNEL_SHORT_VERSION} >= 3.9" | bc)"
-    if [ "${VXLAN}" -eq "1" ] && [ "$(modinfo vxlan &>/dev/null; echo $?)" -eq "0" ]; then
+    local MIN_KERNEL_VER="3.9"
+    local KERNEL_VER="$(uname -r)"
+
+    if [[ "$(echo -e "${MIN_KERNEL_VER}\n${KERNEL_VER}" | sort -V | head -n 1)" == "${MIN_KERNEL_VER}" ]]; then
+      local KENNEL_VER_MEETS="true"
+    fi
+
+    if [[ "${KENNEL_VER_MEETS}" == "true" ]] && \
+     [[ "$(modinfo vxlan &>/dev/null; echo $?)" -eq "0" ]] && \
+     [[ -n "$(ip link add type vxlan help 2>&1 | grep vxlan)" ]]; then
       local FLANNDL_CONF="$(cat /go/flannel-conf/network-vxlan.json)"
     else
       local FLANNDL_CONF="$(cat /go/flannel-conf/network.json)"
