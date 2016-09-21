@@ -35,7 +35,7 @@ func main() {
 	for {
 		select {
 		case e := <-results:
-			fmt.Printf("%s %s:%d %s\n", e.HostName, e.AddrIPv4, e.Port, e.Text[0])
+			fmt.Printf("%s %s:%d %s %s\n", e.HostName, e.AddrIPv4, e.Port, e.Text, e.ServiceInstanceName())
 			time.Sleep(1e8)
 		case <-exitCh:
 			os.Exit(0)

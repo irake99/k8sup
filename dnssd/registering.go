@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,16 +15,17 @@ import (
 
 func main() {
 	if len(os.Args) != 5 {
-		fmt.Printf("Usage: registering {Hostname} {IP} {Port} {etcd_cluster_ID}\n")
+		fmt.Printf("Usage: registering {Hostname} {IP/Mask} {Port} {etcd_cluster_ID}\n")
 		return
 	}
 	Hostname := os.Args[1]
-	IPAddr := os.Args[2]
+	IPMask := os.Args[2]
 	Port, _ := strconv.Atoi(os.Args[3])
 	clusterID := os.Args[4]
+	IPAddr, Network, err := net.ParseCIDR(IPMask)
 	fmt.Printf("Registering: %s %s:%d %s\n", Hostname, IPAddr, Port, clusterID)
 	// Run registration (blocking call)
-	s, err := bonjour.RegisterProxy(clusterID, "_etcd._tcp", "", Port, Hostname, IPAddr, []string{clusterID}, nil)
+	s, err := bonjour.RegisterProxy(Hostname, "_etcd._tcp", "", Port, Hostname, IPAddr.String(), []string{"clusterID=" + clusterID, "NetworkID=" + Network.String()}, nil)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
