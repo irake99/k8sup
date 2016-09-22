@@ -6,7 +6,7 @@ Options:
 -i, --ip=IPADDR                Host IP address (Required)
 -p, --worker                   Run as k8s worker
 -a, --apiserver=IPADDR:PORT    K8S Apiserver (Worker mode required)
--v, --version=VERSION          Specify k8s version (Default: 1.3.4)
+-v, --version=VERSION          Specify k8s version (Default: 1.3.6)
 -h, --help                     This help text
 "
 
@@ -75,7 +75,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.3.4"
+    export EX_K8S_VERSION="1.3.6"
   fi
 }
 
@@ -84,7 +84,7 @@ function get_API_Servers(){
   local ETCD_MEMBER="$(echo "$1" | cut -d ':' -f 1)"
   local ETCD_PORT="2379"
   local APISERVERS=""
-  local APISERVER_PORT="8080"
+  local APISERVER_PORT="$(echo "$1" | cut -d ':' -f 2)"
 
   local MEMBERS="$(curl -s http://${ETCD_MEMBER}:${ETCD_PORT}/v2/members \
     | jq ".members[].peerURLs[0]" \
@@ -157,6 +157,7 @@ function main(){
       --privileged=true \
       --pid=host \
       --restart=always \
+      --name=k8sup-kubelet \
       -d \
       "gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION}" \
       /hyperkube kubelet \

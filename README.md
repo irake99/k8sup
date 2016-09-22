@@ -17,11 +17,13 @@ Options:
 -h, --help                   This help text
 </pre>
 
+Run k8s:
 <pre>
-$ sudo docker run -it \
+$ sudo docker run -d \
     --privileged \
     --net=host \
     --pid=host \
+    --restart=always \
     -v $(which docker):/bin/docker \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /usr/lib/libdevmapper.so:/usr/lib/$(readlink /usr/lib/libdevmapper.so | xargs basename) \
@@ -33,6 +35,16 @@ $ sudo docker run -it \
     -v /etc/kubernetes:/etc/kubernetes \
     cdxvirt/k8sup \
     --network={your-subnet-id/mask}
+</pre>
+
+Remove k8s:
+<pre>
+$ sudo docker exec k8sup /go/kube-down
+</pre>
+
+Show k8sup log and Cluster ID:
+<pre>
+$ sudo docker logs k8sup
 </pre>
 
 If you want to delete etcd data:
