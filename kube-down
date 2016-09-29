@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 function main(){
   local CONFIG_FILE="/etc/k8sup"
@@ -46,13 +47,6 @@ function main(){
   echo '{}' | tee /etc/kubernetes/manifests-multi/master-multi.json &>/dev/null
   echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager.json &>/dev/null
 
-  # Exit etcd cluster
-  local MEMBER_LIST="$(curl -s http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members)"
-  if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
-    local MEMBER_ID="$(curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
-    test "${MEMBER_ID}" && curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
-  fi
-
   echo -n "Waiting for all k8s pods stopped ..." 1>&2
   until [[ "$(docker ps | grep 'gcr.io/google_containers/hyperkube' | wc -l)" == 1 ]]; do
     echo -n "." 1>&2
@@ -60,8 +54,20 @@ function main(){
   done
   echo 1>&2
 
+  # Exit etcd cluster
+  local MEMBER_LIST="$(curl -s http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members)"
+  local MEMBER_SIZE="$(echo "${MEMBER_LIST}" | jq '.members | length')"
+  if [[ "${MEMBER_SIZE}" -ne "1" ]] && [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+    local MEMBER_ID="$(curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
+    test "${MEMBER_ID}" && curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
+    docker stop k8sup-etcd
+    docker rm k8sup-etcd
+    rm -rf "/var/lib/etcd/"*
+  fi
+
   echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup." 1>&2
-  docker rm -f $(docker ps -a | grep -E "k8sup-kubelet|k8sup-etcd|k8sup-flanneld" | awk '{print $1}') 1>/dev/null
+  docker stop $(docker ps -a | grep -E "k8sup-kubelet|k8sup-etcd|k8sup-flannel" | awk '{print $1}') 1>/dev/null
+  docker rm $(docker ps -a | grep -E "k8sup-kubelet|k8sup-etcd|k8sup-flannel" | awk '{print $1}') 1>/dev/null
   docker rm -f $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
 }
 

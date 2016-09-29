@@ -7,8 +7,6 @@ function etcd_creator(){
   local CLIENT_PORT="$3"
   local PEER_PORT="2380"
 
-  rm -rf "/var/lib/etcd/"*
-
   docker run \
     -d \
     -v /usr/share/ca-certificates/:/etc/ssl/certs \
@@ -35,7 +33,7 @@ function etcd_follower(){
   local CLIENT_PORT="$(echo "$3" | cut -d ':' -f 2)"
   local PROXY="$4"
   local PEER_PORT="2380"
-  local ETCD2_MAX_MEMBER_SIZE="5"
+  local ETCD2_MAX_MEMBER_SIZE="3"
 
   docker pull "${ENV_ETCD_IMAGE}" 1>&2
 
