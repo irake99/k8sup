@@ -16,6 +16,7 @@ WORKDIR /go/cni
 RUN ./build
 
 ADD kube-up /go/kube-up
+ADD kube-down /go/kube-down
 ADD entrypoint.sh /go/entrypoint.sh
 ADD cp-certs.sh /go/cp-certs.sh
 

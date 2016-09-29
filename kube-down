@@ -1,0 +1,74 @@
+#!/bin/bash
+set -e
+
+function main(){
+  local CONFIG_FILE="/etc/k8sup"
+  local IPADDR="$(cat "${CONFIG_FILE}" | sed -n "s/^IPADDR=\(.*\)/\1/p")"
+  local ETCD_CLIENT_PORT="$(cat "${CONFIG_FILE}" | sed -n "s/^ETCD_CLIENT_PORT=\(.*\)/\1/p")"
+  local K8S_VERSION="$(cat "${CONFIG_FILE}" | sed -n "s/^K8S_VERSION=\(.*\)/\1/p")"
+  local K8S_PORT="$(cat "${CONFIG_FILE}" | sed -n "s/^K8S_PORT=\(.*\)/\1/p")"
+
+  # Find an API server
+  local APISERVER=""
+  if curl -sf "127.0.0.1:${K8S_PORT}" &>/dev/null; then
+    APISERVER="127.0.0.1:${K8S_PORT}"
+  else
+    # If API server is not running on local, searching it from other nodes.
+    local NODE_LIST="$(curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
+                      | jq -r .node.nodes[].key \
+                      | sed -n "s/.*\/\(.*\)$/\1/p")"
+    local NODE=""
+    for NODE in ${NODE_LIST}; do
+      if curl -sf "${NODE}:${K8S_PORT}" &>/dev/null; then
+        APISERVER="${NODE}:${K8S_PORT}"
+        break
+      fi
+    done
+  fi
+
+  # Drain node in preparation for maintenance.
+  docker run \
+    --net=host \
+    --rm=true \
+    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
+    /hyperkube kubectl -s "${APISERVER}" \
+    drain "${IPADDR}" --force --delete-local-data
+
+  # Exit k8s cluster
+  docker run \
+    --net=host \
+    --rm=true \
+    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
+    /hyperkube kubectl -s "${APISERVER}" \
+    delete node "${IPADDR}"
+
+  # Remove k8s system pods conf
+  echo '{}' | tee /etc/kubernetes/manifests-multi/kube-proxy.json &>/dev/null
+  echo '{}' | tee /etc/kubernetes/manifests-multi/master-multi.json &>/dev/null
+  echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager.json &>/dev/null
+
+  echo -n "Waiting for all k8s pods stopped ..." 1>&2
+  until [[ "$(docker ps | grep 'gcr.io/google_containers/hyperkube' | wc -l)" == 1 ]]; do
+    echo -n "." 1>&2
+    sleep 1
+  done
+  echo 1>&2
+
+  # Exit etcd cluster
+  local MEMBER_LIST="$(curl -s http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members)"
+  local MEMBER_SIZE="$(echo "${MEMBER_LIST}" | jq '.members | length')"
+  if [[ "${MEMBER_SIZE}" -ne "1" ]] && [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+    local MEMBER_ID="$(curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
+    test "${MEMBER_ID}" && curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
+    docker stop k8sup-etcd
+    docker rm k8sup-etcd
+    rm -rf "/var/lib/etcd/"*
+  fi
+
+  echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup." 1>&2
+  docker stop $(docker ps -a | grep -E "k8sup-kubelet|k8sup-etcd|k8sup-flannel" | awk '{print $1}') 1>/dev/null
+  docker rm $(docker ps -a | grep -E "k8sup-kubelet|k8sup-etcd|k8sup-flannel" | awk '{print $1}') 1>/dev/null
+  docker rm -f $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
+}
+
+main "$@"
