@@ -400,10 +400,6 @@ function main(){
   echo "K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
   echo "K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
 
-  local K8SUP_ENV_FILE="/etc/kubernetes/k8sup-env"
-  echo "CLUSTER_IP=${IPADDR}" > "${K8SUP_ENV_FILE}"
-  echo "ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${K8SUP_ENV_FILE}"
-
   echo "Copy cni plugins"
   cp -rf bin /opt/cni
   mkdir -p /etc/cni/net.d/
