@@ -74,7 +74,7 @@
       "volumeMounts": [
         {
           "name": "data",
-          "mountPath": "/data"
+          "mountPath": "/srv/kubernetes"
         },
         {
           "name": "cp-certs",
