@@ -11,7 +11,7 @@
     "containers": [
       {
         "name": "kube-addon-manager",
-        "image": "REGISTRY/kube-addon-manager-ARCH:ADDON_MGR_VER",
+        "image": "REGISTRY/kube-addon-manager-ARCH:v5.1",
         "resources": {
           "requests": {
             "cpu": "5m",
@@ -21,7 +21,7 @@
         "volumeMounts": [
           {
             "name": "addons",
-            "mountPath": "/etc/kubernetes/",
+            "mountPath": "/etc/kubernetes/addons",
             "readOnly": true
           }
         ]
@@ -30,12 +30,21 @@
         "name": "kube-addon-manager-data",
         "image": "REGISTRY/hyperkube-ARCH:VERSION",
         "command": [
-          "/copy-addons.sh"
+          "/copy-addons.sh",
+          "multinode"
         ],
+        "securityContext": {
+          "privileged": true
+        },
         "volumeMounts": [
           {
             "name": "addons",
-            "mountPath": "/srv/kubernetes/",
+            "mountPath": "/srv/kubernetes/addons",
+            "readOnly": false
+          },
+          {
+            "name": "owaddons",
+            "mountPath": "/etc/kubernetes/addons/multinode/kube-proxy.yaml",
             "readOnly": false
           }
         ]
@@ -45,6 +54,12 @@
       {
         "name": "addons",
         "emptyDir": {}
+      },
+      {
+        "name": "owaddons",
+        "hostPath": {
+          "path": "/etc/kubernetes/addons/multinode/kube-proxy.yaml"
+        }
       }
     ]
   }
