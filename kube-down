@@ -43,9 +43,8 @@ function main(){
     delete node "${IPADDR}"
 
   # Remove k8s system pods conf
-  echo '{}' | tee /etc/kubernetes/manifests-multi/kube-proxy.json &>/dev/null
   echo '{}' | tee /etc/kubernetes/manifests-multi/master-multi.json &>/dev/null
-  echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager.json &>/dev/null
+  echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager-multinode.json.json &>/dev/null
 
   echo -n "Waiting for all k8s pods stopped ..." 1>&2
   until [[ "$(docker ps | grep 'gcr.io/google_containers/hyperkube' | wc -l)" == 1 ]]; do
