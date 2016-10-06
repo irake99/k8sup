@@ -94,8 +94,18 @@ function main(){
   else
     upload_kube_certs "${ETCD_PATH}" &
   fi
+  
+  cp /etc/kubernetes/kubeconfig/kubeconfig.yaml /srv/kubernetes/
 
-  /setup-files.sh "$@"
+  /setup-files.sh "$@" &
+
+  until test -f "/var/lib/kubelet/kubeconfig/kubecfg.key"; do 
+    cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ || true
+    cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ || true 
+    sleep 1
+  done
+
+  wait
 }
 
 main "$@"

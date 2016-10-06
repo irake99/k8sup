@@ -62,7 +62,13 @@
               "scheduler",
               "--master=127.0.0.1:8080",
               "--v=2"
-        ]
+        ],
+      "volumeMounts": [
+        {
+          "name": "data",
+          "mountPath": "/srv/kubernetes"
+        }
+      ]
     },
     {
       "name": "setup",
@@ -79,6 +85,14 @@
         {
           "name": "cp-certs",
           "mountPath": "/cp-certs.sh"
+        },
+        {
+          "name": "etc-k8s",
+          "mountPath": "/etc/kubernetes"
+        }, 
+        {
+          "name": "kubeconfig",
+          "mountPath": "/var/lib/kubelet/kubeconfig"
         }
       ]
     }
@@ -92,6 +106,18 @@
       "name": "cp-certs",
       "hostPath": {
         "path": "/etc/kubernetes/cp-certs.sh"
+      }
+    },
+    {
+      "name": "etc-k8s",
+      "hostPath": {
+        "path": "/etc/kubernetes"
+      }
+    },
+    {
+      "name": "kubeconfig",
+      "hostPath": {
+        "path": "/var/lib/kubelet/kubeconfig"
       }
     }
   ]

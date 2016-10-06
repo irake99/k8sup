@@ -115,16 +115,17 @@ function main(){
   export ADDON_MGR_VER=v4
 
   sed -i "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/*.json
-  sed -i "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/addons/*.yaml
+  sed -i "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/addons/multinode/*.yaml
   sed -i "s|ARCH|${ARCH}|g" /go/kube-conf/*.json
-  sed -i "s|ARCH|${ARCH}|g" /go/kube-conf/addons/*.yaml 
+  sed -i "s|ARCH|${ARCH}|g" /go/kube-conf/addons/multinode/*.yaml 
   sed -i "s|VERSION|v${K8S_VERSION}|g" /go/kube-conf/*.json
-  sed -i "s|VERSION|v${K8S_VERSION}|g" /go/kube-conf/addons/*.yaml 
-  sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--master=127.0.0.1:8080\"\,|g" /go/kube-conf/master-multi.json
+  sed -i "s|VERSION|v${K8S_VERSION}|g" /go/kube-conf/addons/multinode/*.yaml 
+  sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/srv/kubernetes/kubeconfig.yaml\"\,|g" /go/kube-conf/master-multi.json
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" /go/kube-conf/master-multi.json
 
   if [[ "${WORKER}" == "false" ]]; then
     APISERVERS="http://127.0.0.1:8080"
+    sed -i "s|server: https://127.0.0.1:6443|server: https://$(hostname -I | awk '{print $1}'):6443|g" /go/kube-conf/kubeconfig/kubeconfig.yaml 
   else
     echo '{}' > /go/kube-conf/master-multi.json
     APISERVERS="$(get_API_Servers "${APISERVER}")"
@@ -138,7 +139,8 @@ function main(){
   
   cp -rf /go/kube-conf/*.json /etc/kubernetes/manifests-multi
   cp -rf /go/kube-conf/kubeconfig /var/lib/kubelet/
-  cp -ff /go/kube-conf/addons/* /etc/kubernetes/addons/multinode
+  cp -rf /go/kube-conf/kubeconfig /etc/kubernetes/
+  cp -ff /go/kube-conf/addons/multinode/* /etc/kubernetes/addons/multinode
   cp -f /go/cp-certs.sh /etc/kubernetes
  
   echo "Running Kubernetes ..."
@@ -172,7 +174,7 @@ function main(){
           --address=0.0.0.0 \
           --enable-server \
           --hostname-override="${IPADDR}" \
-          --config=/etc/kubernetes/manifests-multi \
+          --pod-manifest-path=/etc/kubernetes/manifests-multi \
           --containerized \
           --network-plugin=cni \
           --network-plugin-dir=/etc/cni/net.d \
