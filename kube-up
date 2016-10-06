@@ -115,11 +115,11 @@ function main(){
   export ADDON_MGR_VER=v4
 
   sed -i "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/*.json
-  sed -i "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/addons/*.yaml
+  sed -i "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/addons/multinode/*.yaml
   sed -i "s|ARCH|${ARCH}|g" /go/kube-conf/*.json
-  sed -i "s|ARCH|${ARCH}|g" /go/kube-conf/addons/*.yaml 
+  sed -i "s|ARCH|${ARCH}|g" /go/kube-conf/addons/multinode/*.yaml 
   sed -i "s|VERSION|v${K8S_VERSION}|g" /go/kube-conf/*.json
-  sed -i "s|VERSION|v${K8S_VERSION}|g" /go/kube-conf/addons/*.yaml 
+  sed -i "s|VERSION|v${K8S_VERSION}|g" /go/kube-conf/addons/multinode/*.yaml 
   sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--master=127.0.0.1:8080\"\,|g" /go/kube-conf/master-multi.json
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" /go/kube-conf/master-multi.json
 
@@ -128,7 +128,7 @@ function main(){
   else
     echo '{}' > /go/kube-conf/master-multi.json
     APISERVERS="$(get_API_Servers "${APISERVER}")"
-    sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" /go/kube-conf/kubeconfig/kubeconfig.yaml
+    sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" /go/kube-conf/kubeconfig/multinode/kubeconfig.yaml
   fi
 
   echo "Copy manifests-multi to /etc/kubernetes"
@@ -138,7 +138,7 @@ function main(){
   
   cp -rf /go/kube-conf/*.json /etc/kubernetes/manifests-multi
   cp -rf /go/kube-conf/kubeconfig /var/lib/kubelet/
-  cp -ff /go/kube-conf/addons/* /etc/kubernetes/addons/multinode
+  cp -ff /go/kube-conf/addons/multinode/* /etc/kubernetes/addons/multinode
   cp -f /go/cp-certs.sh /etc/kubernetes
  
   echo "Running Kubernetes ..."
