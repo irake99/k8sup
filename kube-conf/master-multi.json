@@ -79,6 +79,10 @@
         {
           "name": "cp-certs",
           "mountPath": "/cp-certs.sh"
+        },
+        {
+          "name": "kubeconfig",
+          "mountPath": "/var/lib/kubelet/kubeconfig"
         }
       ]
     }
@@ -92,6 +96,12 @@
       "name": "cp-certs",
       "hostPath": {
         "path": "/etc/kubernetes/cp-certs.sh"
+      }
+    },
+    {
+      "name": "kubeconfig",
+      "hostPath": {
+        "path": "/var/lib/kubelet/kubeconfig"
       }
     }
   ]

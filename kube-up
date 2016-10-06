@@ -125,10 +125,11 @@ function main(){
 
   if [[ "${WORKER}" == "false" ]]; then
     APISERVERS="http://127.0.0.1:8080"
+    sed -i "s|server: https://127.0.0.1:6443|server: https://$(hostname -I | awk '{print $1}'):6443|g" /go/kube-conf/kubeconfig/kubeconfig.yaml 
   else
     echo '{}' > /go/kube-conf/master-multi.json
     APISERVERS="$(get_API_Servers "${APISERVER}")"
-    sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" /go/kube-conf/kubeconfig/multinode/kubeconfig.yaml
+    sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" /go/kube-conf/kubeconfig/kubeconfig.yaml
   fi
 
   echo "Copy manifests-multi to /etc/kubernetes"
