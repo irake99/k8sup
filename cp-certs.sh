@@ -94,6 +94,8 @@ function main(){
   else
     upload_kube_certs "${ETCD_PATH}" &
   fi
+  
+  cp /etc/kubernetes/kubeconfig/kubeconfig.yaml /srv/kubernetes/
 
   /setup-files.sh "$@" &
 
