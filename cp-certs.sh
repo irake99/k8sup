@@ -94,11 +94,13 @@ function main(){
   else
     upload_kube_certs "${ETCD_PATH}" &
   fi
-  
+ 
+  #upload default kubeconfig to k8s-master pod 
   cp /etc/kubernetes/kubeconfig/kubeconfig.yaml /srv/kubernetes/
 
   /setup-files.sh "$@" &
 
+  #clone client-certificate and client-key for kube-proxy 
   until test -f "/var/lib/kubelet/kubeconfig/kubecfg.key"; do 
     cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ || true
     cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ || true 

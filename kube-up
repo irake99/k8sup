@@ -125,7 +125,7 @@ function main(){
 
   if [[ "${WORKER}" == "false" ]]; then
     APISERVERS="http://127.0.0.1:8080"
-    sed -i "s|server: https://127.0.0.1:6443|server: https://$(hostname -I | awk '{print $1}'):6443|g" /go/kube-conf/kubeconfig/kubeconfig.yaml 
+#    sed -i "s|server: https://127.0.0.1:6443|server: https://$(hostname -I | awk '{print $1}'):6443|g" /go/kube-conf/kubeconfig/kubeconfig.yaml 
   else
     echo '{}' > /go/kube-conf/master-multi.json
     APISERVERS="$(get_API_Servers "${APISERVER}")"
@@ -157,7 +157,6 @@ function main(){
       --volume=/opt/cni/bin:/opt/cni/bin:rw \
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
-      --volume=/etc/kubernetes/cp-certs.sh:/cp-certs.sh \
       --volume=/etc/kubernetes/manifests-multi/master-multi.json:/etc/kubernetes/manifests-multi/master-multi.json \
       --volume=/etc/kubernetes/manifests-multi/addon-manager-multinode.json:/etc/kubernetes/manifests-multi/addon-manager-multinode.json \
       --net=host \
