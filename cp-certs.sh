@@ -100,7 +100,7 @@ function main(){
 
   /setup-files.sh "$@" &
 
-  #clone client-certificate and client-key for kube-proxy 
+  #clone client-certificate and client-key for kube-proxy & kubelet
   until test -f "/var/lib/kubelet/kubeconfig/kubecfg.key"; do 
     cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ || true
     cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ || true 

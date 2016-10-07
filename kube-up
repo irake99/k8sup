@@ -136,10 +136,11 @@ function main(){
   
   mkdir -p /etc/kubernetes/manifests-multi
   mkdir -p /etc/kubernetes/addons/multinode
+  mkdir -p /var/lib/kubelet/kubeconfig
   
   cp -rf /go/kube-conf/*.json /etc/kubernetes/manifests-multi
-  cp -rf /go/kube-conf/kubeconfig /var/lib/kubelet/
-  cp -rf /go/kube-conf/kubeconfig /etc/kubernetes/
+  cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml /var/lib/kubelet/kubeconfig
+  cp -rf /go/kube-conf/kubeconfig /etc/kubernetes/ 
   cp -ff /go/kube-conf/addons/multinode/* /etc/kubernetes/addons/multinode
   cp -f /go/cp-certs.sh /etc/kubernetes
  
