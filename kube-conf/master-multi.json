@@ -34,7 +34,6 @@
               "/hyperkube",
               "apiserver",
               "--service-cluster-ip-range=10.0.0.1/24",
-              "--insecure-bind-address=0.0.0.0",
               "--etcd-servers=http://127.0.0.1:4001",
               "--admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota",
               "--client-ca-file=/srv/kubernetes/ca.crt",
@@ -62,23 +61,37 @@
               "scheduler",
               "--master=127.0.0.1:8080",
               "--v=2"
-        ]
+        ],
+      "volumeMounts": [
+        {
+          "name": "data",
+          "mountPath": "/srv/kubernetes"
+        }
+      ]
     },
     {
       "name": "setup",
       "image": "REGISTRY/hyperkube-ARCH:VERSION",
       "command": [
               "/cp-certs.sh",
-              "IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local"
+              "IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local"
       ],
       "volumeMounts": [
         {
           "name": "data",
-          "mountPath": "/data"
+          "mountPath": "/srv/kubernetes"
         },
         {
           "name": "cp-certs",
           "mountPath": "/cp-certs.sh"
+        },
+        {
+          "name": "etc-k8s",
+          "mountPath": "/etc/kubernetes"
+        }, 
+        {
+          "name": "kubeconfig",
+          "mountPath": "/var/lib/kubelet/kubeconfig"
         }
       ]
     }
@@ -92,6 +105,18 @@
       "name": "cp-certs",
       "hostPath": {
         "path": "/etc/kubernetes/cp-certs.sh"
+      }
+    },
+    {
+      "name": "etc-k8s",
+      "hostPath": {
+        "path": "/etc/kubernetes"
+      }
+    },
+    {
+      "name": "kubeconfig",
+      "hostPath": {
+        "path": "/var/lib/kubelet/kubeconfig"
       }
     }
   ]

@@ -28,7 +28,7 @@ function check_certs_exist_on_etcd(){
 
 function upload_kube_certs(){
   local ETCD_PATH="$1"
-  local CERTS_DIR="/data"
+  local CERTS_DIR="/srv/kubernetes"
   local FILE_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv"
   local ENCODED_DATA=""
 
@@ -52,7 +52,7 @@ function upload_kube_certs(){
 
 function download_kube_certs(){
   local ETCD_PATH="$1"
-  local CERTS_DIR="/data"
+  local CERTS_DIR="/srv/kubernetes"
   local FILE_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv"
   local RAWDATA=""
   local CERT=""
@@ -84,6 +84,8 @@ function download_kube_certs(){
 }
 
 function main(){
+  apt-get update
+  apt-get install -y curl
   local ETCD_PATH="k8sup/cluster/k8s_certs"
   local CERTS_ON_ETCD=""
   CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
@@ -92,8 +94,20 @@ function main(){
   else
     upload_kube_certs "${ETCD_PATH}" &
   fi
+ 
+  #upload default kubeconfig to k8s-master pod 
+  cp /etc/kubernetes/kubeconfig/kubeconfig.yaml /srv/kubernetes/
 
-  /setup-files.sh "$@"
+  /setup-files.sh "$@" &
+
+  #clone client-certificate and client-key for kube-proxy & kubelet
+  until test -f "/var/lib/kubelet/kubeconfig/kubecfg.key"; do 
+    cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ || true
+    cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ || true 
+    sleep 1
+  done
+
+  wait
 }
 
 main "$@"
