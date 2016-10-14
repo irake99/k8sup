@@ -24,7 +24,7 @@ function etcd_creator(){
     --name=k8sup-etcd \
     "${ENV_ETCD_IMAGE}" \
     /usr/local/bin/etcd \
-      "${RESTORE_CMD}" \
+      ${RESTORE_CMD} \
       --name "${ETCD_NAME}" \
       --advertise-client-urls http://${IPADDR}:${CLIENT_PORT},http://${IPADDR}:4001 \
       --listen-client-urls http://0.0.0.0:${CLIENT_PORT},http://0.0.0.0:4001 \
