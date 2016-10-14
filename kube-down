@@ -1,7 +1,54 @@
 #!/bin/bash
 set -e
 
+function show_usage(){
+  USAGE="Usage: ${0##*/} [options...]
+Options:
+-r, --remove                   Exit K8S cluster and remove data
+-h, --help                     This help text
+"
+
+  echo "${USAGE}"
+}
+
+function get_options(){
+  local PROGNAME="${0##*/}"
+  local SHORTOPTS="rh"
+  local LONGOPTS="remove,help"
+  local PARSED_OPTIONS=""
+
+  PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
+  eval set -- "${PARSED_OPTIONS}"
+
+  # extract options and their arguments into variables.
+  while true ; do
+      case "$1" in
+          -r|--remove)
+              export EX_EXIT="true"
+              shift
+              ;;
+          -h|--help)
+              show_usage
+              exit 0
+              shift
+              ;;
+          --)
+              shift
+              break
+              ;;
+          *)
+              echo "Option error!" 1>&2
+              echo $1
+              exit 1
+              ;;
+      esac
+  done
+}
+
 function main(){
+  get_options "$@"
+  local EXIT="${EX_EXIT}"
+
   local CONFIG_FILE="/etc/k8sup"
   local IPADDR="$(cat "${CONFIG_FILE}" | sed -n "s/^IPADDR=\(.*\)/\1/p")"
   local ETCD_CLIENT_PORT="$(cat "${CONFIG_FILE}" | sed -n "s/^ETCD_CLIENT_PORT=\(.*\)/\1/p")"
@@ -34,13 +81,15 @@ function main(){
     /hyperkube kubectl -s "${APISERVER}" \
     drain "${IPADDR}" --force --delete-local-data
 
-  # Exit k8s cluster
-  docker run \
-    --net=host \
-    --rm=true \
-    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
-    /hyperkube kubectl -s "${APISERVER}" \
-    delete node "${IPADDR}"
+  if [[ "${EXIT}" == "true" ]]; then
+    # Exit k8s cluster
+    docker run \
+      --net=host \
+      --rm=true \
+      gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
+      /hyperkube kubectl -s "${APISERVER}" \
+      delete node "${IPADDR}"
+  fi
 
   # Remove k8s system pods conf
   echo '{}' | tee /etc/kubernetes/manifests-multi/kube-proxy.json &>/dev/null
@@ -54,15 +103,16 @@ function main(){
   done
   echo 1>&2
 
-  # Exit etcd cluster
-  local MEMBER_LIST="$(curl -s http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members)"
-  local MEMBER_SIZE="$(echo "${MEMBER_LIST}" | jq '.members | length')"
-  if [[ "${MEMBER_SIZE}" -ne "1" ]] && [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
-    local MEMBER_ID="$(curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
-    test "${MEMBER_ID}" && curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
-    docker stop k8sup-etcd
-    docker rm k8sup-etcd
-    rm -rf "/var/lib/etcd/"*
+  if [[ "${EXIT}" == "true" ]]; then
+    # Exit etcd cluster
+    local MEMBER_LIST="$(curl -s http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members)"
+    if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+      local MEMBER_ID="$(curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
+      test "${MEMBER_ID}" && curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
+      docker stop k8sup-etcd
+      docker rm k8sup-etcd
+      rm -rf "/var/lib/etcd/"*
+    fi
   fi
 
   echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup." 1>&2

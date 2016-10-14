@@ -5,7 +5,15 @@ function etcd_creator(){
   local IPADDR="$1"
   local ETCD_NAME="$2"
   local CLIENT_PORT="$3"
+  local NEW_CLUSTER="$4"
+  local RESTORE_ETCD="$5"
   local PEER_PORT="2380"
+
+  if [[ "${RESTORE_ETCD}" == "true" ]]; then
+    local RESTORE_CMD="--force-new-cluster=true"
+  elif [[ "${NEW_CLUSTER}" == "true" ]]; then
+    rm -rf "/var/lib/etcd/"*
+  fi
 
   docker run \
     -d \
@@ -16,6 +24,7 @@ function etcd_creator(){
     --name=k8sup-etcd \
     "${ENV_ETCD_IMAGE}" \
     /usr/local/bin/etcd \
+      "${RESTORE_CMD}" \
       --name "${ETCD_NAME}" \
       --advertise-client-urls http://${IPADDR}:${CLIENT_PORT},http://${IPADDR}:4001 \
       --listen-client-urls http://0.0.0.0:${CLIENT_PORT},http://0.0.0.0:4001 \
@@ -254,6 +263,7 @@ Options:
 -c, --cluster=CLUSTER_ID     Join a specified cluster
 -v, --version=VERSION        Specify k8s version (Default: 1.3.6)
     --new                    Force to start a new cluster
+    --restore                Try to restore etcd data and start a new cluster
 -p, --proxy                  Force to run as etcd and k8s proxy
 -h, --help                   This help text
 "
@@ -264,7 +274,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:v:ph"
-  local LONGOPTS="network:,cluster:,version:,new,proxy,help"
+  local LONGOPTS="network:,cluster:,version:,new,proxy,restore,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -287,6 +297,10 @@ function get_options(){
               ;;
              --new)
               export EX_NEW_CLUSTER="true"
+              shift
+              ;;
+             --restore)
+              export EX_RESTORE_ETCD="true"
               shift
               ;;
           -p|--proxy)
@@ -329,6 +343,10 @@ function get_options(){
     export EX_PROXY="off"
   fi
 
+  if [[ "${EX_RESTORE_ETCD}" == "true" ]]; then
+    export EX_NEW_CLUSTER="true"
+  fi
+
   if [[ -z "${EX_K8S_VERSION}" ]]; then
     export EX_K8S_VERSION="1.3.6"
   fi
@@ -349,6 +367,7 @@ function main(){
   local IPADDR="$(echo "${IP_AND_MASK}" | cut -d '/' -f 1)"
   local CLUSTER_ID="${EX_CLUSTER_ID}"
   local NEW_CLUSTER="${EX_NEW_CLUSTER}"
+  local RESTORE_ETCD="${EX_RESTORE_ETCD}"
   local PROXY="${EX_PROXY}"
   local K8S_VERSION="${EX_K8S_VERSION}"
   local K8S_PORT="8080"
@@ -420,7 +439,7 @@ function main(){
   echo "Running etcd"
   local ETCD_CID=""
   if [[ "${ROLE}" == "creator" ]]; then
-    ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${ETCD_CLIENT_PORT}") || exit 1
+    ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") || exit 1
   else
     ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_MEMBER}" "${PROXY}") || exit 1
   fi
