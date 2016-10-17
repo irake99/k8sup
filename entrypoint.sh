@@ -413,11 +413,11 @@ function main(){
   fi
 
   # Write configure to file
-  local CONFIG_FILE="/etc/k8sup"
-  echo "IPADDR=${IPADDR}" > "${CONFIG_FILE}"
-  echo "ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
-  echo "K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
-  echo "K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
+  local CONFIG_FILE="/root/.bashrc"
+  echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
+  echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
+  echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
+  echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
 
   echo "Copy cni plugins"
   cp -rf bin /opt/cni

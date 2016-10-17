@@ -49,11 +49,11 @@ function main(){
   get_options "$@"
   local EXIT="${EX_EXIT}"
 
-  local CONFIG_FILE="/etc/k8sup"
-  local IPADDR="$(cat "${CONFIG_FILE}" | sed -n "s/^IPADDR=\(.*\)/\1/p")"
-  local ETCD_CLIENT_PORT="$(cat "${CONFIG_FILE}" | sed -n "s/^ETCD_CLIENT_PORT=\(.*\)/\1/p")"
-  local K8S_VERSION="$(cat "${CONFIG_FILE}" | sed -n "s/^K8S_VERSION=\(.*\)/\1/p")"
-  local K8S_PORT="$(cat "${CONFIG_FILE}" | sed -n "s/^K8S_PORT=\(.*\)/\1/p")"
+  source "/root/.bashrc"
+  local IPADDR="${EX_IPADDR}"
+  local ETCD_CLIENT_PORT="${EX_TCD_CLIENT_PORT}"
+  local K8S_VERSION="${EX_K8S_VERSION}"
+  local K8S_PORT="${EX_K8S_PORT}"
 
   # Find an API server
   local APISERVER=""
