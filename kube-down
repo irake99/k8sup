@@ -51,7 +51,7 @@ function main(){
 
   source "/root/.bashrc"
   local IPADDR="${EX_IPADDR}"
-  local ETCD_CLIENT_PORT="${EX_TCD_CLIENT_PORT}"
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
   local K8S_VERSION="${EX_K8S_VERSION}"
   local K8S_PORT="${EX_K8S_PORT}"
 
@@ -118,6 +118,8 @@ function main(){
   echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup." 1>&2
   docker stop $(docker ps -a | grep -E "k8sup-kubelet|k8sup-etcd|k8sup-flannel" | awk '{print $1}') 1>/dev/null
   docker rm $(docker ps -a | grep -E "k8sup-kubelet|k8sup-etcd|k8sup-flannel" | awk '{print $1}') 1>/dev/null
+
+  killall etcd-maintainer.sh
   docker rm -f $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
 }
 
