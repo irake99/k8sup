@@ -1,6 +1,6 @@
 #!/bin/bash
 
-function remove_member_from_etcd(){
+function remove_remote_member_from_etcd(){
   local IPADDR="$1"
   local ETCD_CLIENT_PORT="$2"
 
@@ -31,6 +31,7 @@ function main(){
   local MEMBER_DISCONNECTED
   local MEMBER_FAILED
   local MEMBER_REMOVED
+  local MAX_ETCD_MEMBER_SIZE
   local HEALTH_CHECK_INTERVAL="30"
   local UNHEALTH_COUNT="0"
   local UNHEALTH_COUNT_THRESHOLD="3"
@@ -47,8 +48,19 @@ function main(){
 
     # If I am a etcd proxy...
     # Monitoring all etcd members and try to get one of the failed member
+    MAX_ETCD_MEMBER_SIZE="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/max_etcd_member_size" \
+                          | jq -r '.node.value')"
     MEMBER_CLIENT_ADDR_LIST="$(curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members" | jq -r ".members[].clientURLs[0]")"
+    if [[ -z "${MAX_ETCD_MEMBER_SIZE}" ]] || [[ -z "${MEMBER_CLIENT_ADDR_LIST}" ]]; then
+      echo "Getting max etcd member size and member list error, exiting..." 1>&2
+      exit
+    fi
     MEMBER_SIZE="$(echo "${MEMBER_CLIENT_ADDR_LIST}" | wc -l)"
+    if [[ "${MEMBER_SIZE}" -lt "${MAX_ETCD_MEMBER_SIZE}" ]]; then
+      local ETCD_CLUSTER_IS_NOT_FULL="true"
+    else
+      local ETCD_CLUSTER_IS_NOT_FULL="false"
+    fi
     for MEMBER in ${MEMBER_CLIENT_ADDR_LIST}; do
       if ! curl -s -m 3 "${MEMBER}/health" &>/dev/null; then
         MEMBER_DISCONNECTED="${MEMBER_DISCONNECTED}"$'\n'"${MEMBER}"
@@ -62,15 +74,20 @@ function main(){
 
     # If a failed member existing, try to turn this proxy node as a etcd member,
     # but only one proxy node can do this at the same time
-    if [[ -n "${MEMBER_FAILED}" ]]; then
+    if [[ -n "${MEMBER_FAILED}" ]] || [[ "${ETCD_CLUSTER_IS_NOT_FULL}" == "true" ]]; then
       if curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevExist=false" \
         -XPUT -d value="${IPADDR}" 1>&2; then
         # Try to turn this proxy node as a etcd member
 
-        curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" \
-          -XPUT -d value="${MEMBER_FAILED}"
+        if [[ -n "${MEMBER_FAILED}" ]]; then
+          curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" \
+            -XPUT -d value="${MEMBER_FAILED}"
+          remove_remote_member_from_etcd "${MEMBER_FAILED}" "${ETCD_CLIENT_PORT}"
+        else
+          curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" \
+            -XPUT -d value="NULL"
+        fi
 
-        remove_member_from_etcd "${MEMBER_FAILED}" "${ETCD_CLIENT_PORT}"
         rejoin_etcd
         MEMBER_DISCONNECTED=""
 
@@ -85,7 +102,9 @@ function main(){
           MEMBER_REMOVED="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}")"
           sleep 1
         done
-        MEMBER_DISCONNECTED="$(echo "${MEMBER_DISCONNECTED}" | sed /.*${MEMBER_REMOVED}/d)"
+        if [[ "${MEMBER_REMOVED}" != "NULL" ]]; then
+          MEMBER_DISCONNECTED="$(echo "${MEMBER_DISCONNECTED}" | sed /.*${MEMBER_REMOVED}/d)"
+        fi
       fi
     fi
 

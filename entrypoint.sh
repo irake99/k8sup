@@ -276,8 +276,11 @@ function rejoin_etcd(){
           || exit 1
   local IPADDR="${EX_IPADDR}"
   local K8S_VERSION="${EX_K8S_VERSION}"
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
   local K8S_PORT="${EX_K8S_PORT}"
   local NODE_NAME="${EX_NODE_NAME}"
+  local IP_AND_MASK="${EX_IP_AND_MASK}"
+
   local PROXY="off"
   local EXISTED_ETCD_MEMBER
   local NODE
@@ -299,6 +302,18 @@ function rejoin_etcd(){
 
   # Join the same etcd cluster again
   etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_MEMBER}" "${PROXY}"
+
+  until curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys 1>/dev/null 2>&1; do
+    echo "Waiting for etcd ready..."
+    sleep 1
+  done
+
+  # DNS-SD
+  killall "registering.go" || true
+  local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 \
+    | grep 'X-Etcd-Cluster-Id' \
+    | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
+  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
 }
 
 function show_usage(){
@@ -486,13 +501,6 @@ function main(){
 
   local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
 
-  # Write configure to file
-  echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
-  echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
-  echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
-  echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
-  echo "export EX_NODE_NAME=${NODE_NAME}" >> "${CONFIG_FILE}"
-
   echo "Copy cni plugins"
   cp -rf bin /opt/cni
   mkdir -p /etc/cni/net.d/
@@ -551,11 +559,20 @@ function main(){
     /hyperkube kubectl -s "${APISERVER}" \
     uncordon "${IPADDR}" &>/dev/null || true
 
+  # DNS-SD
   local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
   bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
 
   bash -c "/go/etcd-maintainer.sh" &
+
+  # Write configure to file
+  echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
+  echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
+  echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
+  echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
+  echo "export EX_NODE_NAME=${NODE_NAME}" >> "${CONFIG_FILE}"
+  echo "export EX_IP_AND_MASK=${IP_AND_MASK}" >> "${CONFIG_FILE}"
 
   echo "hold..." 1>&2
   tail -f /dev/null
