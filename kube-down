@@ -1,59 +1,11 @@
 #!/bin/bash
 set -e
 
-function show_usage(){
-  USAGE="Usage: ${0##*/} [options...]
-Options:
--r, --remove                   Exit K8S cluster and remove data
--h, --help                     This help text
-"
-
-  echo "${USAGE}"
-}
-
-function get_options(){
-  local PROGNAME="${0##*/}"
-  local SHORTOPTS="rh"
-  local LONGOPTS="remove,help"
-  local PARSED_OPTIONS=""
-
-  PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
-  eval set -- "${PARSED_OPTIONS}"
-
-  # extract options and their arguments into variables.
-  while true ; do
-      case "$1" in
-          -r|--remove)
-              export EX_EXIT="true"
-              shift
-              ;;
-          -h|--help)
-              show_usage
-              exit 0
-              shift
-              ;;
-          --)
-              shift
-              break
-              ;;
-          *)
-              echo "Option error!" 1>&2
-              echo $1
-              exit 1
-              ;;
-      esac
-  done
-}
-
-function main(){
-  get_options "$@"
-  local EXIT="${EX_EXIT}"
-
-  source "/root/.bashrc"
-  local IPADDR="${EX_IPADDR}"
-  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
-  local K8S_VERSION="${EX_K8S_VERSION}"
-  local K8S_PORT="${EX_K8S_PORT}"
+function stop_k8s(){
+  local IPADDR="$1"
+  local ETCD_CLIENT_PORT="$2"
+  local K8S_VERSION="$3"
+  local K8S_PORT="$4"
 
   # Find an API server
   local APISERVER=""
@@ -103,16 +55,111 @@ function main(){
   done
   echo 1>&2
 
-  if [[ "${EXIT}" == "true" ]]; then
-    # Exit etcd cluster
-    local MEMBER_LIST="$(curl -s http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members)"
-    if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
-      local MEMBER_ID="$(curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
-      test "${MEMBER_ID}" && curl -s "http://${IPADDR}:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
+  until ! docker ps | grep -w 'k8sup-kubelet'; do
+    docker stop k8sup-kubelet 1>/dev/null || true
+    docker rm k8sup-kubelet 1>/dev/null || true
+  done
+}
+
+function exit_etcd(){
+  local IPADDR="$1"
+  local ETCD_CLIENT_PORT="$2"
+  local LOCAL_ETCD="$3"
+
+  # Exit etcd cluster
+  local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+  if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+    local MEMBER_ID="$(echo "${MEMBER_LIST}" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
+    test "${MEMBER_ID}" && curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
+    if [[ "${LOCAL_ETCD}" == "true" ]]; then
       docker stop k8sup-etcd
       docker rm k8sup-etcd
       rm -rf "/var/lib/etcd/"*
     fi
+  fi
+}
+
+function show_usage(){
+  USAGE="Usage: ${0##*/} [options...]
+Options:
+-r, --remove                             Exit K8S cluster and remove data
+    --stop-k8s-only                      Just stop k8s service without stop etcd service
+    --exit-remote-etcd=REMOTE_IPADDR     Exit the remote etcd member
+-h, --help                               This help text
+"
+
+  echo "${USAGE}"
+}
+
+function get_options(){
+  local PROGNAME="${0##*/}"
+  local SHORTOPTS="rh"
+  local LONGOPTS="remove,stop-k8s-only,exit-remote-etcd:,help"
+  local PARSED_OPTIONS=""
+
+  PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
+  eval set -- "${PARSED_OPTIONS}"
+
+  # extract options and their arguments into variables.
+  while true ; do
+      case "$1" in
+          -r|--remove)
+              export EX_EXIT="true"
+              shift
+              ;;
+             --stop-k8s-only)
+              export EX_STOP_K8S_ONLY="true"
+              shift
+              ;;
+             --exit-remote-etcd)
+              export EX_REMOTE_ETCD="true"
+              export EX_REMOTE_IPADDR="$2"
+              shift 2
+              ;;
+          -h|--help)
+              show_usage
+              exit 0
+              shift
+              ;;
+          --)
+              shift
+              break
+              ;;
+          *)
+              echo "Option error!" 1>&2
+              echo $1
+              exit 1
+              ;;
+      esac
+  done
+}
+
+function main(){
+  get_options "$@"
+  local EXIT="${EX_EXIT}"
+
+  source "/root/.bashrc"
+  local IPADDR="${EX_IPADDR}"
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
+  local K8S_VERSION="${EX_K8S_VERSION}"
+  local K8S_PORT="${EX_K8S_PORT}"
+  local LOCAL_ETCD="true"
+
+  STOP_K8S_ONLY="${EX_STOP_K8S_ONLY}"
+  EXIT_ETCD_ONLY="${EX_EXIT_ETCD_ONLY}"
+  if [[ "${STOP_K8S_ONLY}" == "true" ]]; then
+    stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}"
+    exit 0
+  fi
+  if [[ "${EX_REMOTE_ETCD}" == "true" ]]; then
+    local REMOTE_IPADDR="${EX_REMOTE_IPADDR}"
+    exit_etcd "${REMOTE_IPADDR}" "${ETCD_CLIENT_PORT}" "false"
+    exit 0
+  fi
+
+  stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}"
+  if [[ "${EXIT}" == "true" ]]; then
+    exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
   fi
 
   echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup." 1>&2

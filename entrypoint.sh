@@ -529,35 +529,23 @@ function main(){
     echo "Waiting for etcd ready..."
     sleep 1
   done
+
+  local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+  if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+    PROXY="off"
+  else
+    PROXY="on"
+  fi
+
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"
 
   # echo "Running Kubernetes"
-  if [[ -n "${EXISTED_ETCD_MEMBER}" ]]; then
-    local APISERVER="$(echo "${EXISTED_ETCD_MEMBER}" | cut -d ':' -f 1):${K8S_PORT}"
-  else
-    local APISERVER="127.0.0.1:${K8S_PORT}"
-  fi
   if [[ "${PROXY}" == "on" ]]; then
-    /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" --worker --apiserver="${APISERVER}"
+    /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" --worker
   else
     /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}"
   fi
-
-  echo -n "Waiting for k8s apiserver ready..." 1>&2
-  until curl -sf 127.0.0.1:${K8S_PORT}/healthz 1>/dev/null 2>&1; do
-    echo -n "." 1>&2
-    sleep 1
-  done
-  echo 1>&2
-
-  # Try to set this node as schedulable
-  docker run \
-    --net=host \
-    --rm=true \
-    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
-    /hyperkube kubectl -s "${APISERVER}" \
-    uncordon "${IPADDR}" &>/dev/null || true
 
   # DNS-SD
   local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"

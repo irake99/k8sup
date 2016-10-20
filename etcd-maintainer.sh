@@ -1,21 +1,5 @@
 #!/bin/bash
 
-function remove_remote_member_from_etcd(){
-  local IPADDR="$1"
-  local ETCD_CLIENT_PORT="$2"
-
-  # Set the remote failed etcd member to exit the etcd cluster
-  local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
-  if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
-    local MEMBER_ID="$(echo "${MEMBER_LIST}" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
-    test "${MEMBER_ID}" && curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE \
-      || { echo "Can not write etcd, exiting..." 1>&2; exit 1; }
-  else
-    echo "This node is not an etcd member" 1>&2
-    exit 1
-  fi
-}
-
 function rejoin_etcd(){
   /go/entrypoint.sh --rejoin-etcd
 }
@@ -24,6 +8,7 @@ function main(){
   source "/root/.bashrc" || exit 1
   local IPADDR="${EX_IPADDR}"
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
+  local K8S_VERSION="${EX_K8S_VERSION}"
 
   local MEMBER_CLIENT_ADDR_LIST
   local MEMBER_SIZE
@@ -32,18 +17,23 @@ function main(){
   local MEMBER_FAILED
   local MEMBER_REMOVED
   local MAX_ETCD_MEMBER_SIZE
-  local HEALTH_CHECK_INTERVAL="30"
+  local HEALTH_CHECK_INTERVAL="15"
   local UNHEALTH_COUNT="0"
   local UNHEALTH_COUNT_THRESHOLD="3"
   local IP_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local LOCKER_ETCD_KEY="k8sup/cluster/etcd-rejoining"
   local MEMBER_REMOVED_KEY="k8sup/cluster/member-removed"
+  local ETCD_PROXY
   while true; do
 
     # If I am already etcd member, do nothing...
-    if [[ "$(docker inspect k8sup-etcd | jq -r -c .[].Args | sed -n "s/.*\"--proxy\",\"\(.*\)\"\]/\1/p")" == "off" ]]; then
+    local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+    if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+      ETCD_PROXY="off"
       sleep 60
       continue
+    else
+      ETCD_PROXY="on"
     fi
 
     # If I am a etcd proxy...
@@ -80,15 +70,21 @@ function main(){
         # Try to turn this proxy node as a etcd member
 
         if [[ -n "${MEMBER_FAILED}" ]]; then
+          # Notify other node the failed member which will be replaced
           curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" \
             -XPUT -d value="${MEMBER_FAILED}"
-          remove_remote_member_from_etcd "${MEMBER_FAILED}" "${ETCD_CLIENT_PORT}"
+
+          # Set the remote failed etcd member to exit the etcd cluster
+          /go/kube-down --exit-remote-etcd="${MEMBER_FAILED}"
+          # Stop local k8s service
+          /go/kube-down --stop-k8s-only
         else
           curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" \
             -XPUT -d value="NULL"
         fi
 
         rejoin_etcd
+        /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}"
         MEMBER_DISCONNECTED=""
 
         until curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevValue=${IPADDR}" \
