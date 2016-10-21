@@ -37,7 +37,7 @@ $ sudo docker run -d \
     --network={your-subnet-id/mask}
 </pre>
 
-Remove k8s:
+Stop k8s:
 <pre>
 $ sudo docker exec k8sup /go/kube-down
 </pre>
