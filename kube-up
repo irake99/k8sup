@@ -125,7 +125,6 @@ function main(){
 
   if [[ "${WORKER}" == "false" ]]; then
     APISERVERS="http://127.0.0.1:8080"
-#    sed -i "s|server: https://127.0.0.1:6443|server: https://$(hostname -I | awk '{print $1}'):6443|g" /go/kube-conf/kubeconfig/kubeconfig.yaml 
   else
     echo '{}' > /go/kube-conf/master-multi.json
     APISERVERS="$(get_API_Servers "${APISERVER}")"
@@ -143,6 +142,15 @@ function main(){
   cp -rf /go/kube-conf/kubeconfig /etc/kubernetes/ 
   cp -ff /go/kube-conf/addons/multinode/* /etc/kubernetes/addons/multinode
   cp -f /go/cp-certs.sh /etc/kubernetes
+  cp -f /go/update-addons.sh /etc/kubernetes
+  
+  if [[ -z "${APISERVER}" ]]; then
+    APISERVER=${IPADDR}
+  fi
+  
+  #for exposing kubernetes&kube-dns
+  sed -i "s|127.0.0.1|${APISERVER}|g" /etc/kubernetes/update-addons.sh
+  sed -i "s|127.0.0.1|${APISERVER}|g" /etc/kubernetes/addons/multinode/kubernetes-public.yaml
  
   echo "Running Kubernetes ..."
 
