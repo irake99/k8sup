@@ -22,7 +22,7 @@
           {
             "name": "addons",
             "mountPath": "/etc/kubernetes/addons",
-            "readOnly": true
+            "readOnly": false
           }
         ]
       },
@@ -30,7 +30,7 @@
         "name": "kube-addon-manager-data",
         "image": "REGISTRY/hyperkube-ARCH:VERSION",
         "command": [
-          "/copy-addons.sh",
+          "/update-addons.sh",
           "multinode"
         ],
         "securityContext": {
@@ -46,6 +46,15 @@
             "name": "owaddons",
             "mountPath": "/etc/kubernetes/addons/multinode/kube-proxy.yaml",
             "readOnly": false
+          },
+          {
+            "name": "k8s-public",
+            "mountPath": "/etc/kubernetes/kubernetes-public.yaml",
+            "readOnly": false
+          },
+          {
+            "name": "update-addons",
+            "mountPath": "/update-addons.sh"
           }
         ]
       }
@@ -59,6 +68,18 @@
         "name": "owaddons",
         "hostPath": {
           "path": "/etc/kubernetes/addons/multinode/kube-proxy.yaml"
+        }
+      },
+      {
+        "name": "k8s-public",
+        "hostPath": {
+          "path": "/etc/kubernetes/addons/multinode/kubernetes-public.yaml"
+        }
+      },
+      {
+        "name": "update-addons",
+        "hostPath": {
+          "path": "/etc/kubernetes/update-addons.sh"
         }
       }
     ]

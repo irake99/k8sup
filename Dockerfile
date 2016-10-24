@@ -19,6 +19,7 @@ ADD kube-up /go/kube-up
 ADD kube-down /go/kube-down
 ADD entrypoint.sh /go/entrypoint.sh
 ADD cp-certs.sh /go/cp-certs.sh
+ADD update-addons.sh /go/update-addons.sh
 
 RUN chmod +x /go/entrypoint.sh
 RUN chmod +x /go/kube-up
