@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Stop container when running 'exit NON-ZERO'
+trap '[ "$?" -ne 0 ] && docker stop k8sup' EXIT
+
 function etcd_creator(){
   local IPADDR="$1"
   local ETCD_NAME="$2"
@@ -415,6 +418,13 @@ function get_options(){
       esac
   done
 
+  if [[ "${EX_PROXY}" != "on" ]]; then
+    export EX_PROXY="off"
+  fi
+
+  if [[ "${EX_RESTORE_ETCD}" == "true" ]]; then
+    export EX_NEW_CLUSTER="true"
+  fi
 
   if [[ -z "${EX_NETWORK}" ]] && [[ -z "${EX_REJOIN_ETCD}" ]]; then
     echo "--network (-n) is required, exiting..." 1>&2
@@ -422,20 +432,13 @@ function get_options(){
   fi
 
   if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
-    echo "Error! Either join a existed etcd cluster or start a new etcd cluster, exiting..." 1>&2
+    echo "Error! Either join a existed etcd cluster or start a new/restored etcd cluster, exiting..." 1>&2
     exit 1
   fi
+
   if [[ "${EX_PROXY}" == "on" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
-    echo "Error! Either run as proxy or start a new etcd cluster, exiting..." 1>&2
+    echo "Error! Either run as proxy or start a new/restored etcd cluster, exiting..." 1>&2
     exit 1
-  fi
-
-  if [[ "${EX_PROXY}" != "on" ]]; then
-    export EX_PROXY="off"
-  fi
-
-  if [[ "${EX_RESTORE_ETCD}" == "true" ]]; then
-    export EX_NEW_CLUSTER="true"
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
