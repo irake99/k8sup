@@ -55,6 +55,13 @@ function etcd_follower(){
   local MAX_ETCD_MEMBER_SIZE="$(curl -s --retry 10 "${ETCD_MEMBER}:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" 2>/dev/null \
                                 | jq -r '.node.value')"
 
+  # Prevent the cap of etcd member size less then 3
+  if [[ "${MAX_ETCD_MEMBER_SIZE}" -lt "3" ]]; then
+    MAX_ETCD_MEMBER_SIZE="3"
+    curl -s "http://127.0.0.1:${CLIENT_PORT}/v2/keys/k8sup/cluster/max_etcd_member_size" \
+      -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
+  fi
+
   docker pull "${ENV_ETCD_IMAGE}" 1>&2
 
   # Check if this node has joined etcd this cluster
@@ -269,26 +276,38 @@ function rejoin_etcd(){
   local CONFIG_FILE="$1"
   source "${CONFIG_FILE}" || exit 1
 
-  local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
-  local ETCD_MEMBER_LIST="$(curl -s http://127.0.0.1:2379/v2/members \
-          | jq -r '.members[].clientURLs[0]' \
-          | grep -o "${IPPORT_PATTERN}")" \
-          || exit 1
   local IPADDR="${EX_IPADDR}"
   local K8S_VERSION="${EX_K8S_VERSION}"
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
   local K8S_PORT="${EX_K8S_PORT}"
   local NODE_NAME="${EX_NODE_NAME}"
   local IP_AND_MASK="${EX_IP_AND_MASK}"
-
   local PROXY="off"
+  local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
+  local ETCD_MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+  local ETCD_MEMBER_IP_LIST="$(echo "${ETCD_MEMBER_LIST}" \
+          | jq -r '.members[].clientURLs[0]' \
+          | grep -o "${IPPORT_PATTERN}")" \
+          || exit 1
+
   local EXISTED_ETCD_MEMBER
   local NODE
 
-  # Get the existed etcd members
-  for NODE in ${ETCD_MEMBER_LIST}; do
+  # If this node was a etcd member, exit from the cluster
+  if [[ "${ETCD_MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+    local MEMBER_ID="$(echo "${ETCD_MEMBER_LIST}" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
+    test "${MEMBER_ID}" && curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
+    docker stop k8sup-etcd
+    docker rm k8sup-etcd
+    rm -rf "/var/lib/etcd/"*
+  fi
+  ETCD_MEMBER_IP_LIST="$(echo "${ETCD_MEMBER_IP_LIST}" | sed "/.*${IPADDR}:${ETCD_CLIENT_PORT}$/d")"
+
+  # Get an existed etcd member
+  for NODE in ${ETCD_MEMBER_IP_LIST}; do
     if curl -s -m 10 "${NODE}/health"; then
       EXISTED_ETCD_MEMBER="${NODE}"
+      break
     fi
   done
   if [[ -z "${EXISTED_ETCD_MEMBER}" ]]; then
@@ -530,29 +549,16 @@ function main(){
     sleep 1
   done
 
-  local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
-  if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
-    PROXY="off"
-  else
-    PROXY="on"
-  fi
-
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"
 
   # echo "Running Kubernetes"
-  if [[ "${PROXY}" == "on" ]]; then
-    /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" --worker
-  else
-    /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}"
-  fi
+  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}"
 
   # DNS-SD
   local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
   bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
-
-  bash -c "/go/etcd-maintainer.sh" &
 
   # Write configure to file
   echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
@@ -561,6 +567,8 @@ function main(){
   echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_NODE_NAME=${NODE_NAME}" >> "${CONFIG_FILE}"
   echo "export EX_IP_AND_MASK=${IP_AND_MASK}" >> "${CONFIG_FILE}"
+
+  bash -c "/go/etcd-maintainer.sh" &
 
   echo "hold..." 1>&2
   tail -f /dev/null

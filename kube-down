@@ -84,7 +84,8 @@ function show_usage(){
 Options:
 -r, --remove                             Exit K8S cluster and remove data
     --stop-k8s-only                      Just stop k8s service without stop etcd service
-    --exit-remote-etcd=REMOTE_IPADDR     Exit the remote etcd member
+    --exit-local-etcd-only               Exit the local etcd member frome cluster
+    --exit-remote-etcd=REMOTE_IPADDR     Exit the remote etcd member frome cluster
 -h, --help                               This help text
 "
 
@@ -94,7 +95,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="rh"
-  local LONGOPTS="remove,stop-k8s-only,exit-remote-etcd:,help"
+  local LONGOPTS="remove,stop-k8s-only,exit-local-etcd-only,exit-remote-etcd:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -109,6 +110,10 @@ function get_options(){
               ;;
              --stop-k8s-only)
               export EX_STOP_K8S_ONLY="true"
+              shift
+              ;;
+             --exit-local-etcd-only)
+              export EX_LOCAL_ETCD_ONLY="true"
               shift
               ;;
              --exit-remote-etcd)
@@ -151,9 +156,14 @@ function main(){
     stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}"
     exit 0
   fi
+  if [[ "${EX_LOCAL_ETCD_ONLY}" == "true" ]]; then
+    exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
+    exit 0
+  fi
   if [[ "${EX_REMOTE_ETCD}" == "true" ]]; then
     local REMOTE_IPADDR="${EX_REMOTE_IPADDR}"
-    exit_etcd "${REMOTE_IPADDR}" "${ETCD_CLIENT_PORT}" "false"
+    LOCAL_ETCD="false"
+    exit_etcd "${REMOTE_IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
     exit 0
   fi
 
