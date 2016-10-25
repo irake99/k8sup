@@ -3,11 +3,12 @@
 function show_usage(){
   USAGE="Usage: ${0##*/} [options...]
 Options:
--i, --ip=IPADDR                Host IP address (Required)
--p, --worker                   Run as k8s worker
--a, --apiserver=IPADDR:PORT    K8S Apiserver (Worker mode required)
--v, --version=VERSION          Specify k8s version (Default: 1.3.6)
--h, --help                     This help text
+-i, --ip=IPADDR               Host IP address (Required)
+-p, --worker                  Run as k8s worker
+-a, --apiserver-port=PORT     Apiserver port (Default: 6443)
+-a, --etcd-port=PORT          etcd client port (Default: 2379)
+-v, --version=VERSION         Specify k8s version (Default: 1.4.4)
+-h, --help                    This help text
 "
 
   echo "${USAGE}"
@@ -16,7 +17,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:h"
-  local LONGOPTS="ip:,apiserver:,worker,version:,help"
+  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -29,8 +30,12 @@ function get_options(){
               export EX_IPADDR="$2"
               shift 2
               ;;
-          -a|--apiserver)
-              export EX_APISERVER="$2"
+          -a|--apiserver-port)
+              export EX_APISERVER_PORT="$2"
+              shift 2
+              ;;
+          -a|--etcd-port)
+              export EX_ETCD_PORT="$2"
               shift 2
               ;;
           -p|--worker)
@@ -65,9 +70,12 @@ function get_options(){
     exit 1
   fi
 
-  if [[ "${EX_WORKER}" == "true" ]] && [[ -z "${EX_APISERVER}" ]]; then
-    echo "Error! Either run as worker or start a new etcd cluster, exiting..." 1>&2
-    exit 1
+  if [[ -z "${EX_APISERVER_PORT}" ]]; then
+    export EX_APISERVER_PORT="6443"
+  fi
+
+  if [[ -z "${EX_ETCD_PORT}" ]]; then
+    export EX_ETCD_PORT="2379"
   fi
 
   if [[ "${EX_WORKER}" != "true" ]]; then
@@ -75,23 +83,25 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.3.6"
+    export EX_K8S_VERSION="1.4.4"
   fi
 }
 
 # Get k8s apiservers form the list of etcd members
 function get_API_Servers(){
-  local ETCD_MEMBER="$(echo "$1" | cut -d ':' -f 1)"
-  local ETCD_PORT="2379"
+  local APISERVER_PORT="$1"
+  local ETCD_PORT="$2"
   local APISERVERS=""
-  local APISERVER_PORT="$(echo "$1" | cut -d ':' -f 2)"
+  local APISERVER=""
 
-  local MEMBERS="$(curl -s http://${ETCD_MEMBER}:${ETCD_PORT}/v2/members \
-    | jq ".members[].peerURLs[0]" \
-    | sed -n "s/.*http:\/\/\(.*\):.*/\1/p")"
-  for MEMBER in ${MEMBERS}; do
-    local APISERVER="${MEMBER}:${APISERVER_PORT}"
-    if curl -sf -m 1 "${APISERVER}" &>/dev/null; then
+  local KUBE_NODE_LIST="$(curl -s 127.0.0.1:${ETCD_PORT}/v2/keys/registry/minions \
+                        | jq -r .node.nodes[].value \
+                        | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address')"
+  if [[ -z "${KUBE_NODE_LIST}" ]]; then exit 1; fi
+
+  for KUBE_NODE in ${KUBE_NODE_LIST}; do
+    APISERVER="https://${KUBE_NODE}:${APISERVER_PORT}"
+    if curl --insecure -u admin:admin -sf -m 3 "${APISERVER}/healthz" &>/dev/null; then
       APISERVERS="${APISERVERS}","${APISERVER}"
     fi
   done
@@ -105,60 +115,77 @@ function main(){
   get_options "$@"
   local IPADDR="${EX_IPADDR}"
   local WORKER="${EX_WORKER}"
-  local APISERVER="${EX_APISERVER}"
+  local APISERVER_PORT="${EX_APISERVER_PORT}"
+  local ETCD_PORT="${EX_ETCD_PORT}"
+  local APISERVER=""
   local APISERVERS=""
   local APISERVER_COUNT=5
+  local KUBE_CONF_PATH="/etc/kubernetes/manifests-multi"
+  local KUBE_ADDONS_CONF_PATH="/etc/kubernetes/addons/multinode"
+  local KUBE_ETC="/etc/kubernetes"
+  local KUBELET_VARLIB="/var/lib/kubelet"
 
   export REGISTRY=gcr.io/google_containers
   export ARCH=amd64
   export K8S_VERSION="${EX_K8S_VERSION}"
-  export ADDON_MGR_VER=v4
+  export ADDON_MGR_VER=v5.1
 
-  sed -i "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/*.json
-  sed -i "s|REGISTRY|${REGISTRY}|g" /go/kube-conf/addons/multinode/*.yaml
-  sed -i "s|ARCH|${ARCH}|g" /go/kube-conf/*.json
-  sed -i "s|ARCH|${ARCH}|g" /go/kube-conf/addons/multinode/*.yaml 
-  sed -i "s|VERSION|v${K8S_VERSION}|g" /go/kube-conf/*.json
-  sed -i "s|VERSION|v${K8S_VERSION}|g" /go/kube-conf/addons/multinode/*.yaml 
-  sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/srv/kubernetes/kubeconfig.yaml\"\,|g" /go/kube-conf/master-multi.json
-  sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" /go/kube-conf/master-multi.json
+  echo "Copy manifests-multi to /etc/kubernetes"
+
+  mkdir -p mkdir -p "${KUBE_CONF_PATH}"
+  mkdir -p ${KUBE_ADDONS_CONF_PATH}
+  mkdir -p "${KUBELET_VARLIB}/kubeconfig"
+
+  cp -rf /go/kube-conf/*.json "${KUBE_CONF_PATH}"
+  cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml "${KUBELET_VARLIB}/kubeconfig"
+  cp -rf /go/kube-conf/kubeconfig "${KUBE_ETC}/"
+  cp -ff /go/kube-conf/addons/multinode/* "${KUBE_ADDONS_CONF_PATH}"
+  cp -f /go/cp-certs.sh "${KUBE_ETC}"
+  cp -f /go/update-addons.sh "${KUBE_ETC}"
+
+  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_CONF_PATH}"/*.json
+  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
+  sed -i "s|ARCH|${ARCH}|g" "${KUBE_CONF_PATH}"/*.json
+  sed -i "s|ARCH|${ARCH}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
+  sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_CONF_PATH}"/*.json
+  sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
+  sed -i "s|\"--master=127.0.0.1:${APISERVER_PORT}\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/srv/kubernetes/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
+  sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
+  sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
 
   if [[ "${WORKER}" == "false" ]]; then
     APISERVERS="http://127.0.0.1:8080"
+    APISERVER="${APISERVERS}"
   else
-    echo '{}' > /go/kube-conf/master-multi.json
-    APISERVERS="$(get_API_Servers "${APISERVER}")"
-    sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" /go/kube-conf/kubeconfig/kubeconfig.yaml
-  fi
 
-  echo "Copy manifests-multi to /etc/kubernetes"
-  
-  mkdir -p /etc/kubernetes/manifests-multi
-  mkdir -p /etc/kubernetes/addons/multinode
-  mkdir -p /var/lib/kubelet/kubeconfig
-  
-  cp -rf /go/kube-conf/*.json /etc/kubernetes/manifests-multi
-  cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml /var/lib/kubelet/kubeconfig
-  cp -rf /go/kube-conf/kubeconfig /etc/kubernetes/ 
-  cp -ff /go/kube-conf/addons/multinode/* /etc/kubernetes/addons/multinode
-  cp -f /go/cp-certs.sh /etc/kubernetes
-  cp -f /go/update-addons.sh /etc/kubernetes
-  
-  if [[ -z "${APISERVER}" ]]; then
-    APISERVER=${IPADDR}
+    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_PORT}")" || exit 1
+    APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
+
+    echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
+    echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
+    
   fi
+  
+  #TODO: Connect the kube-apiserver via public DN with certificate
+  sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBE_ETC}/kubeconfig/kubeconfig.yaml"
+  sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
   
   #for exposing kubernetes&kube-dns
-  sed -i "s|127.0.0.1|${APISERVER}|g" /etc/kubernetes/update-addons.sh
-  sed -i "s|127.0.0.1|${APISERVER}|g" /etc/kubernetes/addons/multinode/kubernetes-public.yaml
- 
+  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/update-addons.sh"
+  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ADDONS_CONF_PATH}/kubernetes-public.yaml"
+
+  until ! docker ps | grep -w 'k8sup-kubelet'; do
+    docker stop k8sup-kubelet 1>/dev/null || true
+    docker rm k8sup-kubelet 1>/dev/null || true
+  done
+
   echo "Running Kubernetes ..."
 
   docker run \
       --volume=/:/rootfs:ro \
       --volume=/sys:/sys:ro \
       --volume=/var/lib/docker/:/var/lib/docker:rw \
-      --volume=/var/lib/kubelet/:/var/lib/kubelet:rw,rslave \
+      --volume=${KUBELET_VARLIB}/:${KUBELET_VARLIB}/:rw,rslave \
       --volume=/var/run:/var/run:rw \
       --volume=/var/run/dbus:/var/run/dbus:rw \
       --volume=/run/flannel:/run/flannel:rw \
@@ -166,8 +193,9 @@ function main(){
       --volume=/opt/cni/bin:/opt/cni/bin:rw \
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
-      --volume=/etc/kubernetes/manifests-multi/master-multi.json:/etc/kubernetes/manifests-multi/master-multi.json \
-      --volume=/etc/kubernetes/manifests-multi/addon-manager-multinode.json:/etc/kubernetes/manifests-multi/addon-manager-multinode.json \
+      --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+      --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
+      --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
       --net=host \
       --privileged=true \
       --pid=host \
@@ -177,17 +205,34 @@ function main(){
       "gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION}" \
       /hyperkube kubelet \
           --allow-privileged=true \
-          --api-servers="${APISERVERS}" \
+          --require-kubeconfig=true \
+          --kubeconfig=${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
           --v=2 \
           --address=0.0.0.0 \
           --enable-server \
           --hostname-override="${IPADDR}" \
-          --pod-manifest-path=/etc/kubernetes/manifests-multi \
+          --pod-manifest-path=${KUBE_CONF_PATH} \
           --containerized \
           --network-plugin=cni \
           --network-plugin-dir=/etc/cni/net.d \
           --cluster-dns=10.0.0.10 \
           --cluster-domain=cluster.local
+
+  echo "Waiting for k8s apiserver ready..."
+  until curl --insecure -u admin:admin -sf "${APISERVER}/healthz" &>/dev/null; do
+    sleep 1
+  done
+
+  # Try to set this node as schedulable
+  echo "Uncordoning this node..."
+  until docker run \
+    --net=host \
+    --rm=true \
+    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
+    /hyperkube kubectl -s "${APISERVER}" \
+    uncordon "${IPADDR}" &>/dev/null; do
+      sleep 5
+  done
 }
 
 main "$@"

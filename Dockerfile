@@ -3,7 +3,7 @@ MAINTAINER hsfeng@gmail.com
 
 RUN apt-get -y update
 
-RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime
+RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime psmisc
 
 RUN git clone https://github.com/containernetworking/cni.git && go get "github.com/oleksandr/bonjour"
 
@@ -20,6 +20,7 @@ ADD kube-down /go/kube-down
 ADD entrypoint.sh /go/entrypoint.sh
 ADD cp-certs.sh /go/cp-certs.sh
 ADD update-addons.sh /go/update-addons.sh
+ADD etcd-maintainer.sh /go/etcd-maintainer.sh
 
 RUN chmod +x /go/entrypoint.sh
 RUN chmod +x /go/kube-up
