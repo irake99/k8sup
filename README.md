@@ -33,6 +33,7 @@ $ sudo docker run -d \
     -v /var/lib/cni:/var/lib/cni \
     -v /var/lib/etcd:/var/lib/etcd \
     -v /etc/kubernetes:/etc/kubernetes \
+    --name=k8sup \
     cdxvirt/k8sup \
     --network={your-subnet-id/mask}
 </pre>

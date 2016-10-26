@@ -6,6 +6,7 @@ function stop_k8s(){
   local ETCD_CLIENT_PORT="$2"
   local K8S_VERSION="$3"
   local K8S_PORT="$4"
+  local REGISTRY="$5"
 
   # Find an API server
   local APISERVER=""
@@ -29,7 +30,7 @@ function stop_k8s(){
   docker run \
     --net=host \
     --rm=true \
-    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
+    "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
     /hyperkube kubectl -s "${APISERVER}" \
     drain "${IPADDR}" --force --delete-local-data
 
@@ -38,7 +39,7 @@ function stop_k8s(){
     docker run \
       --net=host \
       --rm=true \
-      gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
+      "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
       /hyperkube kubectl -s "${APISERVER}" \
       delete node "${IPADDR}"
   fi
@@ -49,7 +50,7 @@ function stop_k8s(){
   echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager.json &>/dev/null
 
   echo -n "Waiting for all k8s pods stopped ..." 1>&2
-  until [[ "$(docker ps | grep 'gcr.io/google_containers/hyperkube' | wc -l)" == 1 ]]; do
+  until [[ "$(docker ps | grep ${REGISTRY}/hyperkube | wc -l)" == 1 ]]; do
     echo -n "." 1>&2
     sleep 1
   done
@@ -84,7 +85,8 @@ function show_usage(){
 Options:
 -r, --remove                             Exit K8S cluster and remove data
     --stop-k8s-only                      Just stop k8s service without stop etcd service
-    --exit-remote-etcd=REMOTE_IPADDR     Exit the remote etcd member
+    --exit-local-etcd-only               Exit the local etcd member frome cluster
+    --exit-remote-etcd=REMOTE_IPADDR     Exit the remote etcd member frome cluster
 -h, --help                               This help text
 "
 
@@ -94,7 +96,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="rh"
-  local LONGOPTS="remove,stop-k8s-only,exit-remote-etcd:,help"
+  local LONGOPTS="remove,stop-k8s-only,exit-local-etcd-only,exit-remote-etcd:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -109,6 +111,10 @@ function get_options(){
               ;;
              --stop-k8s-only)
               export EX_STOP_K8S_ONLY="true"
+              shift
+              ;;
+             --exit-local-etcd-only)
+              export EX_LOCAL_ETCD_ONLY="true"
               shift
               ;;
              --exit-remote-etcd)
@@ -143,21 +149,27 @@ function main(){
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
   local K8S_VERSION="${EX_K8S_VERSION}"
   local K8S_PORT="${EX_K8S_PORT}"
+  local REGISTRY="${EX_REGISTRY}"
   local LOCAL_ETCD="true"
 
-  STOP_K8S_ONLY="${EX_STOP_K8S_ONLY}"
-  EXIT_ETCD_ONLY="${EX_EXIT_ETCD_ONLY}"
+  local STOP_K8S_ONLY="${EX_STOP_K8S_ONLY}"
+  local EXIT_ETCD_ONLY="${EX_EXIT_ETCD_ONLY}"
   if [[ "${STOP_K8S_ONLY}" == "true" ]]; then
-    stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}"
+    stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}" "${REGISTRY}"
+    exit 0
+  fi
+  if [[ "${EX_LOCAL_ETCD_ONLY}" == "true" ]]; then
+    exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
     exit 0
   fi
   if [[ "${EX_REMOTE_ETCD}" == "true" ]]; then
     local REMOTE_IPADDR="${EX_REMOTE_IPADDR}"
-    exit_etcd "${REMOTE_IPADDR}" "${ETCD_CLIENT_PORT}" "false"
+    LOCAL_ETCD="false"
+    exit_etcd "${REMOTE_IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
     exit 0
   fi
 
-  stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}"
+  stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}" "${REGISTRY}"
   if [[ "${EXIT}" == "true" ]]; then
     exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
   fi
