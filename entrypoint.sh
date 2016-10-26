@@ -351,6 +351,8 @@ Options:
     --restore                Try to restore etcd data and start a new cluster
     --rejoin-etcd            Re-join the same etcd cluster
 -p, --proxy                  Force to run as etcd and k8s proxy
+-r, --registry=REGISTRY      Registry of docker image
+                             (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -h, --help                   This help text
 "
 
@@ -359,8 +361,8 @@ Options:
 
 function get_options(){
   local PROGNAME="${0##*/}"
-  local SHORTOPTS="n:c:v:ph"
-  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,proxy,restore,rejoin-etcd,help"
+  local SHORTOPTS="n:c:v:pr:h"
+  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,proxy,restore,rejoin-etcd,registry:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -400,6 +402,11 @@ function get_options(){
           -p|--proxy)
               export EX_PROXY="on"
               shift
+              ;;
+          -r|--registry)
+              export EX_COREOS_REGISTRY="$2"
+              export EX_K8S_REGISTRY="$2"
+              shift 2
               ;;
           -h|--help)
               show_usage
@@ -448,18 +455,25 @@ function get_options(){
   if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
     export EX_MAX_ETCD_MEMBER_SIZE="3"
   fi
+
+  if [[ -z "${EX_COREOS_REGISTRY}" ]] || [[ -z "${EX_K8S_REGISTRY}" ]]; then
+    export EX_COREOS_REGISTRY="quay.io/coreos"
+    export EX_K8S_REGISTRY="gcr.io/google_containers"
+  fi
 }
 
 function main(){
+  get_options "$@"
 
+  local COREOS_REGISTRY="${EX_COREOS_REGISTRY}"
+  local K8S_REGISTRY="${EX_K8S_REGISTRY}"
   export ENV_ETCD_VERSION="3.0.4"
   export ENV_FLANNELD_VERSION="0.5.5"
 #  export ENV_K8S_VERSION="1.3.6"
-  export ENV_ETCD_IMAGE="quay.io/coreos/etcd:v${ENV_ETCD_VERSION}"
-  export ENV_FLANNELD_IMAGE="quay.io/coreos/flannel:${ENV_FLANNELD_VERSION}"
+  export ENV_ETCD_IMAGE="${COREOS_REGISTRY}/etcd:v${ENV_ETCD_VERSION}"
+  export ENV_FLANNELD_IMAGE="${COREOS_REGISTRY}/flannel:${ENV_FLANNELD_VERSION}"
 #  export ENV_HYPERKUBE_IMAGE="gcr.io/google_containers/hyperkube-amd64:v${ENV_K8S_VERSION}"
 
-  get_options "$@"
   # Set a config file
   local CONFIG_FILE="/root/.bashrc"
   local REJOIN_ETCD="${EX_REJOIN_ETCD}"
@@ -556,7 +570,10 @@ function main(){
   flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"
 
   # echo "Running Kubernetes"
-  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}"
+  if [[ -n "${K8S_REGISTRY}" ]]; then
+    local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
+  fi
+  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" "${REGISTRY_OPTION}"
 
   # DNS-SD
   local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
@@ -570,6 +587,7 @@ function main(){
   echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_NODE_NAME=${NODE_NAME}" >> "${CONFIG_FILE}"
   echo "export EX_IP_AND_MASK=${IP_AND_MASK}" >> "${CONFIG_FILE}"
+  echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
 
   bash -c "/go/etcd-maintainer.sh" &
 

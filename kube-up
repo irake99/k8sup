@@ -8,6 +8,7 @@ Options:
 -a, --apiserver-port=PORT     Apiserver port (Default: 8080)
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
 -v, --version=VERSION         Specify k8s version (Default: 1.3.6)
+-r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
 -h, --help                    This help text
 "
 
@@ -16,8 +17,8 @@ Options:
 
 function get_options(){
   local PROGNAME="${0##*/}"
-  local SHORTOPTS="i:wa:v:h"
-  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,help"
+  local SHORTOPTS="i:wa:v:r:h"
+  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,registry:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -44,6 +45,10 @@ function get_options(){
               ;;
           -v|--version)
               export EX_K8S_VERSION="$2"
+              shift 2
+              ;;
+          -r|--registry)
+              export EX_REGISTRY="$2"
               shift 2
               ;;
           -h|--help)
@@ -85,6 +90,10 @@ function get_options(){
   if [[ -z "${EX_K8S_VERSION}" ]]; then
     export EX_K8S_VERSION="1.3.6"
   fi
+
+  if [[ -z "${EX_REGISTRY}" ]]; then
+    export EX_REGISTRY="gcr.io/google_containers"
+  fi
 }
 
 # Get k8s apiservers form the list of etcd members
@@ -123,7 +132,7 @@ function main(){
   local APISERVER_COUNT=5
   local KUBE_CONF_PATH="/etc/kubernetes/manifests-multi"
 
-  export REGISTRY=gcr.io/google_containers
+  export REGISTRY="${EX_REGISTRY}"
   export ARCH=amd64
   export K8S_VERSION="${EX_K8S_VERSION}"
   export ADDON_MGR_VER=v4
@@ -190,7 +199,7 @@ function main(){
       --restart=always \
       --name=k8sup-kubelet \
       -d \
-      "gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION}" \
+      "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
       /hyperkube kubelet \
           --allow-privileged=true \
           --api-servers="${APISERVERS}" \
@@ -205,7 +214,7 @@ function main(){
           --cluster-dns=10.0.0.10 \
           --cluster-domain=cluster.local
 
-  echo "Waiting for k8s apiserver ready..."
+  echo "Waiting for any k8s apiserver connected..."
   until curl -sf "${APISERVER}/healthz" &>/dev/null; do
     sleep 1
   done
@@ -215,7 +224,7 @@ function main(){
   until docker run \
     --net=host \
     --rm=true \
-    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
+    "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
     /hyperkube kubectl -s "${APISERVER}" \
     uncordon "${IPADDR}" &>/dev/null; do
       sleep 5
