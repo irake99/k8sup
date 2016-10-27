@@ -143,15 +143,17 @@ function main(){
   echo "Copy manifests-multi to /etc/kubernetes"
 
   mkdir -p mkdir -p "${KUBE_CONF_PATH}"
-  mkdir -p ${KUBE_ADDONS_CONF_PATH}
+  mkdir -p ${KUBE_ETC}/addons
   mkdir -p "${KUBELET_VARLIB}/kubeconfig"
+  mkdir -p "${KUBE_ADDONS_CONF_PATH}"
 
   cp -rf /go/kube-conf/*.json "${KUBE_CONF_PATH}"
   cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml "${KUBELET_VARLIB}/kubeconfig"
   cp -rf /go/kube-conf/kubeconfig "${KUBE_ETC}/"
-  cp -ff /go/kube-conf/addons/multinode/* "${KUBE_ADDONS_CONF_PATH}"
-  cp -f /go/cp-certs.sh "${KUBE_ETC}"
-  cp -f /go/update-addons.sh "${KUBE_ETC}"
+  cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
+  cp -f /go/cp-certs.sh "${KUBE_ETC}/"
+  cp -f /go/update-addons.sh "${KUBE_ETC}/"
+  cp -rf /go/heapster-1.2.0/deploy/kube-config/influxdb "${KUBE_ADDONS_CONF_PATH}/heapster" 
 
   sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_CONF_PATH}"/*.json
   sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
@@ -191,7 +193,7 @@ function main(){
   
   #for exposing kubernetes&kube-dns
   sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/update-addons.sh"
-  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ADDONS_CONF_PATH}/kubernetes-public.yaml"
+  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/addons/kubernetes-public.yaml"
 
   until ! docker ps | grep -w 'k8sup-kubelet'; do
     docker stop k8sup-kubelet 1>/dev/null || true

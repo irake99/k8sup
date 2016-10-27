@@ -6,6 +6,8 @@ KUBECTL_OPTS=${KUBECTL_OPTS:-}
 function main(){
   
   sed -i "s|clusterIP: 10.0.0.10|clusterIP: 10.0.0.10\n  externalIPs: [\"127.0.0.1\"]|g" /etc/kubernetes/addons/multinode/skydns-svc.yaml   
+  
+  sed -i "s|^  labels:|  labels:\n    kubernetes.io/cluster-service: 'true'|g" /etc/kubernetes/addons/multinode/heapster/*-controller.yaml
 
   /copy-addons.sh "$@" &
   
