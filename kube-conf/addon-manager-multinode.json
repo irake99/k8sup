@@ -43,12 +43,17 @@
             "readOnly": false
           },
           {
-            "name": "owaddons",
+            "name": "addons-kube-proxy",
             "mountPath": "/etc/kubernetes/addons/multinode/kube-proxy.yaml",
             "readOnly": false
           },
           {
-            "name": "k8s-public",
+            "name": "addons-heapster",
+            "mountPath": "/etc/kubernetes/addons/multinode/heapster",
+            "readOnly": false 
+          },
+          {
+            "name": "addons-kube-public",
             "mountPath": "/etc/kubernetes/kubernetes-public.yaml",
             "readOnly": false
           },
@@ -65,15 +70,21 @@
         "emptyDir": {}
       },
       {
-        "name": "owaddons",
+        "name": "addons-kube-proxy",
         "hostPath": {
           "path": "/etc/kubernetes/addons/multinode/kube-proxy.yaml"
         }
       },
       {
-        "name": "k8s-public",
+        "name": "addons-heapster",
         "hostPath": {
-          "path": "/etc/kubernetes/addons/multinode/kubernetes-public.yaml"
+          "path": "/etc/kubernetes/addons/multinode/heapster"
+        }
+      },
+      {
+        "name": "addons-kube-public",
+        "hostPath": {
+          "path": "/etc/kubernetes/addons/kubernetes-public.yaml"
         }
       },
       {
