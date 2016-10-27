@@ -8,6 +8,7 @@ Options:
 -a, --apiserver-port=PORT     Apiserver port (Default: 6443)
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
 -v, --version=VERSION         Specify k8s version (Default: 1.4.4)
+-r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
 -h, --help                    This help text
 "
 
@@ -16,8 +17,8 @@ Options:
 
 function get_options(){
   local PROGNAME="${0##*/}"
-  local SHORTOPTS="i:wa:v:h"
-  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,help"
+  local SHORTOPTS="i:wa:v:r:h"
+  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,registry:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -35,7 +36,7 @@ function get_options(){
               shift 2
               ;;
           -a|--etcd-port)
-              export EX_ETCD_PORT="$2"
+              export EX_ETCD_CLIENT_PORT="$2"
               shift 2
               ;;
           -p|--worker)
@@ -44,6 +45,10 @@ function get_options(){
               ;;
           -v|--version)
               export EX_K8S_VERSION="$2"
+              shift 2
+              ;;
+          -r|--registry)
+              export EX_REGISTRY="$2"
               shift 2
               ;;
           -h|--help)
@@ -74,8 +79,8 @@ function get_options(){
     export EX_APISERVER_PORT="6443"
   fi
 
-  if [[ -z "${EX_ETCD_PORT}" ]]; then
-    export EX_ETCD_PORT="2379"
+  if [[ -z "${EX_ETCD_CLIENT_PORT}" ]]; then
+    export EX_ETCD_CLIENT_PORT="2379"
   fi
 
   if [[ "${EX_WORKER}" != "true" ]]; then
@@ -85,16 +90,20 @@ function get_options(){
   if [[ -z "${EX_K8S_VERSION}" ]]; then
     export EX_K8S_VERSION="1.4.4"
   fi
+
+  if [[ -z "${EX_REGISTRY}" ]]; then
+    export EX_REGISTRY="gcr.io/google_containers"
+  fi
 }
 
 # Get k8s apiservers form the list of etcd members
 function get_API_Servers(){
   local APISERVER_PORT="$1"
-  local ETCD_PORT="$2"
+  local ETCD_CLIENT_PORT="$2"
   local APISERVERS=""
   local APISERVER=""
 
-  local KUBE_NODE_LIST="$(curl -s 127.0.0.1:${ETCD_PORT}/v2/keys/registry/minions \
+  local KUBE_NODE_LIST="$(curl -s 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
                         | jq -r .node.nodes[].value \
                         | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address')"
   if [[ -z "${KUBE_NODE_LIST}" ]]; then exit 1; fi
@@ -116,7 +125,8 @@ function main(){
   local IPADDR="${EX_IPADDR}"
   local WORKER="${EX_WORKER}"
   local APISERVER_PORT="${EX_APISERVER_PORT}"
-  local ETCD_PORT="${EX_ETCD_PORT}"
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
+  local ETCD_PROXY=""
   local APISERVER=""
   local APISERVERS=""
   local APISERVER_COUNT=5
@@ -125,7 +135,7 @@ function main(){
   local KUBE_ETC="/etc/kubernetes"
   local KUBELET_VARLIB="/var/lib/kubelet"
 
-  export REGISTRY=gcr.io/google_containers
+  export REGISTRY="${EX_REGISTRY}"
   export ARCH=amd64
   export K8S_VERSION="${EX_K8S_VERSION}"
   export ADDON_MGR_VER=v5.1
@@ -153,12 +163,21 @@ function main(){
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
 
+  # If etcd is running as a proxy, set k8s as a worker
+  local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+  if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+    ETCD_PROXY="off"
+    WORKER="false"
+  else
+    ETCD_PROXY="on"
+    WORKER="true"
+  fi
+
   if [[ "${WORKER}" == "false" ]]; then
     APISERVERS="http://127.0.0.1:8080"
     APISERVER="${APISERVERS}"
   else
-
-    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_PORT}")" || exit 1
+    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
 
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
@@ -202,7 +221,7 @@ function main(){
       --restart=always \
       --name=k8sup-kubelet \
       -d \
-      "gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION}" \
+      "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
       /hyperkube kubelet \
           --allow-privileged=true \
           --require-kubeconfig=true \
@@ -218,7 +237,7 @@ function main(){
           --cluster-dns=10.0.0.10 \
           --cluster-domain=cluster.local
 
-  echo "Waiting for k8s apiserver ready..."
+  echo "Waiting for any k8s apiserver connected..."
   until curl --insecure -u admin:admin -sf "${APISERVER}/healthz" &>/dev/null; do
     sleep 1
   done
@@ -228,7 +247,7 @@ function main(){
   until docker run \
     --net=host \
     --rm=true \
-    gcr.io/google_containers/hyperkube-amd64:v${K8S_VERSION} \
+    "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
     /hyperkube kubectl -s "${APISERVER}" \
     uncordon "${IPADDR}" &>/dev/null; do
       sleep 5
