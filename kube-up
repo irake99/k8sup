@@ -1,5 +1,45 @@
 #!/bin/bash
 
+function rbd_env_detector(){
+#  if [[ -z "$(which rbd)" || ! -f "/opt/bin/rbd" ]] \
+#     || [[ -z "$(which modprobe)" || ! -f "/opt/bin/modprobe" ]] \
+#     || [[ ! -f "$(find "/lib/modules" -type f -name "rbd.ko")" ]]; then
+#    return 1;
+#  fi
+
+  local RBD_CMD_PATH
+  local MODPROBE_CMD_PATH
+  local RBD_KO_PATH
+  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].Mounts[].Source')"
+
+  for VOL in ${VOLUMES}; do
+    RBD_CMD_PATH="$(find "${VOL}" -type f -name "rbd.ko" 2>/dev/null)"
+    if [[ -n "${RBD_CMD_PATH}" ]]; then
+      break
+    fi
+  done
+  if [[ -z "${RBD_CMD_PATH}" ]]; then
+    return 1
+  fi
+
+  for VOL in ${VOLUMES}; do
+    MODPROBE_CMD_PATH="$(find "${VOL}" -type f -name "modprobe" 2>/dev/null)"
+    if [[ -n "${MODPROBE_CMD_PATH}" ]]; then
+      break
+    fi
+  done
+  if [[ -z "${MODPROBE_CMD_PATH}" ]]; then
+    return 1
+  fi
+
+  RBD_KO_PATH="$(find "/lib/modules" -type f -name "rbd.ko" 2>/dev/null)"
+  if [[ -z "${RBD_KO_PATH}" ]]; then
+    return 1
+  fi
+
+  echo "${RBD_PATH}" "${MODPROBE_PATH}" "${RBD_KO_PATH}"
+}
+
 function show_usage(){
   USAGE="Usage: ${0##*/} [options...]
 Options:
@@ -175,6 +215,25 @@ function main(){
     docker rm k8sup-kubelet 1>/dev/null || true
   done
 
+  local RBD_ENV_CHECK
+  RBD_ENV_CHECK=($(rbd_env_detector)) || echo "RBD is not available on this host." 1>&2
+  if [[ -n "${RBD_ENV_CHECK}" ]]; then
+    echo "RBD is available on this host."
+
+    local RBD_CMD_PATH="$(${ECHO_CMD} "${RBD_ENV_CHECK[0]}")"
+    local MODPROBE_CMD_PATH="$(${ECHO_CMD} "${RBD_ENV_CHECK[1]}")"
+    local RBD_KO_PATH="$(${ECHO_CMD} "${RBD_ENV_CHECK[2]}")"
+
+    echo "RBD is available on this host."
+    local RBD_OPTIONS="--volume=${RBD_CMD_PATH}:/bin/rbd:ro \
+          --volume=/lib/modules:/lib/modules:ro \
+          --volume=/usr/bin/docker:/usr/bin/docker \
+          --volume=/usr/lib/libdevmapper.so:/usr/lib/libdevmapper.so.1.02 \
+          --volume=${RBD_KO_PATH}:/usr/sbin/modprobe"
+  else
+    echo "RBD is not available on this host." 1>&2
+  fi
+
   echo "Running Kubernetes ..."
 
   docker run \
@@ -196,7 +255,6 @@ function main(){
       --net=host \
       --privileged=true \
       --pid=host \
-      --restart=always \
       --name=k8sup-kubelet \
       -d \
       "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \

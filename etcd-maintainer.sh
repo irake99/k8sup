@@ -92,7 +92,7 @@ function main(){
             -XPUT -d value="${MEMBER_FAILED}"
 
           # Set the remote failed etcd member to exit the etcd cluster
-#          /go/kube-down --exit-remote-etcd="${MEMBER_FAILED}"
+          /go/kube-down --exit-remote-etcd="${MEMBER_FAILED}"
 
           # Remove the failed member that has been repaced from the list
           MEMBER_DISCONNECTED="$(echo "${MEMBER_DISCONNECTED}" | sed /.*${MEMBER_FAILED}/d)"
