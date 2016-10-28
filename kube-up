@@ -196,7 +196,6 @@ function main(){
       --net=host \
       --privileged=true \
       --pid=host \
-      --restart=always \
       --name=k8sup-kubelet \
       -d \
       "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
