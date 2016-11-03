@@ -27,8 +27,6 @@ $ sudo docker run -d \
     -v $(which docker):/bin/docker:ro \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /usr/lib/libdevmapper.so:/usr/lib/$(readlink /usr/lib/libdevmapper.so | xargs basename):ro \
-    -v /usr/sbin:/usr/sbin:ro \
-    -v /opt/bin:/opt/bin:ro \
     -v /lib/modules:/lib/modules:ro \
     -v /etc/cni:/etc/cni \
     -v /opt/cni:/opt/cni \
@@ -54,3 +52,5 @@ If you want to delete etcd data:
 <pre>
 $ sudo rm -rf /var/lib/etcd/*
 </pre>
+
+If you want to use Ceph RBD mounting with k8sup, make sure that the rbd, modprobe command binary files and the rbd.ko kernel object file are mounted to the k8sup container as volume.
