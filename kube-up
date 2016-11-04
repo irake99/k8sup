@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 function get_filepath_from_volumes(){
   local FILENAME="$1"
@@ -44,7 +45,8 @@ function rbd_env_detector(){
         --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
         --volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro \
         --volume=${DOCKER_CMD_PATH}:/bin/docker:ro \
-        --volume=${LIBDEVMAPPER_SO_PATH}:${LIBDEVMAPPER_SO_PATH}:ro"
+        --volume=${LIBDEVMAPPER_SO_PATH}:${LIBDEVMAPPER_SO_PATH}:ro \
+        --volume=/lib/modules:/lib/modules:ro"
 
   echo "${RBD_OPTIONS}"
   return 0
