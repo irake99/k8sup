@@ -1,4 +1,56 @@
 #!/bin/bash
+set -e
+
+function get_filepath_from_volumes(){
+  local FILENAME="$1"
+  local VOLUMES="$2"
+  local VOL_SRC
+  local VOL_DEST
+  local FILEPATH
+
+  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+  for VOL in ${VOLUMES}; do
+    VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1)"
+    VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
+    FILEPATH="$(find "${VOL_DEST}" -type f -name "${FILENAME}" -o -type l -name "${FILENAME}" 2>/dev/null | head -n 1)"
+    if [[ -n "${FILEPATH}" ]]; then
+      echo "${FILEPATH}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+function rbd_env_detector(){
+  local RBD_CMD_PATH
+  local RBD_KO_PATH
+  local MODPROBE_CMD_PATH
+  local DOCKER_CMD_PATH
+  local LIBDEVMAPPER_SO_PATH
+  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+
+  [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
+    && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
+    && RBD_CMD_PATH="$(get_filepath_from_volumes "rbd" "${VOLUMES}")" \
+    && RBD_KO_PATH="$(get_filepath_from_volumes "rbd.ko" "${VOLUMES}")" \
+    && MODPROBE_CMD_PATH="$(get_filepath_from_volumes "modprobe" "${VOLUMES}")" \
+    && DOCKER_CMD_PATH="$(get_filepath_from_volumes "docker" "$(echo "${VOLUMES}" | grep "/bin")")" \
+    && LIBDEVMAPPER_SO_PATH="$(get_filepath_from_volumes "libdevmapper.so.*" "$(echo "${VOLUMES}" | grep "/usr/lib")")" \
+    || { echo "RBD mounting is not available on this host." 1>&2 && return 1; }
+
+  echo "RBD mounting is available on this host." 1>&2
+
+  local RBD_OPTIONS="--volume=${RBD_CMD_PATH}:/bin/rbd:ro \
+        --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
+        --volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro \
+        --volume=${DOCKER_CMD_PATH}:/bin/docker:ro \
+        --volume=${LIBDEVMAPPER_SO_PATH}:${LIBDEVMAPPER_SO_PATH}:ro \
+        --volume=/lib/modules:/lib/modules:ro"
+
+  echo "${RBD_OPTIONS}"
+  return 0
+}
 
 function show_usage(){
   USAGE="Usage: ${0##*/} [options...]
@@ -175,6 +227,8 @@ function main(){
     docker rm k8sup-kubelet 1>/dev/null || true
   done
 
+  local RBD_OPTIONS="$(rbd_env_detector)"
+
   echo "Running Kubernetes ..."
 
   docker run \
@@ -193,10 +247,10 @@ function main(){
       --volume=${KUBE_CONF_PATH}/kube-proxy.json:${KUBE_CONF_PATH}/kube-proxy.json \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager.json:${KUBE_CONF_PATH}/addon-manager.json \
+      ${RBD_OPTIONS} \
       --net=host \
       --privileged=true \
       --pid=host \
-      --restart=always \
       --name=k8sup-kubelet \
       -d \
       "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
