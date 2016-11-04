@@ -10,7 +10,7 @@ function stop_k8s(){
 
   # Find an API server
   local APISERVER=""
-  if curl -sf "127.0.0.1:${K8S_PORT}" &>/dev/null; then
+  if curl --insecure -u admin:admin -sf "https://127.0.0.1:${K8S_PORT}" &>/dev/null; then
     APISERVER="127.0.0.1:${K8S_PORT}"
   else
     # If API server is not running on local, searching it from other nodes.
@@ -19,7 +19,7 @@ function stop_k8s(){
                       | sed -n "s/.*\/\(.*\)$/\1/p")"
     local NODE=""
     for NODE in ${NODE_LIST}; do
-      if curl -sf "${NODE}:${K8S_PORT}" &>/dev/null; then
+      if curl --insecure -u admin:admin -sf "https://${NODE}:${K8S_PORT}" &>/dev/null; then
         APISERVER="${NODE}:${K8S_PORT}"
         break
       fi
@@ -31,8 +31,8 @@ function stop_k8s(){
     --net=host \
     --rm=true \
     "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
-    /hyperkube kubectl -s "${APISERVER}" \
-    drain "${IPADDR}" --force --delete-local-data
+    /hyperkube kubectl \
+    drain "${IPADDR}" --force --ignore-daemonsets --delete-local-data
 
   if [[ "${EXIT}" == "true" ]]; then
     # Exit k8s cluster
@@ -40,16 +40,16 @@ function stop_k8s(){
       --net=host \
       --rm=true \
       "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
-      /hyperkube kubectl -s "${APISERVER}" \
+      /hyperkube kubectl \
       delete node "${IPADDR}"
   fi
 
   # Remove k8s system pods conf
   echo '{}' | tee /etc/kubernetes/manifests-multi/master-multi.json &>/dev/null
-  echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager-multinode.json.json &>/dev/null
+  echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager-multinode.json &>/dev/null
 
   echo -n "Waiting for all k8s pods stopped ..." 1>&2
-  until [[ "$(docker ps | grep ${REGISTRY}/hyperkube | wc -l)" == 1 ]]; do
+  until [[ "$(docker ps | grep ${REGISTRY}/hyperkube | wc -l)" == 2 ]]; do
     echo -n "." 1>&2
     sleep 1
   done
@@ -174,8 +174,8 @@ function main(){
   fi
 
   echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup." 1>&2
-  docker stop $(docker ps -a | grep -E "k8sup-kubelet|k8sup-etcd|k8sup-flannel" | awk '{print $1}') 1>/dev/null
-  docker rm $(docker ps -a | grep -E "k8sup-kubelet|k8sup-etcd|k8sup-flannel" | awk '{print $1}') 1>/dev/null
+  docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null
+  docker rm $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null
 
   killall etcd-maintainer.sh
   docker rm -f $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
