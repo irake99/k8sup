@@ -4,6 +4,20 @@ set -e
 # Stop container when running 'exit NON-ZERO'
 trap '[ "$?" -ne 0 ] && docker stop k8sup' EXIT
 
+function get_alive_etcd_member_size(){
+  local MEMBER_LIST="$1"
+  local MEMBER_CLIENT_ADDR_LIST="$(echo "${MEMBER_LIST}" | jq -r ".members[].clientURLs[0]" | grep -v 'null')"
+  local ALIVE_ETCD_MEMBER_SIZE="0"
+  local MEMBER
+
+  for MEMBER in ${MEMBER_CLIENT_ADDR_LIST}; do
+    if curl -s -m 3 "${MEMBER}/health" &>/dev/null; then
+      ((ALIVE_ETCD_MEMBER_SIZE++))
+    fi
+  done
+  echo "${ALIVE_ETCD_MEMBER_SIZE}"
+}
+
 function etcd_creator(){
   local IPADDR="$1"
   local ETCD_NAME="$2"
@@ -83,7 +97,7 @@ function etcd_follower(){
 
   if [[ "${ALREADY_MEMBER}" != "true" ]]; then
     # Check if cluster is full
-    local ETCD_EXISTED_MEMBER_SIZE="$(echo "${MEMBERS}" | jq '.[] | length')"
+    local ETCD_EXISTED_MEMBER_SIZE="$(get_alive_etcd_member_size "${MEMBERS}")"
     if [[ "${PROXY}" == "off" ]] \
      && [[ "${ETCD_EXISTED_MEMBER_SIZE}" -ge "${MAX_ETCD_MEMBER_SIZE}" ]]; then
       # If cluster is not full, proxy mode off. If cluster is full, proxy mode on
@@ -99,8 +113,8 @@ function etcd_follower(){
         sleep 1
 
         # Check if cluster is full
-        local ETCD_EXISTED_MEMBER_SIZE="$(curl -sf --retry 10 \
-          http://${ETCD_MEMBER}:${CLIENT_PORT}/v2/members | jq '.[] | length')"
+        MEMBERS="$(curl -sf --retry 10 http://${ETCD_MEMBER}:${CLIENT_PORT}/v2/members)"
+        local ETCD_EXISTED_MEMBER_SIZE="$(get_alive_etcd_member_size "${MEMBERS}")"
         if [ "${ETCD_EXISTED_MEMBER_SIZE}" -ge "${MAX_ETCD_MEMBER_SIZE}" ]; then
           # If cluster is not full, proxy mode off. If cluster is full, proxy mode on
           PROXY="on"
@@ -114,13 +128,13 @@ function etcd_follower(){
   fi
 
   # Update Endpoints to etcd2 parameters
-  MEMBERS="$(curl -sf http://${ETCD_MEMBER}:${CLIENT_PORT}/v2/members)"
+  MEMBERS="$(curl -sf --retry 10 http://${ETCD_MEMBER}:${CLIENT_PORT}/v2/members)"
   local SIZE="$(echo "${MEMBERS}" | jq '.[] | length')"
   local PEER_IDX=0
   local ENDPOINTS="${ETCD_NAME}=http://${IPADDR}:${PEER_PORT}"
   for PEER_IDX in $(seq 0 "$((${SIZE}-1))"); do
     local PEER_NAME="$(echo "${MEMBERS}" | jq -r ".members["${PEER_IDX}"].name")"
-    local PEER_URL="$(echo "${MEMBERS}" | jq -r ".members["${PEER_IDX}"].peerURLs[]" | head -n 1)"
+    local PEER_URL="$(echo "${MEMBERS}" | jq -r ".members["${PEER_IDX}"].peerURLs[0]")"
     if [ -n "${PEER_URL}" ] && [ "${PEER_URL}" != "http://${IPADDR}:${PEER_PORT}" ]; then
       ENDPOINTS="${ENDPOINTS},${PEER_NAME}=${PEER_URL}"
     fi
@@ -563,6 +577,11 @@ function main(){
     sleep 1
   done
 
+  # DNS-SD
+  local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
+  echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
+  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
+
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"
 
@@ -571,11 +590,6 @@ function main(){
     local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
   fi
   /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" "${REGISTRY_OPTION}"
-
-  # DNS-SD
-  local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
-  echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
 
   # Write configure to file
   echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
@@ -588,7 +602,7 @@ function main(){
 
   bash -c "/go/etcd-maintainer.sh" &
 
-  echo "hold..." 1>&2
+  echo "Kubernetes started, hold..." 1>&2
   tail -f /dev/null
 }
 
