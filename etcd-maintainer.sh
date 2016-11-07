@@ -108,12 +108,6 @@ function main(){
           curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" \
             -XPUT -d value="${MEMBER_FAILED}"
 
-<<<<<<< HEAD
-          # Set the remote failed etcd member to exit the etcd cluster
-          /go/kube-down --exit-remote-etcd="${MEMBER_FAILED}"
-
-=======
->>>>>>> etcd-dispatching
           # Remove the failed member that has been repaced from the list
           MEMBER_DISCONNECTED="$(echo "${MEMBER_DISCONNECTED}" | sed /.*${MEMBER_FAILED}/d)"
         else
