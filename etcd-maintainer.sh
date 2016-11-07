@@ -128,7 +128,7 @@ function main(){
         # If this node still is etcd proxy, remove the failed member in the 'MEMBER_DISCONNECTED' list
         # that has been replaced, and continue to monitoring whole etcd cluster
         until curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}"; do
-          MEMBER_REMOVED="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}")"
+          MEMBER_REMOVED="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" | jq -r .node.value)"
           sleep 1
         done
         if [[ "${MEMBER_REMOVED}" != "NULL" ]]; then
