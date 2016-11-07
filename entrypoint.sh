@@ -1,9 +1,6 @@
 #!/bin/bash
 set -e
 
-# Stop container when running 'exit NON-ZERO'
-trap '[ "$?" -ne 0 ] && docker stop k8sup' EXIT
-
 function get_alive_etcd_member_size(){
   local MEMBER_LIST="$1"
   local MEMBER_CLIENT_ADDR_LIST="$(echo "${MEMBER_LIST}" | jq -r ".members[].clientURLs[0]" | grep -v 'null')"
