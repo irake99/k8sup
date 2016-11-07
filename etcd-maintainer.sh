@@ -73,7 +73,8 @@ function main(){
     fi
 
     # If I am already a member and cluster needs more member then do nothing, vice versa.
-    if [[ "${ETCD_MEMBER_SIZE_STATUS}" == "lesser" && "${ETCD_PROXY}" == "off" ]] \
+    if [[ "${ETCD_MEMBER_SIZE_STATUS}" == "equal" ]] \
+       || [[ "${ETCD_MEMBER_SIZE_STATUS}" == "lesser" && "${ETCD_PROXY}" == "off" ]] \
        || [[ "${ETCD_MEMBER_SIZE_STATUS}" == "greater" && "${ETCD_PROXY}" == "on" ]]; then
       sleep 60
       continue
@@ -107,9 +108,6 @@ function main(){
           curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" \
             -XPUT -d value="${MEMBER_FAILED}"
 
-          # Set the remote failed etcd member to exit the etcd cluster
-#          /go/kube-down --exit-remote-etcd="${MEMBER_FAILED}"
-
           # Remove the failed member that has been repaced from the list
           MEMBER_DISCONNECTED="$(echo "${MEMBER_DISCONNECTED}" | sed /.*${MEMBER_FAILED}/d)"
         else
@@ -118,12 +116,8 @@ function main(){
             -XPUT -d value="NULL" 1>&2
         fi
 
-        # Stop local k8s service
-        /go/kube-down --stop-k8s-only
         # Re-join etcd cluster
         /go/entrypoint.sh --rejoin-etcd
-        # Start local k8s service
-        /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}"
 
         # Unlock
         until curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevValue=${IPADDR}" \

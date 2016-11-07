@@ -129,11 +129,9 @@ function etcd_follower(){
 
   # Update Endpoints to etcd2 parameters
   MEMBERS="$(curl -sf --retry 10 http://${ETCD_MEMBER}:${CLIENT_PORT}/v2/members)"
-  local SIZE="$(get_alive_etcd_member_size "${MEMBERS}")"
+  local SIZE="$(echo "${MEMBERS}" | jq '.[] | length')"
   local PEER_IDX=0
   local ENDPOINTS="${ETCD_NAME}=http://${IPADDR}:${PEER_PORT}"
-  # +1 to include this etcd member, because this member is not alive yet
-  if [[ "${PROXY}" == "off" ]]; then ((SIZE+=1)); fi
   for PEER_IDX in $(seq 0 "$((${SIZE}-1))"); do
     local PEER_NAME="$(echo "${MEMBERS}" | jq -r ".members["${PEER_IDX}"].name")"
     local PEER_URL="$(echo "${MEMBERS}" | jq -r ".members["${PEER_IDX}"].peerURLs[0]")"
@@ -604,7 +602,7 @@ function main(){
 
   bash -c "/go/etcd-maintainer.sh" &
 
-  echo "K8S started, hold..." 1>&2
+  echo "Kubernetes started, hold..." 1>&2
   tail -f /dev/null
 }
 
