@@ -154,11 +154,13 @@ function get_API_Servers(){
   local ETCD_CLIENT_PORT="$2"
   local APISERVERS=""
   local APISERVER=""
+  local KUBE_NODE_LIST=""
 
-  local KUBE_NODE_LIST="$(curl -s 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
-                        | jq -r .node.nodes[].value \
-                        | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address')"
-  if [[ -z "${KUBE_NODE_LIST}" ]]; then exit 1; fi
+  until [[ -n "${KUBE_NODE_LIST}" ]]; do
+    KUBE_NODE_LIST="$(curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
+                          | jq -r .node.nodes[].value 2>/dev/null \
+                          | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address' 2>/dev/null)" || true
+  done
 
   for KUBE_NODE in ${KUBE_NODE_LIST}; do
     APISERVER="${KUBE_NODE}:${APISERVER_PORT}"
@@ -174,10 +176,10 @@ function get_API_Servers(){
 function main(){
 
   get_options "$@"
-  local IPADDR="${EX_IPADDR}"
-  local WORKER="${EX_WORKER}"
-  local APISERVER_PORT="${EX_APISERVER_PORT}"
-  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
+  local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
+  local WORKER="${EX_WORKER}" && unset EX_WORKER
+  local APISERVER_PORT="${EX_APISERVER_PORT}" && unset EX_APISERVER_PORT
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local ETCD_PROXY=""
   local APISERVER=""
   local APISERVERS=""
