@@ -21,6 +21,8 @@ function main(){
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
   local SUBNET_ID_AND_MASK="${EX_SUBNET_ID_AND_MASK}" && unset EX_SUBNET_ID_AND_MASK
+  local NODE_NAME="${EX_NODE_NAME}" && unset EX_NODE_NAME
+  local IP_AND_MASK="${EX_IP_AND_MASK}" && unset EX_IP_AND_MASK
 
   local MEMBER_LIST
   local MEMBER_CLIENT_ADDR_LIST
@@ -46,15 +48,19 @@ function main(){
 
   while true; do
 
-    # Monitoring etcd member size and check if it match the max etcd member size
-    MAX_ETCD_MEMBER_SIZE="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/max_etcd_member_size" \
-                          | jq -r '.node.value')"
-    MEMBER_LIST="$(curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members")"
-    MEMBER_CLIENT_ADDR_LIST="$(echo "${MEMBER_LIST}" | jq -r ".members[].clientURLs[0]" | grep -o "${IPPORT_PATTERN}")"
-    if [[ -z "${MAX_ETCD_MEMBER_SIZE}" ]] || [[ -z "${MEMBER_CLIENT_ADDR_LIST}" ]]; then
-      echo "Getting max etcd member size or member list error, exiting..." 1>&2
-      exit
-    fi
+    MAX_ETCD_MEMBER_SIZE=""
+    MEMBER_CLIENT_ADDR_LIST=""
+    until [[ -n "${MAX_ETCD_MEMBER_SIZE}" ]] && [[ -n "${MEMBER_CLIENT_ADDR_LIST}" ]]; do
+      # Monitoring etcd member size and check if it match the max etcd member size
+      MAX_ETCD_MEMBER_SIZE="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/max_etcd_member_size" \
+                            | jq -r '.node.value')"
+      MEMBER_LIST="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members")"
+      MEMBER_CLIENT_ADDR_LIST="$(echo "${MEMBER_LIST}" | jq -r ".members[].clientURLs[0]" | grep -o "${IPPORT_PATTERN}")"
+      if [[ -z "${MAX_ETCD_MEMBER_SIZE}" ]] || [[ -z "${MEMBER_CLIENT_ADDR_LIST}" ]]; then
+        echo "Getting 'MAX_ETCD_MEMBER_SIZE' and 'MEMBER_CLIENT_ADDR_LIST'..." 1>&2
+        sleep 1
+      fi
+    done
     if [[ "${MAX_ETCD_MEMBER_SIZE}" -lt "3" ]]; then
       # Prevent the cap of etcd member size less then 3
       MAX_ETCD_MEMBER_SIZE="3"
@@ -94,7 +100,7 @@ function main(){
 
     # Monitoring all etcd members and try to get one of the failed member
     for MEMBER in ${MEMBER_DISCONNECTED}; do
-      if [[ -z "$(echo "${MEMBER_DISCONNECTED}" | grep -w "${MEMBER}")" ]]; then
+      if [[ -z "$(echo "${MEMBER_CLIENT_ADDR_LIST}" | grep -w "${MEMBER}")" ]]; then
         MEMBER_DISCONNECTED="$(echo "${MEMBER_DISCONNECTED}" | sed /.*${MEMBER}/d)"
       fi
     done
@@ -128,19 +134,11 @@ function main(){
         -XPUT -d value="${IPADDR}" 1>&2; then
 
         if [[ -n "${MEMBER_FAILED}" ]]; then
-          # Notify other node the failed member which will be replaced
-          curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" \
-            -XPUT -d value="${MEMBER_FAILED}"
-
           # Set the remote failed etcd member to exit the etcd cluster
           /go/kube-down --exit-remote-etcd="${MEMBER_FAILED}"
 
           # Remove the failed member that has been repaced from the list
           MEMBER_DISCONNECTED="$(echo "${MEMBER_DISCONNECTED}" | sed /.*${MEMBER_FAILED}/d)"
-        else
-          # Notify other node that there is no failed member to be replaced
-          curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" \
-            -XPUT -d value="NULL" 1>&2
         fi
 
         if [[ -z "${MEMBER_DISCONNECTED}" ]]; then
@@ -157,18 +155,13 @@ function main(){
           -XDELETE 1>&2; do
             sleep 1
         done
-      else
-        # If this node still is etcd proxy, remove the failed member in the 'MEMBER_DISCONNECTED' list
-        # that has been replaced, and continue to monitoring whole etcd cluster
-        until curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}"; do
-          MEMBER_REMOVED="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${MEMBER_REMOVED_KEY}" | jq -r .node.value)"
-          sleep 1
-        done
-        if [[ "${MEMBER_REMOVED}" != "NULL" ]]; then
-          # Remove the failed member that has been repaced from the list
-          MEMBER_DISCONNECTED="$(echo "${MEMBER_DISCONNECTED}" | sed /.*${MEMBER_REMOVED}/d)"
-        fi
       fi
+    fi
+
+    # If etcd is up but DNS-SD is down, try to run it again
+    if curl -s -m 3 "http://127.0.0.1:${ETCD_CLIENT_PORT}/health" &>/dev/null \
+       && [[ -z "$(ps aux | grep 'registering.go' | grep -v 'grep')" ]]; then
+      bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
     fi
 
     sleep "${HEALTH_CHECK_INTERVAL}"

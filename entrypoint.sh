@@ -316,14 +316,14 @@ function rejoin_etcd(){
   source "${CONFIG_FILE}" || exit 1
   [[ -z "${PROXY}" ]] && exit 1
 
-  local IPADDR="${EX_IPADDR}"
-  local K8S_VERSION="${EX_K8S_VERSION}"
-  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
-  local K8S_PORT="${EX_K8S_PORT}"
-  local NODE_NAME="${EX_NODE_NAME}"
-  local IP_AND_MASK="${EX_IP_AND_MASK}"
-  local CLUSTER_ID="${EX_CLUSTER_ID}"
-  local SUBNET_ID_AND_MASK="${EX_SUBNET_ID_AND_MASK}"
+  local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
+  local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
+  local K8S_PORT="${EX_K8S_PORT}" && unset EX_K8S_PORT
+  local NODE_NAME="${EX_NODE_NAME}" && unset EX_NODE_NAME
+  local IP_AND_MASK="${EX_IP_AND_MASK}" && unset EX_IP_AND_MASK
+  local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
+  local SUBNET_ID_AND_MASK="${EX_SUBNET_ID_AND_MASK}" && unset EX_SUBNET_ID_AND_MASK
   local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
   local ETCD_MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
   local ETCD_MEMBER_IP_LIST="$(echo "${ETCD_MEMBER_LIST}" \
@@ -513,11 +513,11 @@ function main(){
 
   local COREOS_REGISTRY="${EX_COREOS_REGISTRY}"
   local K8S_REGISTRY="${EX_K8S_REGISTRY}"
-  export ENV_ETCD_VERSION="3.0.4"
-  export ENV_FLANNELD_VERSION="0.5.5"
+  export ENV_ETCD_VERSION="3.0.15"
+  export ENV_FLANNELD_VERSION="0.6.2"
 #  export ENV_K8S_VERSION="1.3.6"
   export ENV_ETCD_IMAGE="${COREOS_REGISTRY}/etcd:v${ENV_ETCD_VERSION}"
-  export ENV_FLANNELD_IMAGE="${COREOS_REGISTRY}/flannel:${ENV_FLANNELD_VERSION}"
+  export ENV_FLANNELD_IMAGE="${COREOS_REGISTRY}/flannel:v${ENV_FLANNELD_VERSION}"
 #  export ENV_HYPERKUBE_IMAGE="gcr.io/google_containers/hyperkube-amd64:v${ENV_K8S_VERSION}"
 
   # Set a config file
