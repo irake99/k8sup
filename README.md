@@ -34,11 +34,12 @@ $ sudo docker run -d \
     -v /var/lib/etcd:/var/lib/etcd \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
+    --name=k8sup \
     cdxvirt/k8sup \
     --network={your-subnet-id/mask}
 </pre>
 
-Remove k8s:
+Stop k8s:
 <pre>
 $ sudo docker exec k8sup /go/kube-down
 </pre>
