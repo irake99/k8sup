@@ -1,5 +1,5 @@
 #!/bin/bash
-set -x
+
 function get_alive_etcd_member_size(){
   local MEMBER_LIST="$1"
   local MEMBER_CLIENT_ADDR_LIST="$(echo "${MEMBER_LIST}" | jq -r ".members[].clientURLs[0]")"

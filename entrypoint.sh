@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-set -x
+
 function get_alive_etcd_member_size(){
   local MEMBER_LIST="$1"
   local MEMBER_CLIENT_ADDR_LIST="$(echo "${MEMBER_LIST}" | jq -r ".members[].clientURLs[0]" | grep -v 'null')"
@@ -391,7 +391,7 @@ Options:
                              e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                              or \"eth0\" (Required option)
 -c, --cluster=CLUSTER_ID     Join a specified cluster
--v, --version=VERSION        Specify k8s version (Default: 1.4.5)
+-v, --version=VERSION        Specify k8s version (Default: 1.4.6)
     --max-etcd-members=NUM   Maximum etcd member size
     --new                    Force to start a new cluster
     --restore                Try to restore etcd data and start a new cluster

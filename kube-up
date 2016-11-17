@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-set -x
+
 function get_filepath_from_volumes(){
   local FILENAME="$1"
   local VOLUMES="$2"
@@ -59,7 +59,7 @@ Options:
 -p, --worker                  Run as k8s worker
 -a, --apiserver-port=PORT     Apiserver port (Default: 6443)
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
--v, --version=VERSION         Specify k8s version (Default: 1.4.4)
+-v, --version=VERSION         Specify k8s version (Default: 1.4.6)
 -r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
 -h, --help                    This help text
 "
@@ -140,7 +140,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.4.4"
+    export EX_K8S_VERSION="1.4.6"
   fi
 
   if [[ -z "${EX_REGISTRY}" ]]; then
@@ -188,6 +188,7 @@ function main(){
   local KUBE_ADDONS_CONF_PATH="/etc/kubernetes/addons/multinode"
   local KUBE_ETC="/etc/kubernetes"
   local KUBELET_VARLIB="/var/lib/kubelet"
+  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:kubernetes-public.default.svc.cluster.local"
 
   export REGISTRY="${EX_REGISTRY}"
   export ARCH=amd64
@@ -217,6 +218,7 @@ function main(){
   sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
   sed -i "s|\"--master=127.0.0.1:${APISERVER_PORT}\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/srv/kubernetes/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
+  sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
 
   # If etcd is running as a proxy, set k8s as a worker
@@ -238,7 +240,6 @@ function main(){
 
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
-
   fi
 
   #TODO: Connect the kube-apiserver via public DN with certificate
@@ -256,20 +257,29 @@ function main(){
 
   local RBD_OPTIONS="$(rbd_env_detector)"
 
-  echo "Running Kubernetes ..."
+  echo "Generating certs..." 1>&2
+  docker run \
+      --net=host \
+      --volume=/srv/kubernetes:/srv/kubernetes:rw \
+      --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+      "${REGISTRY}/hyperkube-${ARCH}:v${K8S_VERSION}" \
+      "/cp-certs.sh" \
+      "${DOMAIN_NAME}" \
+      "DONT_HOLD" 1>/dev/null
 
+  echo "Running Kubernetes ..."
   docker run \
       --volume=/:/rootfs:ro \
       --volume=/sys:/sys:ro \
-      --volume=/var/lib/docker/:/var/lib/docker:rw \
+      --volume=/var/lib/docker:/var/lib/docker:rw \
       --volume=${KUBELET_VARLIB}/:${KUBELET_VARLIB}/:rw,rslave \
       --volume=/var/run:/var/run:rw \
       --volume=/var/run/dbus:/var/run/dbus:rw \
       --volume=/run/flannel:/run/flannel:rw \
       --volume=/dev:/dev:rw \
-      --volume=/opt/cni/bin:/opt/cni/bin:rw \
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
+      --volume=/srv/kubernetes:/srv/kubernetes:ro \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
