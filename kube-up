@@ -1,4 +1,56 @@
 #!/bin/bash
+set -e
+
+function get_filepath_from_volumes(){
+  local FILENAME="$1"
+  local VOLUMES="$2"
+  local VOL_SRC
+  local VOL_DEST
+  local FILEPATH
+
+  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+  for VOL in ${VOLUMES}; do
+    VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1)"
+    VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
+    FILEPATH="$(find "${VOL_DEST}" -type f -name "${FILENAME}" -o -type l -name "${FILENAME}" 2>/dev/null | head -n 1)"
+    if [[ -n "${FILEPATH}" ]]; then
+      echo "${FILEPATH}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+function rbd_env_detector(){
+  local RBD_CMD_PATH
+  local RBD_KO_PATH
+  local MODPROBE_CMD_PATH
+  local DOCKER_CMD_PATH
+  local LIBDEVMAPPER_SO_PATH
+  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+
+  [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
+    && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
+    && RBD_CMD_PATH="$(get_filepath_from_volumes "rbd" "${VOLUMES}")" \
+    && RBD_KO_PATH="$(get_filepath_from_volumes "rbd.ko" "${VOLUMES}")" \
+    && MODPROBE_CMD_PATH="$(get_filepath_from_volumes "modprobe" "${VOLUMES}")" \
+    && DOCKER_CMD_PATH="$(get_filepath_from_volumes "docker" "$(echo "${VOLUMES}" | grep "/bin")")" \
+    && LIBDEVMAPPER_SO_PATH="$(get_filepath_from_volumes "libdevmapper.so.*" "$(echo "${VOLUMES}" | grep "/usr/lib")")" \
+    || { echo "RBD mounting is not available on this host." 1>&2 && return 1; }
+
+  echo "RBD mounting is available on this host." 1>&2
+
+  local RBD_OPTIONS="--volume=${RBD_CMD_PATH}:/bin/rbd:ro \
+        --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
+        --volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro \
+        --volume=${DOCKER_CMD_PATH}:/bin/docker:ro \
+        --volume=${LIBDEVMAPPER_SO_PATH}:${LIBDEVMAPPER_SO_PATH}:ro \
+        --volume=/lib/modules:/lib/modules:ro"
+
+  echo "${RBD_OPTIONS}"
+  return 0
+}
 
 function show_usage(){
   USAGE="Usage: ${0##*/} [options...]
@@ -7,7 +59,7 @@ Options:
 -p, --worker                  Run as k8s worker
 -a, --apiserver-port=PORT     Apiserver port (Default: 6443)
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
--v, --version=VERSION         Specify k8s version (Default: 1.4.4)
+-v, --version=VERSION         Specify k8s version (Default: 1.4.6)
 -r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
 -h, --help                    This help text
 "
@@ -88,7 +140,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.4.4"
+    export EX_K8S_VERSION="1.4.6"
   fi
 
   if [[ -z "${EX_REGISTRY}" ]]; then
@@ -102,11 +154,13 @@ function get_API_Servers(){
   local ETCD_CLIENT_PORT="$2"
   local APISERVERS=""
   local APISERVER=""
+  local KUBE_NODE_LIST=""
 
-  local KUBE_NODE_LIST="$(curl -s 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
-                        | jq -r .node.nodes[].value \
-                        | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address')"
-  if [[ -z "${KUBE_NODE_LIST}" ]]; then exit 1; fi
+  until [[ -n "${KUBE_NODE_LIST}" ]]; do
+    KUBE_NODE_LIST="$(curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
+                          | jq -r .node.nodes[].value 2>/dev/null \
+                          | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address' 2>/dev/null)" || true
+  done
 
   for KUBE_NODE in ${KUBE_NODE_LIST}; do
     APISERVER="https://${KUBE_NODE}:${APISERVER_PORT}"
@@ -122,10 +176,10 @@ function get_API_Servers(){
 function main(){
 
   get_options "$@"
-  local IPADDR="${EX_IPADDR}"
-  local WORKER="${EX_WORKER}"
-  local APISERVER_PORT="${EX_APISERVER_PORT}"
-  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
+  local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
+  local WORKER="${EX_WORKER}" && unset EX_WORKER
+  local APISERVER_PORT="${EX_APISERVER_PORT}" && unset EX_APISERVER_PORT
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local ETCD_PROXY=""
   local APISERVER=""
   local APISERVERS=""
@@ -134,6 +188,7 @@ function main(){
   local KUBE_ADDONS_CONF_PATH="/etc/kubernetes/addons/multinode"
   local KUBE_ETC="/etc/kubernetes"
   local KUBELET_VARLIB="/var/lib/kubelet"
+  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:kubernetes-public.default.svc.cluster.local"
 
   export REGISTRY="${EX_REGISTRY}"
   export ARCH=amd64
@@ -153,7 +208,7 @@ function main(){
   cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
   cp -f /go/update-addons.sh "${KUBE_ETC}/"
-  cp -rf /go/heapster-1.2.0/deploy/kube-config/influxdb "${KUBE_ADDONS_CONF_PATH}/heapster" 
+  cp -rf /go/heapster-1.2.0/deploy/kube-config/influxdb "${KUBE_ADDONS_CONF_PATH}/heapster"
 
   sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_CONF_PATH}"/*.json
   sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
@@ -163,6 +218,7 @@ function main(){
   sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
   sed -i "s|\"--master=127.0.0.1:${APISERVER_PORT}\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/srv/kubernetes/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
+  sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
 
   # If etcd is running as a proxy, set k8s as a worker
@@ -184,13 +240,12 @@ function main(){
 
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
-    
   fi
-  
+
   #TODO: Connect the kube-apiserver via public DN with certificate
   sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBE_ETC}/kubeconfig/kubeconfig.yaml"
   sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
-  
+
   #for exposing kubernetes&kube-dns
   sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/update-addons.sh"
   sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/addons/kubernetes-public.yaml"
@@ -200,27 +255,38 @@ function main(){
     docker rm k8sup-kubelet 1>/dev/null || true
   done
 
-  echo "Running Kubernetes ..."
+  local RBD_OPTIONS="$(rbd_env_detector)"
 
+  echo "Generating certs..." 1>&2
+  docker run \
+      --net=host \
+      --volume=/srv/kubernetes:/srv/kubernetes:rw \
+      --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+      "${REGISTRY}/hyperkube-${ARCH}:v${K8S_VERSION}" \
+      "/cp-certs.sh" \
+      "${DOMAIN_NAME}" \
+      "DONT_HOLD" 1>/dev/null
+
+  echo "Running Kubernetes ..."
   docker run \
       --volume=/:/rootfs:ro \
       --volume=/sys:/sys:ro \
-      --volume=/var/lib/docker/:/var/lib/docker:rw \
+      --volume=/var/lib/docker:/var/lib/docker:rw \
       --volume=${KUBELET_VARLIB}/:${KUBELET_VARLIB}/:rw,rslave \
       --volume=/var/run:/var/run:rw \
       --volume=/var/run/dbus:/var/run/dbus:rw \
       --volume=/run/flannel:/run/flannel:rw \
       --volume=/dev:/dev:rw \
-      --volume=/opt/cni/bin:/opt/cni/bin:rw \
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
+      --volume=/srv/kubernetes:/srv/kubernetes:ro \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
+      ${RBD_OPTIONS} \
       --net=host \
       --privileged=true \
       --pid=host \
-      --restart=always \
       --name=k8sup-kubelet \
       -d \
       "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
@@ -251,9 +317,34 @@ function main(){
     --rm=true \
     "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
     /hyperkube kubectl -s "${APISERVER}" \
-    uncordon "${IPADDR}" &>/dev/null; do
-      sleep 5
+     --insecure-skip-tls-verify \
+     --username="admin" \
+     --password="admin" \
+     uncordon "${IPADDR}" &>/dev/null; do
+       sleep 5
   done
+
+  # Add an external IP to kubernetes service
+  if [[ "${WORKER}" == "false" ]]; then
+    local EXTERNALIP="$(docker run \
+    --net=host \
+    --rm=true \
+    ${REGISTRY}/hyperkube-${ARCH}:v${K8S_VERSION}   \
+    /hyperkube kubectl -s 127.0.0.1:8080 \
+      get svc \
+      | grep -w 'kubernetes ' \
+      | awk '{print $3}')"
+
+    if [[ "${EXTERNALIP}" == '<none>' ]]; then
+        docker run \
+        --net=host \
+        --rm=true \
+        ${REGISTRY}/hyperkube-${ARCH}:v${K8S_VERSION} \
+          /hyperkube kubectl -s 127.0.0.1:8080 \
+          patch service kubernetes \
+          -p "{\"spec\":{\"externalIPs\":[\"${IPADDR}\"]}}"
+    fi
+  fi
 }
 
 main "$@"

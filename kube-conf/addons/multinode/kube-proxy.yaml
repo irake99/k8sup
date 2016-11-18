@@ -37,7 +37,7 @@ spec:
         - /hyperkube
         - proxy
         - --v=2
-        - --kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml 
+        - --kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml
         securityContext:
           privileged: true
         volumeMounts:
@@ -46,10 +46,16 @@ spec:
         - name: kubeconfig
           mountPath: /var/lib/kubelet/kubeconfig
           readOnly: true
+        - name: data
+          mountPath: /srv/kubernetes
+          readOnly: true
       volumes:
       - name: dbus
         hostPath:
-          path: /var/run/dbus 
+          path: /var/run/dbus
       - name: kubeconfig
         hostPath:
           path: /var/lib/kubelet/kubeconfig
+      - name: data
+        hostPath:
+          path: /srv/kubernetes

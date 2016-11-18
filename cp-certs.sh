@@ -77,15 +77,17 @@ function download_kube_certs(){
     elif [[ "${FILE}" == "basic_auth.csv" ]] || [[ "${FILE}" == "known_tokens.csv" ]]; then
       chmod 644 "${CERTS_DIR}/${FILE}"
     else
-      chown root:kube-cert-test "${CERTS_DIR}/${FILE}"
+      chown root:root "${CERTS_DIR}/${FILE}"
       chmod 660 "${CERTS_DIR}/${FILE}"
     fi
   done
 }
 
 function main(){
-  apt-get update
-  apt-get install -y curl
+  apt-get update 1>/dev/null
+  apt-get install -y curl 1>/dev/null
+  local DOMAIN_NAME="$1"
+  local DONT_HOLD="$2"
   local ETCD_PATH="k8sup/cluster/k8s_certs"
   local CERTS_ON_ETCD=""
   CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
@@ -94,20 +96,23 @@ function main(){
   else
     upload_kube_certs "${ETCD_PATH}" &
   fi
- 
-  #upload default kubeconfig to k8s-master pod 
-  cp /etc/kubernetes/kubeconfig/kubeconfig.yaml /srv/kubernetes/
 
-  /setup-files.sh "$@" &
+  #upload default kubeconfig to k8s-master pod
+  if [[ -f "/etc/kubernetes/kubeconfig/kubeconfig.yaml" ]]; then
+    cp /etc/kubernetes/kubeconfig/kubeconfig.yaml /srv/kubernetes/
+  fi
+
+  /setup-files.sh "${DOMAIN_NAME}" &
 
   #clone client-certificate and client-key for kube-proxy & kubelet
-  until test -f "/var/lib/kubelet/kubeconfig/kubecfg.key"; do 
-    cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ || true
-    cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ || true 
+  mkdir -p /var/lib/kubelet/kubeconfig
+  until test -f "/var/lib/kubelet/kubeconfig/kubecfg.key"; do
+    cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ &>/dev/null || true
+    cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ &>/dev/null || true
     sleep 1
   done
 
-  wait
+  [[ "${DONT_HOLD}" != "DONT_HOLD" ]] && wait || exit 0
 }
 
 main "$@"
