@@ -323,6 +323,28 @@ function main(){
      uncordon "${IPADDR}" &>/dev/null; do
        sleep 5
   done
+
+  # Add an external IP to kubernetes service
+  if [[ "${WORKER}" == "false" ]]; then
+    local EXTERNALIP="$(docker run \
+    --net=host \
+    --rm=true \
+    ${REGISTRY}/hyperkube-${ARCH}:v${K8S_VERSION}   \
+    /hyperkube kubectl -s 127.0.0.1:8080 \
+      get svc \
+      | grep -w 'kubernetes ' \
+      | awk '{print $3}')"
+
+    if [[ "${EXTERNALIP}" == '<none>' ]]; then
+        docker run \
+        --net=host \
+        --rm=true \
+        ${REGISTRY}/hyperkube-${ARCH}:v${K8S_VERSION} \
+          /hyperkube kubectl -s 127.0.0.1:8080 \
+          patch service kubernetes \
+          -p "{\"spec\":{\"externalIPs\":[\"${IPADDR}\"]}}"
+    fi
+  fi
 }
 
 main "$@"

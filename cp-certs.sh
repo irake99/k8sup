@@ -77,7 +77,7 @@ function download_kube_certs(){
     elif [[ "${FILE}" == "basic_auth.csv" ]] || [[ "${FILE}" == "known_tokens.csv" ]]; then
       chmod 644 "${CERTS_DIR}/${FILE}"
     else
-      chown root:kube-cert-test "${CERTS_DIR}/${FILE}"
+      chown root:root "${CERTS_DIR}/${FILE}"
       chmod 660 "${CERTS_DIR}/${FILE}"
     fi
   done
@@ -107,8 +107,8 @@ function main(){
   #clone client-certificate and client-key for kube-proxy & kubelet
   mkdir -p /var/lib/kubelet/kubeconfig
   until test -f "/var/lib/kubelet/kubeconfig/kubecfg.key"; do
-    cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ || true
-    cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ || true
+    cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ &>/dev/null || true
+    cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ &>/dev/null || true
     sleep 1
   done
 
