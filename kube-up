@@ -8,7 +8,7 @@ function get_filepath_from_volumes(){
   local VOL_DEST
   local FILEPATH
 
-  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
   for VOL in ${VOLUMES}; do
     VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1)"
     VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
@@ -28,7 +28,7 @@ function rbd_env_detector(){
   local MODPROBE_CMD_PATH
   local DOCKER_CMD_PATH
   local LIBDEVMAPPER_SO_PATH
-  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
 
   [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
     && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
@@ -311,6 +311,8 @@ function main(){
           --network-plugin=cni \
           --network-plugin-dir=/etc/cni/net.d \
           --cluster-dns=10.0.0.10 \
+          --tls-cert-file=/srv/kubernetes/kubecfg.crt \
+          --tls-private-key-file=/srv/kubernetes/kubecfg.key \
           --cluster-domain=cluster.local
 
   echo "Waiting for any k8s apiserver connected..."
