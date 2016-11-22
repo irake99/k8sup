@@ -23,6 +23,7 @@ function main(){
   local SUBNET_ID_AND_MASK="${EX_SUBNET_ID_AND_MASK}" && unset EX_SUBNET_ID_AND_MASK
   local NODE_NAME="${EX_NODE_NAME}" && unset EX_NODE_NAME
   local IP_AND_MASK="${EX_IP_AND_MASK}" && unset EX_IP_AND_MASK
+  local K8S_REGISTRY="${EX_REGISTRY}" && unset EX_REGISTRY
 
   local MEMBER_LIST
   local MEMBER_CLIENT_ADDR_LIST
@@ -43,10 +44,21 @@ function main(){
   local DISCOVERY_RESULTS
   local ETCD_NODE_LIST
   local PROXY_OPT
+  local FORCED_WORKER_LABEL
 
   echo "Running etcd-maintainer.sh ..."
 
   while true; do
+
+#    # Do not maintain foced workers
+#    until FORCED_WORKER_LABEL="$(curl -sf http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions/${IPADDR})"; do
+#      sleep 1
+#    done
+#    FORCED_WORKER_LABEL="$(echo "${FORCED_WORKER_LABEL}" | jq -r '.node.value' | jq -r '.metadata.labels | .["cdxvirt/k8s_forced_worker"]')"
+#    if [[ "${FORCED_WORKER_LABEL}" == "true" ]]; then
+#      sleep "${HEALTH_CHECK_INTERVAL}"
+#      continue
+#    fi
 
     MAX_ETCD_MEMBER_SIZE=""
     MEMBER_CLIENT_ADDR_LIST=""
@@ -130,8 +142,10 @@ function main(){
       continue
     else
       # Lock
-      if curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevExist=false" \
-        -XPUT -d value="${IPADDR}" 1>&2; then
+      local LOCKER_URL="http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}"
+      if [[ "$(curl -sf "${LOCKER_URL}" | jq -r '.node.value')" == "${IPADDR}" ]] \
+         || curl -sf "${LOCKER_URL}?prevExist=false" \
+            -XPUT -d value="${IPADDR}" 1>&2; then
 
         if [[ -n "${MEMBER_FAILED}" ]]; then
           # Set the remote failed etcd member to exit the etcd cluster
@@ -147,11 +161,17 @@ function main(){
              || [[ -n "${PROXY_OPT}" ]]; then
             # Re-join etcd cluster
             /go/entrypoint.sh --rejoin-etcd ${PROXY_OPT}
+
+            # echo "Running Kubernetes"
+            if [[ -n "${K8S_REGISTRY}" ]]; then
+              local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
+            fi
+            /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} --reset-labels
           fi
         fi
 
         # Unlock
-        until curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevValue=${IPADDR}" \
+        until curl -sf "${LOCKER_URL}?prevValue=${IPADDR}" \
           -XDELETE 1>&2; do
             sleep 1
         done

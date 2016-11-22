@@ -68,7 +68,6 @@ function etcd_follower(){
   local ETCD_PATH="k8sup/cluster"
   local ETCD_EXISTED_MEMBER_SIZE
   local ETCD_NODE_LIST
-  local PROXY_OPT
   local NODE
 
   # Get an existed etcd member
@@ -130,9 +129,11 @@ function etcd_follower(){
 
     # If cluster is not full, Use locker (etcd atomic CAS) to get a privilege for joining etcd cluster
     local LOCKER_ETCD_KEY="locker-etcd-member-add"
-    until [[ "${PROXY}" == "on" ]] || curl -sf \
-      "http://${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevExist=false" \
-      -XPUT -d value="${IPADDR}" 1>&2; do
+    local LOCKER_URL="http://${ETCD_NODE}:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}"
+    until [[ "${PROXY}" == "on" ]] \
+      || [[ "$(curl -sf "${LOCKER_URL}" | jq -r '.node.value')" == "${IPADDR}" ]] \
+      || curl -sf "${LOCKER_URL}?prevExist=false" \
+         -XPUT -d value="${IPADDR}" 1>&2; do
         echo "Another node is joining etcd cluster, Waiting for it done..." 1>&2
         sleep 1
 
@@ -186,7 +187,7 @@ function etcd_follower(){
 
   if [[ "${ALREADY_MEMBER}" != "true" ]] && [[ "${PROXY}" == "off" ]]; then
     # Unlock and release the privilege for joining etcd cluster
-    until curl -sf "http://${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevValue=${IPADDR}" -XDELETE 1>&2; do
+    until curl -sf "${LOCKER_URL}?prevValue=${IPADDR}" -XDELETE 1>&2; do
         sleep 1
     done
   fi
@@ -630,7 +631,10 @@ function main(){
   if [[ -n "${K8S_REGISTRY}" ]]; then
     local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
   fi
-  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" "${REGISTRY_OPTION}"
+  if [[ "${PROXY}" == "on" ]]; then
+    local FORCED_WORKER_OPT="--forced-worker"
+  fi
+  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT}
 
   # Write configure to file
   echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
