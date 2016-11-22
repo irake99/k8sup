@@ -1,5 +1,35 @@
 #!/bin/bash
 set -e
+set -x
+function set_role_labels(){
+  local IPADDR="$1"
+  local HYPERKUBE_IMAGE_NAME="$2"
+  local APISERVER="$3"
+  local WORKER="$4"
+  local FORCED_WORKER="$5"
+
+  local ROLE_LABELS
+  local ROLE_LABEL
+  if [[ "${WORKER}" == "false" ]]; then
+    ROLE_LABELS="cdxvirt/k8s_master=true cdxvirt/k8s_worker=false cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+  else
+    ROLE_LABELS="cdxvirt/k8s_worker=false cdxvirt/k8s_worker=true cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+  fi
+  echo "Set role label"
+  for ROLE_LABEL in ${ROLE_LABELS}; do
+    until docker run \
+      --net=host \
+      --rm=true \
+      "${HYPERKUBE_IMAGE_NAME}" \
+      /hyperkube kubectl -s "${APISERVER}" \
+       --insecure-skip-tls-verify \
+       --username="admin" \
+       --password="admin" \
+       label --overwrite node "${IPADDR}" "${ROLE_LABEL}" &>/dev/null; do
+         sleep 5
+    done
+  done
+}
 
 function get_filepath_from_volumes(){
   local FILENAME="$1"
@@ -8,7 +38,7 @@ function get_filepath_from_volumes(){
   local VOL_DEST
   local FILEPATH
 
-  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
   for VOL in ${VOLUMES}; do
     VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1)"
     VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
@@ -28,7 +58,7 @@ function rbd_env_detector(){
   local MODPROBE_CMD_PATH
   local DOCKER_CMD_PATH
   local LIBDEVMAPPER_SO_PATH
-  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
 
   [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
     && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
@@ -61,6 +91,8 @@ Options:
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
 -v, --version=VERSION         Specify k8s version (Default: 1.4.6)
 -r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
+    --forced-worker           Run as k8s worker persistently
+    --reset-labels            Reset node labels
 -h, --help                    This help text
 "
 
@@ -70,7 +102,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:r:h"
-  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,registry:,help"
+  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,registry:,forced-worker,reset-labels,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -102,6 +134,15 @@ function get_options(){
           -r|--registry)
               export EX_REGISTRY="$2"
               shift 2
+              ;;
+             --forced-worker)
+              export EX_FORCED_WORKER="true"
+              export EX_WORKER="true"
+              shift
+              ;;
+             --reset-labels)
+              export EX_RESET_LABELS="true"
+              shift
               ;;
           -h|--help)
               show_usage
@@ -137,6 +178,10 @@ function get_options(){
 
   if [[ "${EX_WORKER}" != "true" ]]; then
     export EX_WORKER="false"
+  fi
+
+  if [[ "${EX_FORCED_WORKER}" != "true" ]]; then
+    export EX_FORCED_WORKER="false"
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
@@ -178,8 +223,10 @@ function main(){
   get_options "$@"
   local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
   local WORKER="${EX_WORKER}" && unset EX_WORKER
+  local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
   local APISERVER_PORT="${EX_APISERVER_PORT}" && unset EX_APISERVER_PORT
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
+  local RESET_LABELS="${EX_RESET_LABELS}" && unset EX_RESET_LABELS
   local ETCD_PROXY=""
   local APISERVER=""
   local APISERVERS=""
@@ -194,6 +241,28 @@ function main(){
   export ARCH=amd64
   export K8S_VERSION="${EX_K8S_VERSION}"
   export ADDON_MGR_VER=v5.1
+  local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
+
+  # Reset node labels and exit
+  if [[ "${RESET_LABELS}" == "true" ]]; then
+    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
+    APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
+
+    local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+    if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+      WORKER="false"
+    else
+      WORKER="true"
+    fi
+
+    until FORCED_WORKER="$(curl -sf http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions/${IPADDR})"; do
+      sleep 1
+    done
+    FORCED_WORKER="$(echo "${FORCED_WORKER}" | jq -r '.node.value' | jq -r '.metadata.labels | .["cdxvirt/k8s_forced_worker"]')"
+
+    set_role_labels "${IPADDR}" "${HYPERKUBE_IMAGE_NAME}" "${APISERVER}" "${WORKER}" "${FORCED_WORKER}"
+    exit 0
+  fi
 
   echo "Copy manifests-multi to /etc/kubernetes"
 
@@ -262,7 +331,7 @@ function main(){
       --net=host \
       --volume=/srv/kubernetes:/srv/kubernetes:rw \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
-      "${REGISTRY}/hyperkube-${ARCH}:v${K8S_VERSION}" \
+      "${HYPERKUBE_IMAGE_NAME}" \
       "/cp-certs.sh" \
       "${DOMAIN_NAME}" \
       "DONT_HOLD" 1>/dev/null
@@ -289,7 +358,7 @@ function main(){
       --pid=host \
       --name=k8sup-kubelet \
       -d \
-      "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
+      "${HYPERKUBE_IMAGE_NAME}" \
       /hyperkube kubelet \
           --allow-privileged=true \
           --require-kubeconfig=true \
@@ -310,12 +379,14 @@ function main(){
     sleep 1
   done
 
+  set_role_labels "${IPADDR}" "${HYPERKUBE_IMAGE_NAME}" "${APISERVER}" "${WORKER}" "${FORCED_WORKER}"
+
   # Try to set this node as schedulable
   echo "Uncordoning this node..."
   until docker run \
     --net=host \
     --rm=true \
-    "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
+    "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl -s "${APISERVER}" \
      --insecure-skip-tls-verify \
      --username="admin" \
@@ -329,7 +400,7 @@ function main(){
     local EXTERNALIP="$(docker run \
     --net=host \
     --rm=true \
-    ${REGISTRY}/hyperkube-${ARCH}:v${K8S_VERSION}   \
+    ${HYPERKUBE_IMAGE_NAME}   \
     /hyperkube kubectl -s 127.0.0.1:8080 \
       get svc \
       | grep -w 'kubernetes ' \
@@ -339,7 +410,7 @@ function main(){
         docker run \
         --net=host \
         --rm=true \
-        ${REGISTRY}/hyperkube-${ARCH}:v${K8S_VERSION} \
+        ${HYPERKUBE_IMAGE_NAME} \
           /hyperkube kubectl -s 127.0.0.1:8080 \
           patch service kubernetes \
           -p "{\"spec\":{\"externalIPs\":[\"${IPADDR}\"]}}"

@@ -68,7 +68,6 @@ function etcd_follower(){
   local ETCD_PATH="k8sup/cluster"
   local ETCD_EXISTED_MEMBER_SIZE
   local ETCD_NODE_LIST
-  local PROXY_OPT
   local NODE
 
   # Get an existed etcd member
@@ -630,7 +629,10 @@ function main(){
   if [[ -n "${K8S_REGISTRY}" ]]; then
     local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
   fi
-  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" "${REGISTRY_OPTION}"
+  if [[ "${PROXY}" == "on" ]]; then
+    local FORCED_WORKER_OPT="--forced-worker"
+  fi
+  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT}
 
   # Write configure to file
   echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
