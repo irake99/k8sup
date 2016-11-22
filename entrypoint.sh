@@ -129,9 +129,11 @@ function etcd_follower(){
 
     # If cluster is not full, Use locker (etcd atomic CAS) to get a privilege for joining etcd cluster
     local LOCKER_ETCD_KEY="locker-etcd-member-add"
-    until [[ "${PROXY}" == "on" ]] || curl -sf \
-      "http://${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevExist=false" \
-      -XPUT -d value="${IPADDR}" 1>&2; do
+    local LOCKER_URL="http://${ETCD_NODE}:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}"
+    until [[ "${PROXY}" == "on" ]] \
+      || [[ "$(curl -sf "${LOCKER_URL}" | jq -r '.node.value')" == "${IPADDR}" ]] \
+      || curl -sf "${LOCKER_URL}?prevExist=false" \
+         -XPUT -d value="${IPADDR}" 1>&2; do
         echo "Another node is joining etcd cluster, Waiting for it done..." 1>&2
         sleep 1
 
@@ -185,7 +187,7 @@ function etcd_follower(){
 
   if [[ "${ALREADY_MEMBER}" != "true" ]] && [[ "${PROXY}" == "off" ]]; then
     # Unlock and release the privilege for joining etcd cluster
-    until curl -sf "http://${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevValue=${IPADDR}" -XDELETE 1>&2; do
+    until curl -sf "${LOCKER_URL}?prevValue=${IPADDR}" -XDELETE 1>&2; do
         sleep 1
     done
   fi

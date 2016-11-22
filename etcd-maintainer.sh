@@ -1,5 +1,5 @@
 #!/bin/bash
-set -x
+
 function get_alive_etcd_member_size(){
   local MEMBER_LIST="$1"
   local MEMBER_CLIENT_ADDR_LIST="$(echo "${MEMBER_LIST}" | jq -r ".members[].clientURLs[0]")"
@@ -50,14 +50,15 @@ function main(){
 
   while true; do
 
-    until FORCED_WORKER_LABEL="$(curl -sf http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions/${IPADDR})"; do
-      sleep 1
-    done
-    FORCED_WORKER_LABEL="$(echo "${FORCED_WORKER_LABEL}" | jq -r '.node.value' | jq -r '.metadata.labels | .["cdxvirt/k8s_forced_worker"]')"
-    if [[ "${FORCED_WORKER_LABEL}" == "true" ]]; then
-      sleep "${HEALTH_CHECK_INTERVAL}"
-      continue
-    fi
+#    # Do not maintain foced workers
+#    until FORCED_WORKER_LABEL="$(curl -sf http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions/${IPADDR})"; do
+#      sleep 1
+#    done
+#    FORCED_WORKER_LABEL="$(echo "${FORCED_WORKER_LABEL}" | jq -r '.node.value' | jq -r '.metadata.labels | .["cdxvirt/k8s_forced_worker"]')"
+#    if [[ "${FORCED_WORKER_LABEL}" == "true" ]]; then
+#      sleep "${HEALTH_CHECK_INTERVAL}"
+#      continue
+#    fi
 
     MAX_ETCD_MEMBER_SIZE=""
     MEMBER_CLIENT_ADDR_LIST=""
@@ -141,8 +142,10 @@ function main(){
       continue
     else
       # Lock
-      if curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevExist=false" \
-        -XPUT -d value="${IPADDR}" 1>&2; then
+      local LOCKER_URL="http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}"
+      if [[ "$(curl -sf "${LOCKER_URL}" | jq -r '.node.value')" == "${IPADDR}" ]] \
+         || curl -sf "${LOCKER_URL}?prevExist=false" \
+            -XPUT -d value="${IPADDR}" 1>&2; then
 
         if [[ -n "${MEMBER_FAILED}" ]]; then
           # Set the remote failed etcd member to exit the etcd cluster
@@ -168,7 +171,7 @@ function main(){
         fi
 
         # Unlock
-        until curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${LOCKER_ETCD_KEY}?prevValue=${IPADDR}" \
+        until curl -sf "${LOCKER_URL}?prevValue=${IPADDR}" \
           -XDELETE 1>&2; do
             sleep 1
         done

@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-set -x
+
 function set_role_labels(){
   local IPADDR="$1"
   local HYPERKUBE_IMAGE_NAME="$2"
@@ -15,7 +15,7 @@ function set_role_labels(){
   else
     ROLE_LABELS="cdxvirt/k8s_worker=false cdxvirt/k8s_worker=true cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   fi
-  echo "Set role label"
+  echo "Set role labels..."
   for ROLE_LABEL in ${ROLE_LABELS}; do
     until docker run \
       --net=host \
