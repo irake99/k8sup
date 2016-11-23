@@ -1,0 +1,9 @@
+
+
+Please copy keepalived.tmpl to folder /etc/kubernetes on each node
+
+Run pods
+kubectl create -f vip-configmap.yaml
+kubectl create -f vip-daemonset.yaml
+
+keepalived pod will run on node with label cdxvirt/k8s_master=true
