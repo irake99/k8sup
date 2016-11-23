@@ -189,7 +189,8 @@ function main(){
   local KUBE_ETC="/etc/kubernetes"
   local KUBELET_VARLIB="/var/lib/kubelet"
   local IP_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
-  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:kubernetes-public.default.svc.cluster.local"
+  local MASTER_PUB_DN="kubernetes-public.default.svc.cluster.local"
+  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN}"
   local KUBEDNS
   local KUBEDNS_OPTION
 
@@ -239,14 +240,15 @@ function main(){
     APISERVER="${APISERVERS}"
   else
     APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
-    KUBEDNS="$(echo "${APISERVERS}" | cut -d ',' -f 1 | grep -o "${IP_PATTERN}")"
-    APISERVER="https://kubernetes-public.default.svc.cluster.local:${APISERVER_PORT}"
+    APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
+#    KUBEDNS="$(echo "${APISERVERS}" | cut -d ',' -f 1 | grep -o "${IP_PATTERN}")"
+#    APISERVER="https://${MASTER_PUB_DN}:${APISERVER_PORT}"
 
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
 
-    echo "nameserver ${KUBEDNS}" > "/etc/kubernetes/resolv.conf"
-    KUBEDNS_OPTION="--volume=/etc/kubernetes/resolv.conf:/etc/resolv.conf:ro"
+#    echo "nameserver ${KUBEDNS}" > "/etc/kubernetes/resolv.conf"
+#    KUBEDNS_OPTION="--volume=/etc/kubernetes/resolv.conf:/etc/resolv.conf:ro"
   fi
 
   #TODO: Connect the kube-apiserver via public DN with certificate
@@ -326,11 +328,9 @@ function main(){
     --net=host \
     --rm=true \
     --volume=/srv/kubernetes:/srv/kubernetes:ro \
+    --volume=/var/lib/kubelet/kubeconfig/kubeconfig.yaml:/root/.kube/config:ro \
     "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
-    /hyperkube kubectl -s "${APISERVER}" \
-    --client-certificate=/srv/kubernetes/kubecfg.crt \
-    --client-key=/srv/kubernetes/kubecfg.key \
-    --certificate-authority=/srv/kubernetes/ca.crt \
+    /hyperkube kubectl \
      uncordon "${IPADDR}" &>/dev/null; do
        sleep 5
   done
