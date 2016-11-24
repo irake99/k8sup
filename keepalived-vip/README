@@ -7,3 +7,14 @@ kubectl create -f vip-configmap.yaml
 kubectl create -f vip-daemonset.yaml
 
 keepalived pod will run on node with label cdxvirt/k8s_master=true
+
+For DNS vip, please update kube-dns service and add VIP in external IP section.
+ex.
+spec:
+  clusterIP: 10.0.0.10
+  deprecatedPublicIPs:
+  - 192.168.32.18
+  - <VIP>
+  externalIPs:
+  - 192.168.32.18
+  - <VIP>
