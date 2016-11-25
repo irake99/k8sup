@@ -11,9 +11,9 @@ function set_role_labels(){
   local ROLE_LABELS
   local ROLE_LABEL
   if [[ "${WORKER}" == "false" ]]; then
-    ROLE_LABELS="cdxvirt/k8s_master=true cdxvirt/k8s_worker=false cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+    ROLE_LABELS="cdxvirt/k8s_master=true cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   else
-    ROLE_LABELS="cdxvirt/k8s_master=false cdxvirt/k8s_worker=true cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+    ROLE_LABELS="cdxvirt/k8s_master=false cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   fi
   echo "Set role labels..."
   for ROLE_LABEL in ${ROLE_LABELS}; do
@@ -311,6 +311,7 @@ function main(){
   else
     APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
+#    APISERVER="https://10.0.0.1:443"
 #    KUBEDNS="$(echo "${APISERVERS}" | cut -d ',' -f 1 | grep -o "${IP_PATTERN}")"
 #    APISERVER="https://${MASTER_PUB_DN}:${APISERVER_PORT}"
 
