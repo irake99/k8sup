@@ -5,7 +5,7 @@ RUN apt-get -y update
 
 RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime psmisc
 
-RUN git clone https://github.com/containernetworking/cni.git && go get "github.com/oleksandr/bonjour"
+RUN go get "github.com/oleksandr/bonjour"
 
 RUN mkdir -p /go/downloads && curl -sf -o /go/downloads/heapster.tar.gz -L https://github.com/kubernetes/heapster/archive/v1.2.0.tar.gz && tar xfz /go/downloads/heapster.tar.gz && rm -rf /go/downloads/heapster.tar.gz
 
@@ -14,8 +14,6 @@ COPY kube-conf /go/kube-conf
 COPY dnssd /go/dnssd
 COPY flannel-conf /go/flannel-conf
 
-WORKDIR /go/cni
-RUN ./build
 WORKDIR /go
 
 ADD kube-up /go/kube-up

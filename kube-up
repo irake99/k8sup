@@ -273,7 +273,6 @@ function main(){
 
   cp -rf /go/kube-conf/*.json "${KUBE_CONF_PATH}"
   cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml "${KUBELET_VARLIB}/kubeconfig"
-  cp -rf /go/kube-conf/kubeconfig "${KUBE_ETC}/"
   cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
   cp -f /go/update-addons.sh "${KUBE_ETC}/"
@@ -285,7 +284,7 @@ function main(){
   sed -i "s|ARCH|${ARCH}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
   sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_CONF_PATH}"/*.json
   sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
-  sed -i "s|\"--master=127.0.0.1:${APISERVER_PORT}\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/srv/kubernetes/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
+  sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
@@ -309,11 +308,10 @@ function main(){
 
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
+    
+    #TODO: Connect the kube-apiserver via public DN with certificate
+    sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
   fi
-
-  #TODO: Connect the kube-apiserver via public DN with certificate
-  sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBE_ETC}/kubeconfig/kubeconfig.yaml"
-  sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
 
   #for exposing kubernetes&kube-dns
   sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/update-addons.sh"
@@ -329,7 +327,7 @@ function main(){
   echo "Generating certs..." 1>&2
   docker run \
       --net=host \
-      --volume=/srv/kubernetes:/srv/kubernetes:rw \
+      --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       "${HYPERKUBE_IMAGE_NAME}" \
       "/cp-certs.sh" \
@@ -348,7 +346,6 @@ function main(){
       --volume=/dev:/dev:rw \
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
-      --volume=/srv/kubernetes:/srv/kubernetes:ro \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
