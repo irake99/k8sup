@@ -1,6 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: vip-configmap
-data:
-  192.168.32.19: default/kubernetes
