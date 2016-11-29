@@ -359,20 +359,6 @@ function main(){
     sleep 1
   done
 
-  # Try to set this node as schedulable
-  echo "Uncordoning this node..."
-  until docker run \
-    --net=host \
-    --rm=true \
-    "${HYPERKUBE_IMAGE_NAME}" \
-    /hyperkube kubectl -s "${APISERVER}" \
-     --insecure-skip-tls-verify \
-     --username="admin" \
-     --password="admin" \
-     uncordon "${IPADDR}" &>/dev/null; do
-       sleep 5
-  done
-
 }
 
 main "$@"
