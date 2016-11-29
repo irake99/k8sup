@@ -11,24 +11,11 @@ function set_role_labels(){
   local ROLE_LABELS
   local ROLE_LABEL
   if [[ "${WORKER}" == "false" ]]; then
-    ROLE_LABELS="cdxvirt/k8s_master=true cdxvirt/k8s_worker=false cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+    ROLE_LABELS="cdxvirt/k8s_master=true,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   else
-    ROLE_LABELS="cdxvirt/k8s_worker=false cdxvirt/k8s_worker=true cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+    ROLE_LABELS="cdxvirt/k8s_worker=false,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   fi
-  echo "Set role labels..."
-  for ROLE_LABEL in ${ROLE_LABELS}; do
-    until docker run \
-      --net=host \
-      --rm=true \
-      "${HYPERKUBE_IMAGE_NAME}" \
-      /hyperkube kubectl -s "${APISERVER}" \
-       --insecure-skip-tls-verify \
-       --username="admin" \
-       --password="admin" \
-       label --overwrite node "${IPADDR}" "${ROLE_LABEL}" &>/dev/null; do
-         sleep 5
-    done
-  done
+  echo "$ROLE_LABELS"
 }
 
 function get_filepath_from_volumes(){
@@ -260,7 +247,6 @@ function main(){
     done
     FORCED_WORKER="$(echo "${FORCED_WORKER}" | jq -r '.node.value' | jq -r '.metadata.labels | .["cdxvirt/k8s_forced_worker"]')"
 
-    set_role_labels "${IPADDR}" "${HYPERKUBE_IMAGE_NAME}" "${APISERVER}" "${WORKER}" "${FORCED_WORKER}"
     exit 0
   fi
 
@@ -312,10 +298,6 @@ function main(){
     #TODO: Connect the kube-apiserver via public DN with certificate
     sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
   fi
-
-  #for exposing kubernetes&kube-dns
-  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/update-addons.sh"
-  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/addons/kubernetes-public.yaml"
 
   until ! docker ps | grep -w 'k8sup-kubelet'; do
     docker stop k8sup-kubelet 1>/dev/null || true
@@ -369,50 +351,14 @@ function main(){
           --network-plugin=cni \
           --network-plugin-dir=/etc/cni/net.d \
           --cluster-dns=10.0.0.10 \
-          --cluster-domain=cluster.local
+          --cluster-domain=cluster.local \
+          --node-labels="$(set_role_labels "${IPADDR}" "${HYPERKUBE_IMAGE_NAME}" "${APISERVER}" "${WORKER}" "${FORCED_WORKER}")"
 
   echo "Waiting for any k8s apiserver connected..."
   until curl --insecure -u admin:admin -sf "${APISERVER}/healthz" &>/dev/null; do
     sleep 1
   done
 
-  set_role_labels "${IPADDR}" "${HYPERKUBE_IMAGE_NAME}" "${APISERVER}" "${WORKER}" "${FORCED_WORKER}"
-
-  # Try to set this node as schedulable
-  echo "Uncordoning this node..."
-  until docker run \
-    --net=host \
-    --rm=true \
-    "${HYPERKUBE_IMAGE_NAME}" \
-    /hyperkube kubectl -s "${APISERVER}" \
-     --insecure-skip-tls-verify \
-     --username="admin" \
-     --password="admin" \
-     uncordon "${IPADDR}" &>/dev/null; do
-       sleep 5
-  done
-
-  # Add an external IP to kubernetes service
-  if [[ "${WORKER}" == "false" ]]; then
-    local EXTERNALIP="$(docker run \
-    --net=host \
-    --rm=true \
-    ${HYPERKUBE_IMAGE_NAME}   \
-    /hyperkube kubectl -s 127.0.0.1:8080 \
-      get svc \
-      | grep -w 'kubernetes ' \
-      | awk '{print $3}')"
-
-    if [[ "${EXTERNALIP}" == '<none>' ]]; then
-        docker run \
-        --net=host \
-        --rm=true \
-        ${HYPERKUBE_IMAGE_NAME} \
-          /hyperkube kubectl -s 127.0.0.1:8080 \
-          patch service kubernetes \
-          -p "{\"spec\":{\"externalIPs\":[\"${IPADDR}\"]}}"
-    fi
-  fi
 }
 
 main "$@"
