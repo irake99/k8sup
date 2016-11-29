@@ -19,8 +19,6 @@ function main(){
 
   echo "== default service account in the kube-system namespace has token ${token_found} =="
 
-  /hyperkube kubectl create -f /etc/kubernetes/kubernetes-public.yaml
-
   while true; do
 	  sleep 3600;
   done

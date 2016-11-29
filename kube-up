@@ -315,7 +315,6 @@ function main(){
 
   #for exposing kubernetes&kube-dns
   sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/update-addons.sh"
-  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/addons/kubernetes-public.yaml"
 
   until ! docker ps | grep -w 'k8sup-kubelet'; do
     docker stop k8sup-kubelet 1>/dev/null || true
@@ -392,27 +391,6 @@ function main(){
        sleep 5
   done
 
-  # Add an external IP to kubernetes service
-  if [[ "${WORKER}" == "false" ]]; then
-    local EXTERNALIP="$(docker run \
-    --net=host \
-    --rm=true \
-    ${HYPERKUBE_IMAGE_NAME}   \
-    /hyperkube kubectl -s 127.0.0.1:8080 \
-      get svc \
-      | grep -w 'kubernetes ' \
-      | awk '{print $3}')"
-
-    if [[ "${EXTERNALIP}" == '<none>' ]]; then
-        docker run \
-        --net=host \
-        --rm=true \
-        ${HYPERKUBE_IMAGE_NAME} \
-          /hyperkube kubectl -s 127.0.0.1:8080 \
-          patch service kubernetes \
-          -p "{\"spec\":{\"externalIPs\":[\"${IPADDR}\"]}}"
-    fi
-  fi
 }
 
 main "$@"

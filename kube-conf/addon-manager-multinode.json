@@ -53,11 +53,6 @@
             "readOnly": false 
           },
           {
-            "name": "addons-kube-public",
-            "mountPath": "/etc/kubernetes/kubernetes-public.yaml",
-            "readOnly": false
-          },
-          {
             "name": "update-addons",
             "mountPath": "/update-addons.sh"
           }
@@ -79,12 +74,6 @@
         "name": "addons-heapster",
         "hostPath": {
           "path": "/etc/kubernetes/addons/multinode/heapster"
-        }
-      },
-      {
-        "name": "addons-kube-public",
-        "hostPath": {
-          "path": "/etc/kubernetes/addons/kubernetes-public.yaml"
         }
       },
       {
