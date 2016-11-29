@@ -13,7 +13,7 @@ function set_role_labels(){
   if [[ "${WORKER}" == "false" ]]; then
     ROLE_LABELS="cdxvirt/k8s_master=true,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   else
-    ROLE_LABELS="cdxvirt/k8s_worker=false,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+    ROLE_LABELS="cdxvirt/k8s_master=false,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   fi
   echo "$ROLE_LABELS"
 }
