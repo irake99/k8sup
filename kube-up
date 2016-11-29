@@ -313,9 +313,6 @@ function main(){
     sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
   fi
 
-  #for exposing kubernetes&kube-dns
-  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/update-addons.sh"
-
   until ! docker ps | grep -w 'k8sup-kubelet'; do
     docker stop k8sup-kubelet 1>/dev/null || true
     docker rm k8sup-kubelet 1>/dev/null || true
