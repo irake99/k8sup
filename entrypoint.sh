@@ -591,7 +591,7 @@ function main(){
   local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
 
   echo "Copy cni plugins"
-  cp -rf bin /opt/cni
+#  cp -rf bin /opt/cni
   mkdir -p /etc/cni/net.d/
   cp -f /go/cni-conf/10-containernet.conf /etc/cni/net.d/
   cp -f /go/cni-conf/99-loopback.conf /etc/cni/net.d/

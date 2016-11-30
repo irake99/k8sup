@@ -29,13 +29,12 @@ $ sudo docker run -d \
     -v /usr/lib/libdevmapper.so:/usr/lib/$(readlink /usr/lib/libdevmapper.so | xargs basename):ro \
     -v /lib/modules:/lib/modules:ro \
     -v /etc/cni:/etc/cni \
-    -v /opt/cni:/opt/cni \
     -v /var/lib/cni:/var/lib/cni \
     -v /var/lib/etcd:/var/lib/etcd \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     --name=k8sup \
-    cdxvirt/k8sup \
+    cdxvirt/k8sup:k8s-1.4 \
     --network={your-subnet-id/mask}
 </pre>
 

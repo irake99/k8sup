@@ -2,33 +2,17 @@
 set -e
 
 function set_role_labels(){
-  local IPADDR="$1"
-  local HYPERKUBE_IMAGE_NAME="$2"
-  local APISERVER="$3"
-  local WORKER="$4"
-  local FORCED_WORKER="$5"
+  local WORKER="$1"
+  local FORCED_WORKER="$2"
 
   local ROLE_LABELS
   local ROLE_LABEL
   if [[ "${WORKER}" == "false" ]]; then
-    ROLE_LABELS="cdxvirt/k8s_master=true cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+    ROLE_LABELS="cdxvirt/k8s_master=true,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   else
-    ROLE_LABELS="cdxvirt/k8s_master=false cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+    ROLE_LABELS="cdxvirt/k8s_master=false,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   fi
-  echo "Set role labels..."
-  for ROLE_LABEL in ${ROLE_LABELS}; do
-    until docker run \
-      --net=host \
-      --rm=true \
-      "${HYPERKUBE_IMAGE_NAME}" \
-      /hyperkube kubectl -s "${APISERVER}" \
-       --insecure-skip-tls-verify \
-       --username="admin" \
-       --password="admin" \
-       label --overwrite node "${IPADDR}" "${ROLE_LABEL}" &>/dev/null; do
-         sleep 5
-    done
-  done
+  echo "${ROLE_LABELS}"
 }
 
 function get_filepath_from_volumes(){
@@ -265,7 +249,6 @@ function main(){
     done
     FORCED_WORKER="$(echo "${FORCED_WORKER}" | jq -r '.node.value' | jq -r '.metadata.labels | .["cdxvirt/k8s_forced_worker"]')"
 
-    set_role_labels "${IPADDR}" "${HYPERKUBE_IMAGE_NAME}" "${APISERVER}" "${WORKER}" "${FORCED_WORKER}"
     exit 0
   fi
 
@@ -278,7 +261,6 @@ function main(){
 
   cp -rf /go/kube-conf/*.json "${KUBE_CONF_PATH}"
   cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml "${KUBELET_VARLIB}/kubeconfig"
-  cp -rf /go/kube-conf/kubeconfig "${KUBE_ETC}/"
   cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
   cp -f /go/update-addons.sh "${KUBE_ETC}/"
@@ -290,7 +272,7 @@ function main(){
   sed -i "s|ARCH|${ARCH}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
   sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_CONF_PATH}"/*.json
   sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
-  sed -i "s|\"--master=127.0.0.1:${APISERVER_PORT}\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/srv/kubernetes/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
+  sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
@@ -318,17 +300,9 @@ function main(){
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
 
-#    echo "nameserver ${KUBEDNS}" > "/etc/kubernetes/resolv.conf"
-#    KUBEDNS_OPTION="--volume=/etc/kubernetes/resolv.conf:/etc/resolv.conf:ro"
+    #TODO: Connect the kube-apiserver via public DN with certificate
+    sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
   fi
-
-  #TODO: Connect the kube-apiserver via public DN with certificate
-  sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBE_ETC}/kubeconfig/kubeconfig.yaml"
-  sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
-
-  #for exposing kubernetes&kube-dns
-  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/update-addons.sh"
-  sed -i "s|127.0.0.1|${IPADDR}|g" "${KUBE_ETC}/addons/kubernetes-public.yaml"
 
   until ! docker ps | grep -w 'k8sup-kubelet'; do
     docker stop k8sup-kubelet 1>/dev/null || true
@@ -340,7 +314,7 @@ function main(){
   echo "Generating certs..." 1>&2
   docker run \
       --net=host \
-      --volume=/srv/kubernetes:/srv/kubernetes:rw \
+      --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       "${HYPERKUBE_IMAGE_NAME}" \
       "/cp-certs.sh" \
@@ -359,7 +333,6 @@ function main(){
       --volume=/dev:/dev:rw \
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
-      --volume=/srv/kubernetes:/srv/kubernetes:ro \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
@@ -384,51 +357,13 @@ function main(){
           --network-plugin=cni \
           --network-plugin-dir=/etc/cni/net.d \
           --cluster-dns=10.0.0.10 \
-          --tls-cert-file=/srv/kubernetes/kubecfg.crt \
-          --tls-private-key-file=/srv/kubernetes/kubecfg.key \
-          --cluster-domain=cluster.local
+          --cluster-domain=cluster.local \
+          --node-labels="$(set_role_labels "${WORKER}" "${FORCED_WORKER}")"
 
   echo "Waiting for any k8s apiserver connected..."
   until curl --insecure -u admin:admin -sf "${APISERVER}/healthz" &>/dev/null; do
     sleep 1
   done
-
-  set_role_labels "${IPADDR}" "${HYPERKUBE_IMAGE_NAME}" "${APISERVER}" "${WORKER}" "${FORCED_WORKER}"
-
-  # Try to set this node as schedulable
-  echo "Uncordoning this node..."
-  until docker run \
-    --net=host \
-    --rm=true \
-    --volume=/srv/kubernetes:/srv/kubernetes:ro \
-    --volume=/var/lib/kubelet/kubeconfig/kubeconfig.yaml:/root/.kube/config:ro \
-    "${HYPERKUBE_IMAGE_NAME}" \
-    /hyperkube kubectl \
-     uncordon "${IPADDR}" &>/dev/null; do
-       sleep 5
-  done
-
-  # Add an external IP to kubernetes service
-  if [[ "${WORKER}" == "false" ]]; then
-    local EXTERNALIP="$(docker run \
-    --net=host \
-    --rm=true \
-    "${HYPERKUBE_IMAGE_NAME}"   \
-    /hyperkube kubectl -s 127.0.0.1:8080 \
-      get svc \
-      | grep -w 'kubernetes ' \
-      | awk '{print $3}')"
-
-    if [[ "${EXTERNALIP}" == '<none>' ]]; then
-        docker run \
-        --net=host \
-        --rm=true \
-        "${HYPERKUBE_IMAGE_NAME}" \
-          /hyperkube kubectl -s 127.0.0.1:8080 \
-          patch service kubernetes \
-          -p "{\"spec\":{\"externalIPs\":[\"${IPADDR}\"]}}"
-    fi
-  fi
 }
 
 main "$@"
