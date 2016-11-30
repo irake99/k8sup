@@ -2,11 +2,8 @@
 set -e
 
 function set_role_labels(){
-  local IPADDR="$1"
-  local HYPERKUBE_IMAGE_NAME="$2"
-  local APISERVER="$3"
-  local WORKER="$4"
-  local FORCED_WORKER="$5"
+  local WORKER="$1"
+  local FORCED_WORKER="$2"
 
   local ROLE_LABELS
   local ROLE_LABEL
@@ -15,7 +12,7 @@ function set_role_labels(){
   else
     ROLE_LABELS="cdxvirt/k8s_master=false,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
   fi
-  echo "$ROLE_LABELS"
+  echo "${ROLE_LABELS}"
 }
 
 function get_filepath_from_volumes(){
@@ -192,6 +189,7 @@ function get_API_Servers(){
     KUBE_NODE_LIST="$(curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
                           | jq -r .node.nodes[].value 2>/dev/null \
                           | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address' 2>/dev/null)" || true
+    sleep 1
   done
 
   for KUBE_NODE in ${KUBE_NODE_LIST}; do
@@ -222,7 +220,11 @@ function main(){
   local KUBE_ADDONS_CONF_PATH="/etc/kubernetes/addons/multinode"
   local KUBE_ETC="/etc/kubernetes"
   local KUBELET_VARLIB="/var/lib/kubelet"
-  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:kubernetes-public.default.svc.cluster.local"
+  local IP_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
+  local MASTER_PUB_DN="kubernetes-public.default.svc.cluster.local"
+  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN}"
+  local KUBEDNS
+  local KUBEDNS_OPTION
 
   export REGISTRY="${EX_REGISTRY}"
   export ARCH=amd64
@@ -291,10 +293,13 @@ function main(){
   else
     APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
+#    APISERVER="https://10.0.0.1:443"
+#    KUBEDNS="$(echo "${APISERVERS}" | cut -d ',' -f 1 | grep -o "${IP_PATTERN}")"
+#    APISERVER="https://${MASTER_PUB_DN}:${APISERVER_PORT}"
 
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
-    
+
     #TODO: Connect the kube-apiserver via public DN with certificate
     sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
   fi
@@ -331,6 +336,7 @@ function main(){
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
+      ${KUBEDNS_OPTION} \
       ${RBD_OPTIONS} \
       --net=host \
       --privileged=true \
@@ -352,13 +358,12 @@ function main(){
           --network-plugin-dir=/etc/cni/net.d \
           --cluster-dns=10.0.0.10 \
           --cluster-domain=cluster.local \
-          --node-labels="$(set_role_labels "${IPADDR}" "${HYPERKUBE_IMAGE_NAME}" "${APISERVER}" "${WORKER}" "${FORCED_WORKER}")"
+          --node-labels="$(set_role_labels "${WORKER}" "${FORCED_WORKER}")"
 
   echo "Waiting for any k8s apiserver connected..."
   until curl --insecure -u admin:admin -sf "${APISERVER}/healthz" &>/dev/null; do
     sleep 1
   done
-
 }
 
 main "$@"

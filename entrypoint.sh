@@ -397,7 +397,7 @@ Options:
     --new                    Force to start a new cluster
     --restore                Try to restore etcd data and start a new cluster
     --rejoin-etcd            Re-join the same etcd cluster
--p, --proxy                  Force to run as etcd and k8s proxy
+    --worker                 Force to run as k8s worker and etcd proxy
 -r, --registry=REGISTRY      Registry of docker image
                              (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -h, --help                   This help text
@@ -408,8 +408,8 @@ Options:
 
 function get_options(){
   local PROGNAME="${0##*/}"
-  local SHORTOPTS="n:c:v:pr:h"
-  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,proxy,restore,rejoin-etcd,registry:,help"
+  local SHORTOPTS="n:c:v:r:h"
+  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,restore,rejoin-etcd,registry:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -446,7 +446,7 @@ function get_options(){
               export EX_REJOIN_ETCD="true"
               shift
               ;;
-          -p|--proxy)
+             --worker)
               export EX_PROXY="on"
               shift
               ;;
@@ -591,7 +591,7 @@ function main(){
   local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
 
   echo "Copy cni plugins"
-  #cp -rf bin /opt/cni
+#  cp -rf bin /opt/cni
   mkdir -p /etc/cni/net.d/
   cp -f /go/cni-conf/10-containernet.conf /etc/cni/net.d/
   cp -f /go/cni-conf/99-loopback.conf /etc/cni/net.d/
