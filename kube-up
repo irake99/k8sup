@@ -180,12 +180,18 @@ function get_options(){
   fi
 }
 
+# Get test kube-proxy
+function test_proxy(){
+  echo $(grep -o "10.0.0.1/32" <<<"$(iptables -S -t nat | grep 10.0.0.1/32)" | wc -l)
+}
+
 # Get k8s apiservers form the list of etcd members
 function get_API_Servers(){
   local APISERVER_PORT="$1"
   local ETCD_CLIENT_PORT="$2"
   local APISERVERS=""
   local APISERVER=""
+  local APIHOST=""
   local KUBE_NODE_LIST=""
 
   until [[ -n "${KUBE_NODE_LIST}" ]]; do
@@ -286,17 +292,17 @@ function main(){
   fi
 
   if [[ "${WORKER}" == "false" ]]; then
-    APISERVERS="http://127.0.0.1:8080"
+    APISERVERS="https://127.0.0.1:6443"
     APISERVER="${APISERVERS}"
+    APIHOST="127.0.0.1:6443"
   else
     APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
-
+    APIHOST=${APISERVER:8}
+    
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
     
-    #TODO: Connect the kube-apiserver via public DN with certificate
-    sed -i "s|server: https://127.0.0.1:6443|server: ${APISERVER}|g" "${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml"
   fi
 
   until ! docker ps | grep -w 'k8sup-kubelet'; do
@@ -315,6 +321,9 @@ function main(){
       "/cp-certs.sh" \
       "${DOMAIN_NAME}" \
       "DONT_HOLD" 1>/dev/null
+
+  echo "Preparing temporary iptable rules: 10.0.0.1:443 -> ${APIHOST}"
+  iptables -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}" 
 
   echo "Running Kubernetes ..."
   docker run \
@@ -354,11 +363,12 @@ function main(){
           --cluster-domain=cluster.local \
           --node-labels="$(set_role_labels "${IPADDR}" "${HYPERKUBE_IMAGE_NAME}" "${APISERVER}" "${WORKER}" "${FORCED_WORKER}")"
 
-  echo "Waiting for any k8s apiserver connected..."
-  until curl --insecure -u admin:admin -sf "${APISERVER}/healthz" &>/dev/null; do
+  echo "Waiting for kube-proxy connect to apiserver..."
+  until [[ $(test_proxy) -gt 1 ]]; do
     sleep 1
   done
-
+  
+  iptables -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
 }
 
 main "$@"
