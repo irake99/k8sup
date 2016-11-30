@@ -13,7 +13,7 @@ Options:
                              or "eth0" (Required option)
 -c, --cluster=CLUSTER_ID     Join a specified cluster
     --new                    Force to start a new cluster
--p, --proxy                  Force to run as etcd and k8s proxy
+    --worker                 Force to run as k8s worker and etcd proxy
 -h, --help                   This help text
 </pre>
 
