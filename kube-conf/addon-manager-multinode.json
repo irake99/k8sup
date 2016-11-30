@@ -50,7 +50,7 @@
           {
             "name": "addons-heapster",
             "mountPath": "/etc/kubernetes/addons/multinode/heapster",
-            "readOnly": false 
+            "readOnly": false
           },
           {
             "name": "update-addons",
@@ -59,7 +59,7 @@
         ]
       }
     ],
-    "volumes":[
+    "volumes": [
       {
         "name": "addons",
         "emptyDir": {}

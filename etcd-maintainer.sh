@@ -159,14 +159,19 @@ function main(){
           if [[ "${ETCD_MEMBER_SIZE_STATUS}" == "lesser" && "${ETCD_PROXY}" == "on" ]] \
              || [[ "${ETCD_MEMBER_SIZE_STATUS}" == "greater" && "${ETCD_PROXY}" == "off" ]] \
              || [[ -n "${PROXY_OPT}" ]]; then
+
+            # Stop local k8s service
+            docker stop k8sup-kubelet || true
+            docker rm -f k8sup-kubelet || true
+
             # Re-join etcd cluster
             /go/entrypoint.sh --rejoin-etcd ${PROXY_OPT}
 
-            # echo "Running Kubernetes"
+            # Start local k8s service
             if [[ -n "${K8S_REGISTRY}" ]]; then
               local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
             fi
-            /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} --reset-labels
+            /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION}
           fi
         fi
 

@@ -90,6 +90,9 @@ function main(){
   local DONT_HOLD="$2"
   local ETCD_PATH="k8sup/cluster/k8s_certs"
   local CERTS_ON_ETCD=""
+
+  rm -rf "/var/lib/kubelet/kubeconfig/kubecfg"* || true
+
   CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
   if [[ "${CERTS_ON_ETCD}" == "true" ]]; then
     download_kube_certs "${ETCD_PATH}"
