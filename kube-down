@@ -49,7 +49,7 @@ function stop_k8s(){
   echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager-multinode.json &>/dev/null
 
   echo -n "Waiting for all k8s pods stopped ..." 1>&2
-  until [[ "$(docker ps | grep ${REGISTRY}/hyperkube | wc -l)" == 2 ]]; do
+  until [[ "$(docker ps | grep ${REGISTRY}/hyperkube | wc -l)" -le "2" ]]; do
     echo -n "." 1>&2
     sleep 1
   done

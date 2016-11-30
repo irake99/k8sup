@@ -86,7 +86,6 @@ function etcd_follower(){
   # Prevent the cap of etcd member size less then 3
   local MAX_ETCD_MEMBER_SIZE="$(curl -s --retry 10 "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" 2>/dev/null \
                                 | jq -r '.node.value')"
-  local DISCOVERY_RESULTS
   if [[ "${MAX_ETCD_MEMBER_SIZE}" -lt "3" ]]; then
     MAX_ETCD_MEMBER_SIZE="3"
     curl -s "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/k8sup/cluster/max_etcd_member_size" \
@@ -112,13 +111,6 @@ function etcd_follower(){
 
   if [[ "${ALREADY_MEMBER}" != "true" ]]; then
     ETCD_EXISTED_MEMBER_SIZE="$(get_alive_etcd_member_size "${MEMBERS}")"
-    ETCD_NODE_SIZE="$(echo "${ETCD_NODE_LIST}" | wc -l)"
-
-    if [[ "${ETCD_EXISTED_MEMBER_SIZE}" -lt "${MAX_ETCD_MEMBER_SIZE}" \
-       && "$((${ETCD_EXISTED_MEMBER_SIZE} % 2))" == "1" \
-       && "${ETCD_EXISTED_MEMBER_SIZE}" -eq "${ETCD_NODE_SIZE}" ]]; then
-      PROXY="on"
-    fi
 
     # Check if cluster is full
     if [[ "${PROXY}" == "off" ]] \
@@ -646,8 +638,6 @@ function main(){
   echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
   echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
-
-  bash -c "/go/etcd-maintainer.sh" &
 
   echo "Kubernetes started, hold..." 1>&2
   tail -f /dev/null
