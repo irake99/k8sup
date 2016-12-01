@@ -27,8 +27,8 @@ function etcd_creator(){
 
   if [[ "${RESTORE_ETCD}" == "true" ]]; then
     local RESTORE_CMD="--force-new-cluster=true"
-  elif [[ "${NEW_CLUSTER}" == "true" ]]; then
-    rm -rf "/var/lib/etcd/"*
+#  elif [[ "${NEW_CLUSTER}" == "true" ]]; then
+#    rm -rf "/var/lib/etcd/"*
   fi
 
   docker run \
@@ -390,6 +390,7 @@ Options:
     --restore                Try to restore etcd data and start a new cluster
     --rejoin-etcd            Re-join the same etcd cluster
     --worker                 Force to run as k8s worker and etcd proxy
+    --debug                  Enable debug mode
 -r, --registry=REGISTRY      Registry of docker image
                              (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -h, --help                   This help text
@@ -401,7 +402,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:v:r:h"
-  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,restore,rejoin-etcd,registry:,help"
+  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,rejoin-etcd,registry:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -436,6 +437,11 @@ function get_options(){
               ;;
              --rejoin-etcd)
               export EX_REJOIN_ETCD="true"
+              shift
+              ;;
+             --debug)
+              set -x
+              export SHELLOPTS
               shift
               ;;
              --worker)
