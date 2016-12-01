@@ -21,7 +21,6 @@ ADD kube-down /go/kube-down
 ADD entrypoint.sh /go/entrypoint.sh
 ADD cp-certs.sh /go/cp-certs.sh
 ADD update-addons.sh /go/update-addons.sh
-ADD etcd-maintainer.sh /go/etcd-maintainer.sh
 
 RUN chmod +x /go/entrypoint.sh
 RUN chmod +x /go/kube-up
