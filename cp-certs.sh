@@ -91,7 +91,8 @@ function main(){
   local ETCD_PATH="k8sup/cluster/k8s_certs"
   local CERTS_ON_ETCD=""
 
-  rm -rf "/var/lib/kubelet/kubeconfig/kubecfg"* || true
+  # Remove old certs for master services before that started
+  rm -rf "/srv/kubernetes/"*
 
   CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
   if [[ "${CERTS_ON_ETCD}" == "true" ]]; then
@@ -100,15 +101,12 @@ function main(){
     upload_kube_certs "${ETCD_PATH}" &
   fi
 
-  #upload default kubeconfig to k8s-master pod
-  if [[ -f "/etc/kubernetes/kubeconfig/kubeconfig.yaml" ]]; then
-    cp /etc/kubernetes/kubeconfig/kubeconfig.yaml /srv/kubernetes/
-  fi
-
   /setup-files.sh "${DOMAIN_NAME}" &
 
-  #clone client-certificate and client-key for kube-proxy & kubelet
+  # clone client-certificate and client-key for kube-proxy & kubelet
   mkdir -p /var/lib/kubelet/kubeconfig
+  rm -rf "/var/lib/kubelet/kubeconfig/kubecfg"* || true
+  rm -rf "/var/lib/kubelet/kubeconfig/ca.crt" || true
   until test -f "/var/lib/kubelet/kubeconfig/kubecfg.key"; do
     cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ &>/dev/null || true
     cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ &>/dev/null || true
