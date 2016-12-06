@@ -26,6 +26,34 @@ function check_certs_exist_on_etcd(){
   echo "${CERTS_ON_ETCD}"
 }
 
+# clone client-certificate and client-key for kube-proxy & kubelet
+function cp_kube_certs(){
+  local CERTS_DIR="/srv/kubernetes"
+  local FILE_LIST="ca.crt kubecfg.crt kubecfg.key"
+  local DEST_DIR="/var/lib/kubelet/kubeconfig"
+
+  mkdir -p "${DEST_DIR}"
+  for FILE in ${FILE_LIST}; do
+    rm -f "${DEST_DIR}/${FILE}" || true
+  done
+
+  # Wait a moment until all files exist
+  local CERTS_EXISTED="false"
+  until [[ "${CERTS_EXISTED}" == "true" ]]; do
+    CERTS_EXISTED="true"
+    for FILE in ${FILE_LIST}; do
+      test -f "${CERTS_DIR}/${FILE}" || CERTS_EXISTED="false"
+    done
+    if [[ "${CERTS_EXISTED}" == "false" ]]; then
+      sleep 1
+    fi
+  done
+
+  for FILE in ${FILE_LIST}; do
+    cp -f "${CERTS_DIR}/${FILE}" "${DEST_DIR}" || true
+  done
+}
+
 function upload_kube_certs(){
   local ETCD_PATH="$1"
   local CERTS_DIR="/srv/kubernetes"
@@ -44,10 +72,16 @@ function upload_kube_certs(){
     fi
   done
 
-  for FILE in ${FILE_LIST}; do
-    ENCODED_DATA="$(cat "${CERTS_DIR}/${FILE}" | base64)"
-    curl -s "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/${FILE}" -XPUT -d value="${ENCODED_DATA}" &>/dev/null
-  done
+  local CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
+  echo "CERTS_ON_ETCD: ${CERTS_ON_ETCD}"
+  if [[ "${CERTS_ON_ETCD}" == "false" ]]; then
+    for FILE in ${FILE_LIST}; do
+      ENCODED_DATA="$(cat "${CERTS_DIR}/${FILE}" | base64)"
+      curl -s "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/${FILE}" -XPUT -d value="${ENCODED_DATA}" &>/dev/null
+    done
+  else
+    download_kube_certs "${ETCD_PATH}"
+  fi
 }
 
 function download_kube_certs(){
@@ -95,6 +129,7 @@ function main(){
   rm -rf "/srv/kubernetes/"*
 
   CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
+  echo "CERTS_ON_ETCD: ${CERTS_ON_ETCD}"
   if [[ "${CERTS_ON_ETCD}" == "true" ]]; then
     download_kube_certs "${ETCD_PATH}"
   else
@@ -103,15 +138,7 @@ function main(){
 
   /setup-files.sh "${DOMAIN_NAME}" &
 
-  # clone client-certificate and client-key for kube-proxy & kubelet
-  mkdir -p /var/lib/kubelet/kubeconfig
-  rm -rf "/var/lib/kubelet/kubeconfig/kubecfg"* || true
-  rm -rf "/var/lib/kubelet/kubeconfig/ca.crt" || true
-  until test -f "/var/lib/kubelet/kubeconfig/kubecfg.key"; do
-    cp -rf /srv/kubernetes/ca.crt /var/lib/kubelet/kubeconfig/ &>/dev/null || true
-    cp -rf /srv/kubernetes/kubecfg.* /var/lib/kubelet/kubeconfig/ &>/dev/null || true
-    sleep 1
-  done
+  cp_kube_certs
 
   [[ "${DONT_HOLD}" != "DONT_HOLD" ]] && wait || exit 0
 }
