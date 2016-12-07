@@ -231,6 +231,7 @@ function main(){
   local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN}"
   local KUBEDNS
   local KUBEDNS_OPTION
+  local CERT_DIRS
   local CERT_DIR
 
   export REGISTRY="${EX_REGISTRY}"
@@ -300,8 +301,12 @@ function main(){
     APIHOST="127.0.0.1:6443"
 
     # Remove old certs for master services
-    CERT_DIR="$(dirname "$(find "${KUBELET_VARLIB}/pods/" -type f -name server.cert)")"
-    [[ "${CERT_DIR}" != "." ]] && rm -rf "${CERT_DIR}/"*
+    CERT_DIRS="$(dirname "$(find "${KUBELET_VARLIB}/pods/" -type f -name server.cert)")"
+    if [[ "${CERT_DIR}" != "." ]]; then
+      for CERT_DIR in ${CERT_DIRS}; do
+        rm -rf "${CERT_DIR}/"*
+      done
+    fi
   else
     APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"

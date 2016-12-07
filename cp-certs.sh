@@ -202,6 +202,7 @@ function main(){
   cp_kube_certs
 
   if [[ "${DONT_HOLD}" != "DONT_HOLD" ]]; then
+    check_and_wait_all_cert_files_in_srv_kubernetes
     wait
   else
     check_and_wait_all_certs_exist_on_etcd "${ETCD_PATH}"
