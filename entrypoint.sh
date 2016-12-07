@@ -567,7 +567,7 @@ function main(){
   local ETCD_CID
   local ROLE
   if [[ -d "/var/lib/etcd/member" ]]; then
-    echo "Find etcd data in the local storage, trying to start etcd wiht these data..." 1>&2
+    echo "Find etcd data in the local storage, trying to start etcd with these data..." 1>&2
     ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${MAX_ETCD_MEMBER_SIZE}" \
              "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || true
   fi

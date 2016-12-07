@@ -136,7 +136,7 @@ function upload_kube_certs(){
   curl -sf "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/ca.crt" 1>&2
   ERROR_CODE="$?"
   if [[ "${ERROR_CODE}" == "22" ]]; then
-    echo Uploading certs to etcd... 1>&2
+    echo There are no certs on etcd, uploading certs... 1>&2
     for FILE in ${FILE_LIST}; do
       ENCODED_DATA="$(cat "${CERTS_DIR}/${FILE}" | base64)"
       curl -s "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/${FILE}" -XPUT -d value="${ENCODED_DATA}" 1>/dev/null \
@@ -189,8 +189,6 @@ function main(){
   local DONT_HOLD="$2"
   local ETCD_PATH="k8sup/cluster/k8s_certs"
   local CERTS_ON_ETCD=""
-
-  rm -rf "/var/lib/kubelet/kubeconfig/kubecfg"* || true
 
   CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
   if [[ "${CERTS_ON_ETCD}" == "true" ]]; then
