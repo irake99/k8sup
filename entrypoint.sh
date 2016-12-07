@@ -48,10 +48,10 @@ function etcd_creator(){
       --data-dir /var/lib/etcd \
       --proxy off
 
-  local TIMEOUT="10"
+  local TIMEOUT="30"
   local COUNTER="0"
   echo -n "Waiting for etcd ready" 1>&2
-  until [[ "${COUNTER}" -ge "${TIMEOUT}" ]] || curl -sf -m 3 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
+  until [[ "${COUNTER}" -ge "${TIMEOUT}" ]] || curl -sf -m 1 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
     echo -n "." 1>&2
     ((COUNTER++))
     sleep 1
@@ -59,7 +59,7 @@ function etcd_creator(){
   echo 1>&2
 
   if [[ "${COUNTER}" -ge "${TIMEOUT}" ]]; then
-    rm -rf "/var/lib/etcd/"*
+    echo "Could not start etcd with etcd data in the local storage, you may need to use '--restore' or remove these data, exiting..." 1>&2
     sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true
     sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
     return 1
@@ -567,9 +567,9 @@ function main(){
   local ETCD_CID
   local ROLE
   if [[ -d "/var/lib/etcd/member" ]]; then
-    echo "Find etcd data in the local storage, trying to start etcd with these data..." 1>&2
+    echo "Found etcd data in the local storage (/var/lib/etcd), trying to start etcd with these data..." 1>&2
     ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${MAX_ETCD_MEMBER_SIZE}" \
-             "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || true
+             "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || exit 1
   fi
 
   if [[ "${ROLE}" != "follower" ]]; then
