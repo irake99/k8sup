@@ -323,7 +323,7 @@ function main(){
       "${DOMAIN_NAME}" \
       "DONT_HOLD" 1>/dev/null
 
-  echo "Preparing temporary iptable rules: 10.0.0.1:443 -> ${APIHOST}"
+  echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
   iptables -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
 
   echo "Running Kubernetes ..."
@@ -370,6 +370,20 @@ function main(){
     sleep 1
   done
 
+  # Try to set this node as schedulable
+  echo "Uncordoning this node..."
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+     uncordon "${IPADDR}" &>/dev/null; do
+       sleep 5
+  done
+
+  echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
   iptables -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
 }
 

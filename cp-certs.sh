@@ -1,5 +1,63 @@
 #!/bin/bash
 
+function check_and_wait_all_cert_files_in_var_lib_kubelet_kubeconfig(){
+  local CERTS_DIR="/var/lib/kubelet/kubeconfig"
+  local FILE_LIST="ca.crt kubecfg.crt kubecfg.key"
+
+  # Wait a moment until all files exist
+  local CERTS_EXISTED="false"
+  until [[ "${CERTS_EXISTED}" == "true" ]]; do
+    CERTS_EXISTED="true"
+    for FILE in ${FILE_LIST}; do
+      test -f "${CERTS_DIR}/${FILE}" || { CERTS_EXISTED="false" && break; }
+    done
+    if [[ "${CERTS_EXISTED}" == "false" ]]; then
+      sleep 1
+    fi
+  done
+
+  echo "All certs in ${CERTS_DIR}" 1>&2
+}
+
+function check_and_wait_all_cert_files_in_srv_kubernetes(){
+  local CERTS_DIR="/srv/kubernetes"
+  local FILE_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv"
+
+  # Wait a moment until all files exist
+  local CERTS_EXISTED="false"
+  until [[ "${CERTS_EXISTED}" == "true" ]]; do
+    CERTS_EXISTED="true"
+    for FILE in ${FILE_LIST}; do
+      test -f "${CERTS_DIR}/${FILE}" || { CERTS_EXISTED="false" && break; }
+    done
+    if [[ "${CERTS_EXISTED}" == "false" ]]; then
+      sleep 1
+    fi
+  done
+
+  echo "All certs in ${CERTS_DIR}" 1>&2
+}
+
+function check_and_wait_all_certs_exist_on_etcd(){
+  local ETCD_PATH="$1"
+  local CERT_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv"
+  local CERTS_EXISTED
+
+  # Wait a moment until all certs exist
+  until [[ "${CERTS_EXISTED}" == "true" ]]; do
+    CERTS_EXISTED="true"
+    for CERT in ${CERT_LIST}; do
+      curl -sf "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/${CERT}" &>/dev/null \
+        || { CERTS_EXISTED="false" && break; }
+    done
+    if [[ "${CERTS_EXISTED}" == "false" ]]; then
+      sleep 1
+    fi
+  done
+
+  echo "All certs on etcd" 1>&2
+}
+
 function check_certs_exist_on_etcd(){
   local ETCD_PATH="$1"
   local ERROR_CODE=""
@@ -31,6 +89,7 @@ function cp_kube_certs(){
   local CERTS_DIR="/srv/kubernetes"
   local FILE_LIST="ca.crt kubecfg.crt kubecfg.key"
   local DEST_DIR="/var/lib/kubelet/kubeconfig"
+  local CERTS_EXISTED
 
   mkdir -p "${DEST_DIR}"
   for FILE in ${FILE_LIST}; do
@@ -38,11 +97,11 @@ function cp_kube_certs(){
   done
 
   # Wait a moment until all files exist
-  local CERTS_EXISTED="false"
+  echo "Copying certs to ${DEST_DIR}..." 1>&2
   until [[ "${CERTS_EXISTED}" == "true" ]]; do
     CERTS_EXISTED="true"
     for FILE in ${FILE_LIST}; do
-      test -f "${CERTS_DIR}/${FILE}" || CERTS_EXISTED="false"
+      test -f "${CERTS_DIR}/${FILE}" || { CERTS_EXISTED="false" && break; }
     done
     if [[ "${CERTS_EXISTED}" == "false" ]]; then
       sleep 1
@@ -50,7 +109,8 @@ function cp_kube_certs(){
   done
 
   for FILE in ${FILE_LIST}; do
-    cp -f "${CERTS_DIR}/${FILE}" "${DEST_DIR}" || true
+    cp -f "${CERTS_DIR}/${FILE}" "${DEST_DIR}" \
+      && echo "${FILE}" copied 1>&2
   done
 }
 
@@ -65,19 +125,22 @@ function upload_kube_certs(){
   until [[ "${CERTS_EXISTED}" == "true" ]]; do
     CERTS_EXISTED="true"
     for FILE in ${FILE_LIST}; do
-      test -f "${CERTS_DIR}/${FILE}" || CERTS_EXISTED="false"
+      test -f "${CERTS_DIR}/${FILE}" || { CERTS_EXISTED="false" && break; }
     done
     if [[ "${CERTS_EXISTED}" == "false" ]]; then
       sleep 1
     fi
   done
 
-  local CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
-  echo "CERTS_ON_ETCD: ${CERTS_ON_ETCD}"
-  if [[ "${CERTS_ON_ETCD}" == "false" ]]; then
+  # Check again if CA exists, don't upload anything
+  curl -sf "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/ca.crt" 1>&2
+  ERROR_CODE="$?"
+  if [[ "${ERROR_CODE}" == "22" ]]; then
+    echo Uploading certs to etcd... 1>&2
     for FILE in ${FILE_LIST}; do
       ENCODED_DATA="$(cat "${CERTS_DIR}/${FILE}" | base64)"
-      curl -s "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/${FILE}" -XPUT -d value="${ENCODED_DATA}" &>/dev/null
+      curl -s "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/${FILE}" -XPUT -d value="${ENCODED_DATA}" 1>/dev/null \
+        && echo "${FILE}" uploaded 1>&2
     done
   else
     download_kube_certs "${ETCD_PATH}"
@@ -93,6 +156,7 @@ function download_kube_certs(){
 
   mkdir -p "${CERTS_DIR}"
 
+  echo "Downloading certs to ${CERTS_DIR}..." 1>&2
   for FILE in ${FILE_LIST}; do
     until RAWDATA="$(curl -sf "http://127.0.0.1:2379/v2/keys/${ETCD_PATH}/${FILE}")"; do
       echo "Waiting to get etcd keys..." 1>&2
@@ -102,7 +166,8 @@ function download_kube_certs(){
       | sed -n "s/.*value\":\"\(.*\)\",.*/\1/p" \
       | sed "s/\\\n/\n/g" \
       | base64 -d -i)"
-    echo "${CERT}" |  tee "${CERTS_DIR}/${FILE}" 1>/dev/null
+    echo "${CERT}" |  tee "${CERTS_DIR}/${FILE}" 1>/dev/null \
+      && echo "${FILE}" downloaded 1>&2
   done
 
   for FILE in ${FILE_LIST}; do
@@ -125,11 +190,9 @@ function main(){
   local ETCD_PATH="k8sup/cluster/k8s_certs"
   local CERTS_ON_ETCD=""
 
-  # Remove old certs for master services before that started
-  rm -rf "/srv/kubernetes/"*
+  rm -rf "/var/lib/kubelet/kubeconfig/kubecfg"* || true
 
   CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
-  echo "CERTS_ON_ETCD: ${CERTS_ON_ETCD}"
   if [[ "${CERTS_ON_ETCD}" == "true" ]]; then
     download_kube_certs "${ETCD_PATH}"
   else
@@ -140,7 +203,14 @@ function main(){
 
   cp_kube_certs
 
-  [[ "${DONT_HOLD}" != "DONT_HOLD" ]] && wait || exit 0
+  if [[ "${DONT_HOLD}" != "DONT_HOLD" ]]; then
+    wait
+  else
+    check_and_wait_all_certs_exist_on_etcd "${ETCD_PATH}"
+    check_and_wait_all_cert_files_in_srv_kubernetes
+    check_and_wait_all_cert_files_in_var_lib_kubelet_kubeconfig
+    exit 0
+  fi
 }
 
 main "$@"
