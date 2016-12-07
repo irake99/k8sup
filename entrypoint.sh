@@ -27,8 +27,6 @@ function etcd_creator(){
 
   if [[ "${RESTORE_ETCD}" == "true" ]]; then
     local RESTORE_CMD="--force-new-cluster=true"
-  elif [[ "${NEW_CLUSTER}" == "true" ]]; then
-    rm -rf "/var/lib/etcd/"*
   fi
 
   docker run \
@@ -50,11 +48,25 @@ function etcd_creator(){
       --data-dir /var/lib/etcd \
       --proxy off
 
-  until curl -sf 127.0.0.1:${CLIENT_PORT}/v2/keys 1>/dev/null 2>&1; do
-    echo "Waiting for etcd ready..." 1>&2
+  local TIMEOUT="10"
+  local COUNTER="0"
+  echo -n "Waiting for etcd ready" 1>&2
+  until [[ "${COUNTER}" -ge "${TIMEOUT}" ]] || curl -sf -m 3 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
+    echo -n "." 1>&2
+    ((COUNTER++))
     sleep 1
   done
-  curl -s "127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
+  echo 1>&2
+
+  if [[ "${COUNTER}" -ge "${TIMEOUT}" ]]; then
+    rm -rf "/var/lib/etcd/"*
+    sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true
+    sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
+    return 1
+  else
+    curl -sf -m 5 "127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
+    return "$?"
+  fi
 }
 
 function etcd_follower(){
@@ -390,6 +402,7 @@ Options:
     --restore                Try to restore etcd data and start a new cluster
     --rejoin-etcd            Re-join the same etcd cluster
     --worker                 Force to run as k8s worker and etcd proxy
+    --debug                  Enable debug mode
 -r, --registry=REGISTRY      Registry of docker image
                              (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -h, --help                   This help text
@@ -401,7 +414,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:v:r:h"
-  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,restore,rejoin-etcd,registry:,help"
+  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,rejoin-etcd,registry:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -436,6 +449,11 @@ function get_options(){
               ;;
              --rejoin-etcd)
               export EX_REJOIN_ETCD="true"
+              shift
+              ;;
+             --debug)
+              set -x
+              export SHELLOPTS
               shift
               ;;
              --worker)
@@ -536,59 +554,6 @@ function main(){
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
   local DISCOVERY_RESULTS
 
-  if [[ "${NEW_CLUSTER}" != "true" ]]; then
-    # If do not force to start an etcd cluster, make a discovery.
-    echo "Discovering etcd cluster..."
-    DISCOVERY_RESULTS="<nil>"
-    until [[ -z "$(echo "${DISCOVERY_RESULTS}" | grep '<nil>')" ]]; do
-      DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")"
-    done
-    echo "${DISCOVERY_RESULTS}"
-
-    # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
-    local EXISTED_ETCD_NODE_LIST=""
-    local EXISTED_ETCD_NODE=""
-    if [[ -n "${CLUSTER_ID}" ]]; then
-      EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}" | awk '{print $2}')"
-      EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
-      if [[ -z "${EXISTED_ETCD_NODE}" ]]; then
-        echo "No such the etcd cluster that user specified, exiting..." 1>&2
-        exit 1
-      fi
-    elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -eq "1" ]]; then
-      EXISTED_ETCD_NODE="$(echo "${DISCOVERY_RESULTS}" | head -n 1 | awk '{print $2}')"
-    fi
-    echo "etcd member: ${EXISTED_ETCD_NODE}"
-  fi
-
-  local ETCD_CLIENT_PORT=""
-  if [[ -z "${EXISTED_ETCD_NODE}" ]]; then
-    ETCD_CLIENT_PORT="2379"
-  else
-    ETCD_CLIENT_PORT="$(echo "${EXISTED_ETCD_NODE}" | cut -d ':' -f 2)"
-  fi
-
-  if [[ -z "${EXISTED_ETCD_NODE}" ]] && [[ "${PROXY}" == "on" ]]; then
-    echo "Proxy mode needs a cluster to join, exiting..." 1>&2
-    exit 1
-  fi
-
-  local ROLE=""
-  if [[ -z "${EXISTED_ETCD_NODE}" ]] || [[ "${NEW_CLUSTER}" == "true" ]]; then
-    ROLE="creator"
-  else
-    ROLE="follower"
-  fi
-
-  local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
-
-  echo "Copy cni plugins"
-#  cp -rf bin /opt/cni
-  mkdir -p /etc/cni/net.d/
-  cp -f /go/cni-conf/10-containernet.conf /etc/cni/net.d/
-  cp -f /go/cni-conf/99-loopback.conf /etc/cni/net.d/
-  mkdir -p /var/lib/cni/networks/containernet; echo "" > /var/lib/cni/networks/containernet/last_reserved_ip
-
   sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true
   sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
   sh -c 'docker stop k8sup-flannel' >/dev/null 2>&1 || true
@@ -597,13 +562,71 @@ function main(){
   sh -c 'docker rm k8sup-kubelet' >/dev/null 2>&1 || true
   sh -c 'ip link delete cni0' >/dev/null 2>&1 || true
 
-  echo "Running etcd"
-  local ETCD_CID=""
-  if [[ "${ROLE}" == "creator" ]]; then
+  local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
+  local ETCD_CLIENT_PORT="2379"
+  local ETCD_CID
+  local ROLE
+  if [[ -d "/var/lib/etcd/member" ]]; then
+    echo "Find etcd data in the local storage, trying to start etcd wiht these data..." 1>&2
     ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${MAX_ETCD_MEMBER_SIZE}" \
-             "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") || exit 1
-  else
-    ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_NODE_LIST}" "${PROXY}") || exit 1
+             "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || true
+  fi
+
+  if [[ "${ROLE}" != "follower" ]]; then
+    if [[ "${NEW_CLUSTER}" != "true" ]]; then
+      # If do not force to start an etcd cluster, make a discovery.
+      echo "Discovering etcd cluster..."
+      DISCOVERY_RESULTS="<nil>"
+      until [[ -z "$(echo "${DISCOVERY_RESULTS}" | grep '<nil>')" ]]; do
+        DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")"
+      done
+      echo "${DISCOVERY_RESULTS}"
+
+      # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
+      local EXISTED_ETCD_NODE_LIST=""
+      local EXISTED_ETCD_NODE=""
+      if [[ -n "${CLUSTER_ID}" ]]; then
+        EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}" | awk '{print $2}')"
+        EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
+        if [[ -z "${EXISTED_ETCD_NODE}" ]]; then
+          echo "No such the etcd cluster that user specified, exiting..." 1>&2
+          exit 1
+        fi
+      elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -eq "1" ]]; then
+        EXISTED_ETCD_NODE="$(echo "${DISCOVERY_RESULTS}" | head -n 1 | awk '{print $2}')"
+      fi
+      echo "etcd member: ${EXISTED_ETCD_NODE}"
+    fi
+
+    if [[ -n "${EXISTED_ETCD_NODE}" ]]; then
+      ETCD_CLIENT_PORT="$(echo "${EXISTED_ETCD_NODE}" | cut -d ':' -f 2)"
+    fi
+
+    if [[ -z "${EXISTED_ETCD_NODE}" ]] && [[ "${PROXY}" == "on" ]]; then
+      echo "Proxy mode needs a cluster to join, exiting..." 1>&2
+      exit 1
+    fi
+
+    if [[ -z "${EXISTED_ETCD_NODE}" ]] || [[ "${NEW_CLUSTER}" == "true" ]]; then
+      ROLE="creator"
+    else
+      ROLE="follower"
+    fi
+
+    echo "Copy cni plugins"
+#   cp -rf bin /opt/cni
+    mkdir -p /etc/cni/net.d/
+    cp -f /go/cni-conf/10-containernet.conf /etc/cni/net.d/
+    cp -f /go/cni-conf/99-loopback.conf /etc/cni/net.d/
+    mkdir -p /var/lib/cni/networks/containernet; echo "" > /var/lib/cni/networks/containernet/last_reserved_ip
+
+    echo "Running etcd"
+    if [[ "${ROLE}" == "creator" ]]; then
+      ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${MAX_ETCD_MEMBER_SIZE}" \
+               "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") || exit 1
+    else
+      ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_NODE_LIST}" "${PROXY}") || exit 1
+    fi
   fi
 
   until curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys 1>/dev/null 2>&1; do

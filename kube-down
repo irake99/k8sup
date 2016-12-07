@@ -177,7 +177,6 @@ function main(){
   docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null
   docker rm $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null
 
-  killall etcd-maintainer.sh
   docker rm -f $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
 }
 
