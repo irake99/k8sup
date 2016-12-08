@@ -642,15 +642,6 @@ function main(){
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"
 
-  # echo "Running Kubernetes"
-  if [[ -n "${K8S_REGISTRY}" ]]; then
-    local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
-  fi
-  if [[ "${PROXY}" == "on" ]]; then
-    local FORCED_WORKER_OPT="--forced-worker"
-  fi
-  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT}
-
   # Write configure to file
   echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
   echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
@@ -661,6 +652,15 @@ function main(){
   echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
   echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
+
+  # echo "Running Kubernetes"
+  if [[ -n "${K8S_REGISTRY}" ]]; then
+    local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
+  fi
+  if [[ "${PROXY}" == "on" ]]; then
+    local FORCED_WORKER_OPT="--forced-worker"
+  fi
+  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT}
 
   echo "Kubernetes started, hold..." 1>&2
   tail -f /dev/null
