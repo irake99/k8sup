@@ -197,6 +197,23 @@ function etcd_follower(){
   fi
 }
 
+function wait_etcd_cluster_healthy(){
+  local ETCD_CID="$1"
+  local ETCD_CLIENT_PORT="$2"
+
+  echo "Waiting until etcd cluster is healthy..." 1>&2
+  until [[ \
+    "$(docker exec \
+       "${ETCD_CID}" \
+       /usr/local/bin/etcdctl \
+       --endpoints http://127.0.0.1:${ETCD_CLIENT_PORT} \
+       cluster-health \
+        | grep 'cluster is' | awk '{print $3}')" == "healthy" ]]; do
+    sleep 1
+  done
+
+}
+
 function flanneld(){
   local IPADDR="$1"
   local ETCD_CID="$2"
@@ -638,6 +655,8 @@ function main(){
   local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
   bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
+
+  wait_etcd_cluster_healthy "${ETCD_CID}" "${ETCD_CLIENT_PORT}"
 
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"

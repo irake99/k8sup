@@ -85,8 +85,8 @@ Options:
 -r, --remove                             Exit K8S cluster and remove data
     --stop-k8s-only                      Just stop k8s service without stop etcd service
 -f, --force                              Force to kill named k8sup containers
-    --exit-local-etcd-only               Exit the local etcd member frome cluster
-    --exit-remote-etcd=REMOTE_IPADDR     Exit the remote etcd member frome cluster
+    --exit-local-etcd-only               Exit the local etcd member from cluster
+    --exit-remote-etcd=REMOTE_IPADDR     Exit the remote etcd member from cluster
 -h, --help                               This help text
 "
 
