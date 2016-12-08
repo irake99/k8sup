@@ -84,6 +84,7 @@ function show_usage(){
 Options:
 -r, --remove                             Exit K8S cluster and remove data
     --stop-k8s-only                      Just stop k8s service without stop etcd service
+-f, --force                              Force to kill named k8sup containers
     --exit-local-etcd-only               Exit the local etcd member frome cluster
     --exit-remote-etcd=REMOTE_IPADDR     Exit the remote etcd member frome cluster
 -h, --help                               This help text
@@ -94,8 +95,8 @@ Options:
 
 function get_options(){
   local PROGNAME="${0##*/}"
-  local SHORTOPTS="rh"
-  local LONGOPTS="remove,stop-k8s-only,exit-local-etcd-only,exit-remote-etcd:,help"
+  local SHORTOPTS="rfh"
+  local LONGOPTS="remove,stop-k8s-only,force,exit-local-etcd-only,exit-remote-etcd:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -110,6 +111,10 @@ function get_options(){
               ;;
              --stop-k8s-only)
               export EX_STOP_K8S_ONLY="true"
+              shift
+              ;;
+          -f|--force)
+              export EX_FORCE="true"
               shift
               ;;
              --exit-local-etcd-only)
@@ -137,6 +142,11 @@ function get_options(){
               ;;
       esac
   done
+
+  if [[ "${EX_REMOTE_ETCD}" == "true" ]] && [[ -z "${EX_REMOTE_IPADDR}" ]]; then
+    echo "Need IP address of remote etcd node, exiting..." 1>&2
+    exit 1
+  fi
 }
 
 function main(){
@@ -153,31 +163,44 @@ function main(){
 
   local STOP_K8S_ONLY="${EX_STOP_K8S_ONLY}"
   local EXIT_ETCD_ONLY="${EX_EXIT_ETCD_ONLY}"
+  local LOCAL_ETCD_ONLY="${EX_LOCAL_ETCD_ONLY}"
+  local REMOTE_ETCD="${EX_REMOTE_ETCD}"
+  local REMOTE_IPADDR="${EX_REMOTE_IPADDR}"
+  local FORCE="${EX_FORCE}"
   if [[ "${STOP_K8S_ONLY}" == "true" ]]; then
     stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}" "${REGISTRY}"
     exit 0
   fi
-  if [[ "${EX_LOCAL_ETCD_ONLY}" == "true" ]]; then
+  if [[ "${LOCAL_ETCD_ONLY}" == "true" ]]; then
     exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
     exit 0
   fi
-  if [[ "${EX_REMOTE_ETCD}" == "true" ]]; then
-    local REMOTE_IPADDR="${EX_REMOTE_IPADDR}"
+  if [[ "${REMOTE_ETCD}" == "true" ]]; then
     LOCAL_ETCD="false"
     exit_etcd "${REMOTE_IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
     exit 0
   fi
-
-  stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}" "${REGISTRY}"
-  if [[ "${EXIT}" == "true" ]]; then
-    exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
+  if [[ "${FORCE}" == "true" ]]; then
+    echo "Trying to kill k8s containers..." 1>&2
+    docker stop $(docker ps -a | grep -E "k8sup-kubelet" | awk '{print $1}') 1>/dev/null || true
+    docker rm -f -v $(docker ps -a | grep -E "${REGISTRY}/hyperkube|${REGISTRY}/pause|${REGISTRY}/kube-addon-manager" | awk '{print $1}') 1>/dev/null || true
+    if [[ "${EXIT}" == "true" ]]; then
+      exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
+    fi
+  else
+    # Default removing
+    echo "Stopping k8s containers..." 1>&2
+    stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${K8S_VERSION}" "${K8S_PORT}" "${REGISTRY}"
+    if [[ "${EXIT}" == "true" ]]; then
+      exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
+    fi
   fi
 
-  echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup." 1>&2
-  docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null
-  docker rm $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null
+  echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup..." 1>&2
+  docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null || true
+  docker rm -v $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null || true
 
-  docker rm -f $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
+  docker rm -f -v $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
 }
 
 main "$@"
