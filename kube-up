@@ -342,15 +342,25 @@ function main(){
 
   local RBD_OPTIONS="$(rbd_env_detector)"
 
+  echo "Cleaning up kube-proxy old iptables rules..." 1>&2
+  docker run \
+    --net=host \
+    --rm=true \
+    --privileged \
+    --volume=/var/run/dbus \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube proxy \
+      --cleanup-iptables
+
   echo "Generating certs..." 1>&2
   docker run \
-      --net=host \
-      --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
-      --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
-      "${HYPERKUBE_IMAGE_NAME}" \
-      "/cp-certs.sh" \
-      "${DOMAIN_NAME}" \
-      "DONT_HOLD" 1>/dev/null
+    --net=host \
+    --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
+    --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    "/cp-certs.sh" \
+    "${DOMAIN_NAME}" \
+    "DONT_HOLD" 1>/dev/null
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
   iptables -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
