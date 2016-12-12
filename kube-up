@@ -66,6 +66,25 @@ function rbd_env_detector(){
   return 0
 }
 
+# Try to set this node as schedulable
+function set_node_schedulable(){
+  local IPADDR="$1"
+  local KUBELET_VARLIB="$2"
+  local HYPERKUBE_IMAGE_NAME="$3"
+
+  echo "Uncordoning this node..." 1>&2
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+     uncordon "${IPADDR}" &>/dev/null; do
+       sleep 1
+  done
+}
+
 function show_usage(){
   USAGE="Usage: ${0##*/} [options...]
 Options:
@@ -231,6 +250,7 @@ function main(){
   local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN}"
   local KUBEDNS
   local KUBEDNS_OPTION
+  local CERT_DIRS
   local CERT_DIR
 
   export REGISTRY="${EX_REGISTRY}"
@@ -300,8 +320,12 @@ function main(){
     APIHOST="127.0.0.1:6443"
 
     # Remove old certs for master services
-    CERT_DIR="$(dirname "$(find "${KUBELET_VARLIB}/pods/" -type f -name server.cert)")"
-    [[ "${CERT_DIR}" != "." ]] && rm -rf "${CERT_DIR}/"*
+    CERT_DIRS="$(dirname "$(find "${KUBELET_VARLIB}/pods/" -type f -name server.cert)")"
+    if [[ "${CERT_DIRS}" != "." ]]; then
+      for CERT_DIR in ${CERT_DIRS}; do
+        rm -rf "${CERT_DIR}/"*
+      done
+    fi
   else
     APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
@@ -318,15 +342,25 @@ function main(){
 
   local RBD_OPTIONS="$(rbd_env_detector)"
 
+  echo "Cleaning up kube-proxy old iptables rules..." 1>&2
+  docker run \
+    --net=host \
+    --rm=true \
+    --privileged \
+    --volume=/var/run/dbus \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube proxy \
+      --cleanup-iptables
+
   echo "Generating certs..." 1>&2
   docker run \
-      --net=host \
-      --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
-      --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
-      "${HYPERKUBE_IMAGE_NAME}" \
-      "/cp-certs.sh" \
-      "${DOMAIN_NAME}" \
-      "DONT_HOLD" 1>/dev/null
+    --net=host \
+    --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
+    --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    "/cp-certs.sh" \
+    "${DOMAIN_NAME}" \
+    "DONT_HOLD" 1>/dev/null
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
   iptables -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
@@ -366,6 +400,7 @@ function main(){
           --containerized \
           --network-plugin=cni \
           --network-plugin-dir=/etc/cni/net.d \
+          --pod-infra-container-image=${REGISTRY}/pause-${ARCH}:3.0 \
           --cluster-dns=10.0.0.10 \
           --cluster-domain=cluster.local \
           --node-labels="$(set_role_labels "${WORKER}" "${FORCED_WORKER}")"
@@ -375,21 +410,10 @@ function main(){
     sleep 1
   done
 
-  # Try to set this node as schedulable
-  echo "Uncordoning this node..."
-  until docker run \
-    --net=host \
-    --rm=true \
-    --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
-    "${HYPERKUBE_IMAGE_NAME}" \
-    /hyperkube kubectl \
-     --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
-     uncordon "${IPADDR}" &>/dev/null; do
-       sleep 5
-  done
-
   echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
   iptables -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+
+  set_node_schedulable "${IPADDR}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}"
 }
 
 main "$@"

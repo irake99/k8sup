@@ -197,6 +197,23 @@ function etcd_follower(){
   fi
 }
 
+function wait_etcd_cluster_healthy(){
+  local ETCD_CID="$1"
+  local ETCD_CLIENT_PORT="$2"
+
+  echo "Waiting until etcd cluster is healthy..." 1>&2
+  until [[ \
+    "$(docker exec \
+       "${ETCD_CID}" \
+       /usr/local/bin/etcdctl \
+       --endpoints http://127.0.0.1:${ETCD_CLIENT_PORT} \
+       cluster-health \
+        | grep 'cluster is' | awk '{print $3}')" == "healthy" ]]; do
+    sleep 1
+  done
+
+}
+
 function flanneld(){
   local IPADDR="$1"
   local ETCD_CID="$2"
@@ -639,17 +656,10 @@ function main(){
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
   bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
 
+  wait_etcd_cluster_healthy "${ETCD_CID}" "${ETCD_CLIENT_PORT}"
+
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"
-
-  # echo "Running Kubernetes"
-  if [[ -n "${K8S_REGISTRY}" ]]; then
-    local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
-  fi
-  if [[ "${PROXY}" == "on" ]]; then
-    local FORCED_WORKER_OPT="--forced-worker"
-  fi
-  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT}
 
   # Write configure to file
   echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
@@ -661,6 +671,15 @@ function main(){
   echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
   echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
+
+  # echo "Running Kubernetes"
+  if [[ -n "${K8S_REGISTRY}" ]]; then
+    local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
+  fi
+  if [[ "${PROXY}" == "on" ]]; then
+    local FORCED_WORKER_OPT="--forced-worker"
+  fi
+  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT}
 
   echo "Kubernetes started, hold..." 1>&2
   tail -f /dev/null
