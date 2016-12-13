@@ -13,7 +13,7 @@ Options:
                              or "eth0" (Required option)
 -c, --cluster=CLUSTER_ID     Join a specified cluster
     --new                    Force to start a new cluster
--p, --proxy                  Force to run as etcd and k8s proxy
+    --worker                 Force to run as k8s worker and etcd proxy
 -h, --help                   This help text
 </pre>
 
@@ -29,12 +29,12 @@ $ sudo docker run -d \
     -v /usr/lib/libdevmapper.so:/usr/lib/$(readlink /usr/lib/libdevmapper.so | xargs basename):ro \
     -v /lib/modules:/lib/modules:ro \
     -v /etc/cni:/etc/cni \
-    -v /opt/cni:/opt/cni \
     -v /var/lib/cni:/var/lib/cni \
     -v /var/lib/etcd:/var/lib/etcd \
+    -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     --name=k8sup \
-    cdxvirt/k8sup \
+    cdxvirt/k8sup:latest \
     --network={your-subnet-id/mask}
 </pre>
 

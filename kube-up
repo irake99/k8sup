@@ -1,6 +1,20 @@
 #!/bin/bash
 set -e
 
+function set_role_labels(){
+  local WORKER="$1"
+  local FORCED_WORKER="$2"
+
+  local ROLE_LABELS
+  local ROLE_LABEL
+  if [[ "${WORKER}" == "false" ]]; then
+    ROLE_LABELS="cdxvirt/k8s_master=true,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+  else
+    ROLE_LABELS="cdxvirt/k8s_master=false,cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+  fi
+  echo "${ROLE_LABELS}"
+}
+
 function get_filepath_from_volumes(){
   local FILENAME="$1"
   local VOLUMES="$2"
@@ -8,7 +22,7 @@ function get_filepath_from_volumes(){
   local VOL_DEST
   local FILEPATH
 
-  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
   for VOL in ${VOLUMES}; do
     VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1)"
     VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
@@ -28,7 +42,7 @@ function rbd_env_detector(){
   local MODPROBE_CMD_PATH
   local DOCKER_CMD_PATH
   local LIBDEVMAPPER_SO_PATH
-  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' | cut -d ':' -f 1-2)"
+  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
 
   [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
     && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
@@ -52,15 +66,36 @@ function rbd_env_detector(){
   return 0
 }
 
+# Try to set this node as schedulable
+function set_node_schedulable(){
+  local IPADDR="$1"
+  local KUBELET_VARLIB="$2"
+  local HYPERKUBE_IMAGE_NAME="$3"
+
+  echo "Setting this node schedulable..." 1>&2
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+     uncordon "${IPADDR}" &>/dev/null; do
+       sleep 1
+  done
+}
+
 function show_usage(){
   USAGE="Usage: ${0##*/} [options...]
 Options:
 -i, --ip=IPADDR               Host IP address (Required)
 -p, --worker                  Run as k8s worker
--a, --apiserver-port=PORT     Apiserver port (Default: 8080)
+-a, --apiserver-port=PORT     Apiserver port (Default: 6443)
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
--v, --version=VERSION         Specify k8s version (Default: 1.3.6)
+-v, --version=VERSION         Specify k8s version (Default: 1.4.6)
 -r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
+    --forced-worker           Run as k8s worker persistently
+    --reset-labels            Reset node labels
 -h, --help                    This help text
 "
 
@@ -70,7 +105,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:r:h"
-  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,registry:,help"
+  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,registry:,forced-worker,reset-labels,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -103,6 +138,15 @@ function get_options(){
               export EX_REGISTRY="$2"
               shift 2
               ;;
+             --forced-worker)
+              export EX_FORCED_WORKER="true"
+              export EX_WORKER="true"
+              shift
+              ;;
+             --reset-labels)
+              export EX_RESET_LABELS="true"
+              shift
+              ;;
           -h|--help)
               show_usage
               exit 0
@@ -128,7 +172,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_APISERVER_PORT}" ]]; then
-    export EX_APISERVER_PORT="8080"
+    export EX_APISERVER_PORT="6443"
   fi
 
   if [[ -z "${EX_ETCD_CLIENT_PORT}" ]]; then
@@ -139,13 +183,22 @@ function get_options(){
     export EX_WORKER="false"
   fi
 
+  if [[ "${EX_FORCED_WORKER}" != "true" ]]; then
+    export EX_FORCED_WORKER="false"
+  fi
+
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.3.6"
+    export EX_K8S_VERSION="1.4.6"
   fi
 
   if [[ -z "${EX_REGISTRY}" ]]; then
     export EX_REGISTRY="gcr.io/google_containers"
   fi
+}
+
+# Get test kube-proxy
+function test_proxy(){
+  echo $(grep -o "10.0.0.1/32" <<<"$(iptables -S -t nat | grep 10.0.0.1/32)" | wc -l)
 }
 
 # Get k8s apiservers form the list of etcd members
@@ -154,17 +207,19 @@ function get_API_Servers(){
   local ETCD_CLIENT_PORT="$2"
   local APISERVERS=""
   local APISERVER=""
+  local APIHOST=""
   local KUBE_NODE_LIST=""
 
   until [[ -n "${KUBE_NODE_LIST}" ]]; do
     KUBE_NODE_LIST="$(curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
                           | jq -r .node.nodes[].value 2>/dev/null \
                           | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address' 2>/dev/null)" || true
+    sleep 1
   done
 
   for KUBE_NODE in ${KUBE_NODE_LIST}; do
-    APISERVER="${KUBE_NODE}:${APISERVER_PORT}"
-    if curl -sf -m 3 "${APISERVER}/healthz" &>/dev/null; then
+    APISERVER="https://${KUBE_NODE}:${APISERVER_PORT}"
+    if curl --insecure -u admin:admin -sf -m 3 "${APISERVER}/healthz" &>/dev/null; then
       APISERVERS="${APISERVERS}","${APISERVER}"
     fi
   done
@@ -178,30 +233,76 @@ function main(){
   get_options "$@"
   local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
   local WORKER="${EX_WORKER}" && unset EX_WORKER
+  local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
   local APISERVER_PORT="${EX_APISERVER_PORT}" && unset EX_APISERVER_PORT
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
+  local RESET_LABELS="${EX_RESET_LABELS}" && unset EX_RESET_LABELS
   local ETCD_PROXY=""
   local APISERVER=""
   local APISERVERS=""
   local APISERVER_COUNT=5
   local KUBE_CONF_PATH="/etc/kubernetes/manifests-multi"
+  local KUBE_ADDONS_CONF_PATH="/etc/kubernetes/addons/multinode"
+  local KUBE_ETC="/etc/kubernetes"
+  local KUBELET_VARLIB="/var/lib/kubelet"
+  local IP_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
+  local MASTER_PUB_DN="kubernetes-public.default.svc.cluster.local"
+  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN}"
+  local KUBEDNS
+  local KUBEDNS_OPTION
+  local CERT_DIRS
+  local CERT_DIR
 
   export REGISTRY="${EX_REGISTRY}"
   export ARCH=amd64
   export K8S_VERSION="${EX_K8S_VERSION}"
-  export ADDON_MGR_VER=v4
+  export ADDON_MGR_VER=v5.1
+  local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
+
+  # Reset node labels and exit
+  if [[ "${RESET_LABELS}" == "true" ]]; then
+    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
+    APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
+
+    local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+    if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+      WORKER="false"
+    else
+      WORKER="true"
+    fi
+
+    until FORCED_WORKER="$(curl -sf http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions/${IPADDR})"; do
+      sleep 1
+    done
+    FORCED_WORKER="$(echo "${FORCED_WORKER}" | jq -r '.node.value' | jq -r '.metadata.labels | .["cdxvirt/k8s_forced_worker"]')"
+
+    exit 0
+  fi
 
   echo "Copy manifests-multi to /etc/kubernetes"
-  mkdir -p "${KUBE_CONF_PATH}"
+
+  mkdir -p mkdir -p "${KUBE_CONF_PATH}"
+  mkdir -p ${KUBE_ETC}/addons
+  mkdir -p "${KUBELET_VARLIB}/kubeconfig"
+  mkdir -p "${KUBE_ADDONS_CONF_PATH}"
+
   cp -rf /go/kube-conf/*.json "${KUBE_CONF_PATH}"
-  cp -f /go/cp-certs.sh /etc/kubernetes
+  cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml "${KUBELET_VARLIB}/kubeconfig"
+  cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
+  cp -f /go/cp-certs.sh "${KUBE_ETC}/"
+  cp -f /go/update-addons.sh "${KUBE_ETC}/"
+  cp -rf /go/heapster-1.2.0/deploy/kube-config/influxdb "${KUBE_ADDONS_CONF_PATH}/heapster"
 
   sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_CONF_PATH}"/*.json
+  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
   sed -i "s|ARCH|${ARCH}|g" "${KUBE_CONF_PATH}"/*.json
+  sed -i "s|ARCH|${ARCH}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
   sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_CONF_PATH}"/*.json
-  sed -i "s|\"--master=127.0.0.1:${APISERVER_PORT}\"\,|\"--leader-elect=true\"\,\n              \"--master=127.0.0.1:${APISERVER_PORT}\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
+  sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
+  sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
-  sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager.json"
+  sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
+  sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
 
   # If etcd is running as a proxy, set k8s as a worker
   local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
@@ -214,14 +315,26 @@ function main(){
   fi
 
   if [[ "${WORKER}" == "false" ]]; then
-    APISERVERS="http://127.0.0.1:${APISERVER_PORT}"
+    APISERVERS="https://127.0.0.1:6443"
     APISERVER="${APISERVERS}"
+    APIHOST="127.0.0.1:6443"
+
+    # Remove old certs for master services
+    if [[ -d "${KUBELET_VARLIB}/pods" ]]; then
+      CERT_DIRS="$(dirname "$(find "${KUBELET_VARLIB}/pods/" -type f -name server.cert)")"
+      if [[ "${CERT_DIRS}" != "." ]]; then
+        for CERT_DIR in ${CERT_DIRS}; do
+          rm -rf "${CERT_DIR}/"*
+        done
+      fi
+    fi
   else
     APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
+    APIHOST="${APISERVER:8}"
+
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
-    echo '{}' > "${KUBE_CONF_PATH}/addon-manager.json"
-    sed -i.back "s|\"--master=.*\",|\"--master=${APISERVER}\",|g" "${KUBE_CONF_PATH}/kube-proxy.json"
+    echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
   fi
 
   until ! docker ps | grep -w 'k8sup-kubelet'; do
@@ -231,60 +344,78 @@ function main(){
 
   local RBD_OPTIONS="$(rbd_env_detector)"
 
-  echo "Running Kubernetes ..."
+  echo "Cleaning up kube-proxy old iptables rules..." 1>&2
+  docker run \
+    --net=host \
+    --rm=true \
+    --privileged \
+    --volume=/var/run/dbus \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube proxy \
+      --cleanup-iptables
 
+  echo "Getting or generating certs..." 1>&2
+  docker run \
+    --net=host \
+    --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
+    --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    "/cp-certs.sh" \
+    "${DOMAIN_NAME}" \
+    "DONT_HOLD" 1>/dev/null
+
+  echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
+  iptables -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+
+  echo "Running Kubernetes ..."
   docker run \
       --volume=/:/rootfs:ro \
       --volume=/sys:/sys:ro \
-      --volume=/var/lib/docker/:/var/lib/docker:rw \
-      --volume=/var/lib/kubelet/:/var/lib/kubelet:rw,rslave \
+      --volume=/var/lib/docker:/var/lib/docker:rw \
+      --volume=${KUBELET_VARLIB}/:${KUBELET_VARLIB}/:rw,rslave \
       --volume=/var/run:/var/run:rw \
       --volume=/var/run/dbus:/var/run/dbus:rw \
       --volume=/run/flannel:/run/flannel:rw \
       --volume=/dev:/dev:rw \
-      --volume=/opt/cni/bin:/opt/cni/bin:rw \
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
-      --volume=/etc/kubernetes/cp-certs.sh:/cp-certs.sh \
-      --volume=${KUBE_CONF_PATH}/kube-proxy.json:${KUBE_CONF_PATH}/kube-proxy.json \
+      --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
-      --volume=${KUBE_CONF_PATH}/addon-manager.json:${KUBE_CONF_PATH}/addon-manager.json \
+      --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
+      ${KUBEDNS_OPTION} \
       ${RBD_OPTIONS} \
       --net=host \
       --privileged=true \
       --pid=host \
       --name=k8sup-kubelet \
       -d \
-      "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
+      "${HYPERKUBE_IMAGE_NAME}" \
       /hyperkube kubelet \
           --allow-privileged=true \
-          --api-servers="${APISERVERS}" \
+          --require-kubeconfig=true \
+          --kubeconfig=${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
           --v=2 \
           --address=0.0.0.0 \
           --enable-server \
           --hostname-override="${IPADDR}" \
-          --config=${KUBE_CONF_PATH} \
+          --pod-manifest-path=${KUBE_CONF_PATH} \
           --containerized \
           --network-plugin=cni \
           --network-plugin-dir=/etc/cni/net.d \
+          --pod-infra-container-image=${REGISTRY}/pause-${ARCH}:3.0 \
           --cluster-dns=10.0.0.10 \
-          --cluster-domain=cluster.local
+          --cluster-domain=cluster.local \
+          --node-labels="$(set_role_labels "${WORKER}" "${FORCED_WORKER}")"
 
-  echo "Waiting for any k8s apiserver connected..."
-  until curl -sf "${APISERVER}/healthz" &>/dev/null; do
+  echo "Waiting for kube-proxy connect to apiserver..."
+  until [[ "$(test_proxy)" -gt "1" ]]; do
     sleep 1
   done
 
-  # Try to set this node as schedulable
-  echo "Uncordoning this node..."
-  until docker run \
-    --net=host \
-    --rm=true \
-    "${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" \
-    /hyperkube kubectl -s "${APISERVER}" \
-    uncordon "${IPADDR}" &>/dev/null; do
-      sleep 5
-  done
+  echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
+  iptables -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+
+  set_node_schedulable "${IPADDR}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}"
 }
 
 main "$@"
