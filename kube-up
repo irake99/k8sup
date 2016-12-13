@@ -72,7 +72,7 @@ function set_node_schedulable(){
   local KUBELET_VARLIB="$2"
   local HYPERKUBE_IMAGE_NAME="$3"
 
-  echo "Uncordoning this node..." 1>&2
+  echo "Setting this node schedulable..." 1>&2
   until docker run \
     --net=host \
     --rm=true \

@@ -48,25 +48,12 @@ function etcd_creator(){
       --data-dir /var/lib/etcd \
       --proxy off
 
-  local TIMEOUT="30"
-  local COUNTER="0"
-  echo -n "Waiting for etcd ready" 1>&2
-  until [[ "${COUNTER}" -ge "${TIMEOUT}" ]] || curl -sf -m 1 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
+  echo -n "Waiting for etcd ready..." 1>&2
+  until curl -sf -m 1 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
     echo -n "." 1>&2
-    ((COUNTER++))
     sleep 1
   done
   echo 1>&2
-
-  if [[ "${COUNTER}" -ge "${TIMEOUT}" ]]; then
-    echo "Could not start etcd with etcd data in the local storage, you may need to use '--restore' or remove these data, exiting..." 1>&2
-    sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true
-    sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
-    return 1
-  else
-    curl -sf -m 5 "127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
-    return "$?"
-  fi
 }
 
 function etcd_follower(){
