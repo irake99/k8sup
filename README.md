@@ -34,7 +34,7 @@ $ sudo docker run -d \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     --name=k8sup \
-    cdxvirt/k8sup:k8s-1.4 \
+    cdxvirt/k8sup:latest \
     --network={your-subnet-id/mask}
 </pre>
 

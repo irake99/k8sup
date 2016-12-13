@@ -48,12 +48,10 @@ function etcd_creator(){
       --data-dir /var/lib/etcd \
       --proxy off
 
-  echo -n "Waiting for etcd ready..." 1>&2
+  echo "Waiting for all etcd members ready..." 1>&2
   until curl -sf -m 1 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
-    echo -n "." 1>&2
     sleep 1
   done
-  echo 1>&2
 }
 
 function etcd_follower(){
@@ -572,7 +570,7 @@ function main(){
   local ROLE
   echo "Starting k8sup..." 1>&2
   if [[ -d "/var/lib/etcd/member" ]]; then
-    echo "Found etcd data in the local storage (/var/lib/etcd), trying to start etcd with these data..." 1>&2
+    echo "Found etcd data in the local storage (/var/lib/etcd), trying to start etcd with these data." 1>&2
     ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${MAX_ETCD_MEMBER_SIZE}" \
              "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || exit 1
   fi
