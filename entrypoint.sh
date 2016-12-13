@@ -583,6 +583,7 @@ function main(){
   local ETCD_CLIENT_PORT="2379"
   local ETCD_CID
   local ROLE
+  echo "Starting k8sup..." 1>&2
   if [[ -d "/var/lib/etcd/member" ]]; then
     echo "Found etcd data in the local storage (/var/lib/etcd), trying to start etcd with these data..." 1>&2
     ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${MAX_ETCD_MEMBER_SIZE}" \
