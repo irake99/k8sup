@@ -265,7 +265,7 @@ function main(){
     ENDPOINT_AMOUNT="$(get_endpoint_amount "${ETCD_CLIENT_PORT}")" || exit 1
     if [[ "${ENDPOINT_AMOUNT}" -gt "1" ]]; then
       # Try to find another apiserver for removing this node from endpoints
-      APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}")"
+      APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}")" \
        && remove_node_from_endpoints "${HYPERKUBE_IMAGE}" "${APISERVER}" || true
     fi
     if [[ "${STOP_K8S_ONLY}" == "true" ]]; then

@@ -36,6 +36,7 @@ func main() {
 		select {
 		case e := <-results:
 			fmt.Printf("%s %s:%d %s %s\n", e.HostName, e.AddrIPv4, e.Port, e.Text, e.ServiceInstanceName())
+			timeout = time.Duration(5e9)
 			time.Sleep(1e8)
 		case <-exitCh:
 			os.Exit(0)

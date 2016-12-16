@@ -391,7 +391,7 @@ function rejoin_etcd(){
   done
 
   # DNS-SD
-  killall "registering.go" || true
+  killall "registering" 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
   bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
 }
@@ -575,6 +575,7 @@ function main(){
   local ETCD_CID
   local ROLE
   echo "Starting k8sup..." 1>&2
+  sleep "$(($RANDOM % 10))"
   if [[ -d "/var/lib/etcd/member" ]]; then
     echo "Found etcd data in the local storage (/var/lib/etcd), trying to start etcd with these data." 1>&2
     ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
@@ -611,6 +612,14 @@ function main(){
       fi
     fi
 
+    if [[ -z "${CLUSTER_ID}" ]]; then
+      CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
+    fi
+    # DNS-SD
+    killall "registering" 2>/dev/null || true
+    echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
+    bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
+
     if [[ -n "${EXISTED_ETCD_NODE}" ]]; then
       ETCD_CLIENT_PORT="$(echo "${EXISTED_ETCD_NODE}" | cut -d ':' -f 2)"
     fi
@@ -646,11 +655,6 @@ function main(){
     echo "Waiting for etcd ready..."
     sleep 1
   done
-
-  # DNS-SD
-  CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
-  echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
 
   wait_etcd_cluster_healthy "${ETCD_CID}" "${ETCD_CLIENT_PORT}"
 

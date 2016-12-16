@@ -27,6 +27,7 @@ $ sudo docker run -d \
     -v $(which docker):/bin/docker:ro \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /usr/lib/libdevmapper.so:/usr/lib/$(readlink /usr/lib/libdevmapper.so | xargs basename):ro \
+    -v /:/rootfs \
     -v /lib/modules:/lib/modules:ro \
     -v /etc/cni:/etc/cni \
     -v /var/lib/cni:/var/lib/cni \
