@@ -198,7 +198,7 @@ function get_options(){
 
 # Get test kube-proxy
 function test_proxy(){
-  echo $(grep -o "10.0.0.1/32" <<<"$(iptables -S -t nat | grep 10.0.0.1/32)" | wc -l)
+  echo $(grep -o "10.0.0.1/32" <<<"$(iptables -S -t nat | grep 10.0.0.1/32 | grep 'KUBE-SERVICES')" | wc -l)
 }
 
 # Get k8s apiservers form the list of etcd members
@@ -211,9 +211,9 @@ function get_API_Servers(){
   local KUBE_NODE_LIST=""
 
   until [[ -n "${KUBE_NODE_LIST}" ]]; do
-    KUBE_NODE_LIST="$(curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
-                          | jq -r .node.nodes[].value 2>/dev/null \
-                          | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address' 2>/dev/null)" || true
+    KUBE_NODE_LIST="$(curl -m 2 -sf "127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/services/endpoints/default/kubernetes" \
+                       | jq -r '.node.value' \
+                       | jq -r '.subsets[].addresses[].ip' 2>/dev/null)" || true
     sleep 1
   done
 
@@ -408,7 +408,7 @@ function main(){
           --node-labels="$(set_role_labels "${WORKER}" "${FORCED_WORKER}")"
 
   echo "Waiting for kube-proxy connect to apiserver..."
-  until [[ "$(test_proxy)" -gt "1" ]]; do
+  until [[ "$(test_proxy)" -ge "1" ]]; do
     sleep 1
   done
 
