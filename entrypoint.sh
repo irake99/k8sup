@@ -18,10 +18,11 @@ function get_alive_etcd_member_size(){
 function etcd_creator(){
   local IPADDR="$1"
   local ETCD_NAME="$2"
-  local MAX_ETCD_MEMBER_SIZE="$3"
-  local CLIENT_PORT="$4"
-  local NEW_CLUSTER="$5"
-  local RESTORE_ETCD="$6"
+  local CLUSTER_ID="$3"
+  local MAX_ETCD_MEMBER_SIZE="$4"
+  local CLIENT_PORT="$5"
+  local NEW_CLUSTER="$6"
+  local RESTORE_ETCD="$7"
   local PEER_PORT="2380"
   local ETCD_PATH="k8sup/cluster"
 
@@ -52,6 +53,13 @@ function etcd_creator(){
   until curl -sf -m 1 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
     sleep 1
   done
+
+  curl -s "127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
+
+  if [[ -z "${CLUSTER_ID}" ]]; then
+    CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
+  fi
+  curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" -XPUT -d value="${CLUSTER_ID}" 1>/dev/null
 }
 
 function etcd_follower(){
@@ -326,7 +334,6 @@ function rejoin_etcd(){
   local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
-  local K8S_PORT="${EX_K8S_PORT}" && unset EX_K8S_PORT
   local NODE_NAME="${EX_NODE_NAME}" && unset EX_NODE_NAME
   local IP_AND_MASK="${EX_IP_AND_MASK}" && unset EX_IP_AND_MASK
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
@@ -384,10 +391,8 @@ function rejoin_etcd(){
   done
 
   # DNS-SD
-  killall "registering.go" || true
-  local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 \
-    | grep 'X-Etcd-Cluster-Id' \
-    | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
+  killall "registering" 2>/dev/null || true
+  CLUSTER_ID="$(curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
   bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
 }
 
@@ -498,7 +503,7 @@ function get_options(){
   fi
 
   if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
-    echo "Error! Either join a existed etcd cluster or start a new/restored etcd cluster, exiting..." 1>&2
+    echo "Error! '--new' can not use specified cluster ID, exiting..." 1>&2
     exit 1
   fi
 
@@ -552,7 +557,8 @@ function main(){
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
-  local K8S_PORT="8080"
+  local K8S_PORT="6443"
+  local K8S_INSECURE_PORT="8080"
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
   local DISCOVERY_RESULTS
 
@@ -569,19 +575,18 @@ function main(){
   local ETCD_CID
   local ROLE
   echo "Starting k8sup..." 1>&2
+  sleep "$(($RANDOM % 10))"
   if [[ -d "/var/lib/etcd/member" ]]; then
     echo "Found etcd data in the local storage (/var/lib/etcd), trying to start etcd with these data." 1>&2
-    ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${MAX_ETCD_MEMBER_SIZE}" \
+    ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
              "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || exit 1
-  fi
-
-  if [[ "${ROLE}" != "follower" ]]; then
+  else
     if [[ "${NEW_CLUSTER}" != "true" ]]; then
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
       DISCOVERY_RESULTS="<nil>"
       until [[ -z "$(echo "${DISCOVERY_RESULTS}" | grep '<nil>')" ]]; do
-        DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")"
+        DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")" || true
       done
       echo "${DISCOVERY_RESULTS}"
 
@@ -591,15 +596,29 @@ function main(){
       if [[ -n "${CLUSTER_ID}" ]]; then
         EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}" | awk '{print $2}')"
         EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
-        if [[ -z "${EXISTED_ETCD_NODE}" ]]; then
-          echo "No such the etcd cluster that user specified, exiting..." 1>&2
-          exit 1
+        if [[ -n "${EXISTED_ETCD_NODE}" ]]; then
+          echo "Found an existed cluster: ${CLUSTER_ID}." 1>&2
+          echo "Target etcd member: ${EXISTED_ETCD_NODE} in the cluster, try to join it..." 1>&2
+        else
+          echo "No such existed cluster: ${CLUSTER_ID}, starting a new cluster using ID: ${CLUSTER_ID}..." 1>&2
         fi
       elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -eq "1" ]]; then
-        EXISTED_ETCD_NODE="$(echo "${DISCOVERY_RESULTS}" | head -n 1 | awk '{print $2}')"
+        EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | head -n 1 | awk '{print $2}')"
+        EXISTED_ETCD_NODE="${EXISTED_ETCD_NODE_LIST}"
+        echo "Target etcd member: ${EXISTED_ETCD_NODE} in the existed cluster, try to join it..." 1>&2
+      elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -gt "1" ]]; then
+        CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
+        echo "Found multiple existed clusters, starting a new cluster using ID: ${CLUSTER_ID}..." 1>&2
       fi
-      echo "etcd member: ${EXISTED_ETCD_NODE}"
     fi
+
+    if [[ -z "${CLUSTER_ID}" ]]; then
+      CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
+    fi
+    # DNS-SD
+    killall "registering" 2>/dev/null || true
+    echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
+    bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
 
     if [[ -n "${EXISTED_ETCD_NODE}" ]]; then
       ETCD_CLIENT_PORT="$(echo "${EXISTED_ETCD_NODE}" | cut -d ':' -f 2)"
@@ -625,7 +644,7 @@ function main(){
 
     echo "Running etcd"
     if [[ "${ROLE}" == "creator" ]]; then
-      ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${MAX_ETCD_MEMBER_SIZE}" \
+      ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
                "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") || exit 1
     else
       ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_NODE_LIST}" "${PROXY}") || exit 1
@@ -637,11 +656,6 @@ function main(){
     sleep 1
   done
 
-  # DNS-SD
-  local CLUSTER_ID="$(curl 127.0.0.1:${ETCD_CLIENT_PORT}/v2/members -vv 2>&1 | grep 'X-Etcd-Cluster-Id' | sed -n "s/.*: \(.*\)$/\1/p" | tr -d '\r')"
-  echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
-
   wait_etcd_cluster_healthy "${ETCD_CID}" "${ETCD_CLIENT_PORT}"
 
   echo "Running flanneld"
@@ -652,11 +666,13 @@ function main(){
   echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
+  echo "export EX_K8S_INSECURE_PORT=${K8S_INSECURE_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_NODE_NAME=${NODE_NAME}" >> "${CONFIG_FILE}"
   echo "export EX_IP_AND_MASK=${IP_AND_MASK}" >> "${CONFIG_FILE}"
   echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
   echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
+  echo "export EX_HYPERKUBE_IMAGE=${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" >> "${CONFIG_FILE}"
 
   # echo "Running Kubernetes"
   if [[ -n "${K8S_REGISTRY}" ]]; then
