@@ -31,6 +31,10 @@ function get_filepath_from_volumes(){
     VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
     FILEPATH="$(find "${VOL_DEST}" ${EXECUTABLE_OPTION} -type f -name "${FILENAME}" -o -type l -name "${FILENAME}" 2>/dev/null | head -n 1)"
     if [[ -n "${FILEPATH}" ]]; then
+      if [[ -f "${VOL_DEST}" ]]; then
+        VOL_DEST="$(dirname "${VOL_DEST}")"
+        VOL_SRC="$(dirname "${VOL_SRC}")"
+      fi
       echo "$(echo "${FILEPATH}" | sed "s|${VOL_DEST}|${VOL_SRC}|g" | sed "s|//|/|g")"
       return 0
     fi
