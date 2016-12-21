@@ -25,9 +25,16 @@ function etcd_creator(){
   local RESTORE_ETCD="$7"
   local PEER_PORT="2380"
   local ETCD_PATH="k8sup/cluster"
+  local RESTART_WITH_OLD_DATA
 
   if [[ "${RESTORE_ETCD}" == "true" ]]; then
     local RESTORE_CMD="--force-new-cluster=true"
+  fi
+
+  if [[ -d "/var/lib/etcd/member" ]] || [[ -d "/var/lib/etcd/proxy" ]]; then
+    RESTART_WITH_OLD_DATA="true"
+  else
+    RESTART_WITH_OLD_DATA="false"
   fi
 
   docker run \
@@ -51,15 +58,18 @@ function etcd_creator(){
 
   echo "Waiting for all etcd members ready..." 1>&2
   until curl -sf -m 1 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
-    sleep 1
+    sleep 3
+    [[ -z "$(docker ps | grep k8sup-etcd)" ]] && docker start k8sup-etcd &>/dev/null
   done
 
-  curl -s "127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
+  if [[ "${RESTART_WITH_OLD_DATA}" == "false" ]]; then
+    curl -s "127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
 
-  if [[ -z "${CLUSTER_ID}" ]]; then
-    CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
+    if [[ -z "${CLUSTER_ID}" ]]; then
+      CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
+    fi
+    curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" -XPUT -d value="${CLUSTER_ID}" 1>/dev/null
   fi
-  curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" -XPUT -d value="${CLUSTER_ID}" 1>/dev/null
 }
 
 function etcd_follower(){
@@ -202,7 +212,8 @@ function wait_etcd_cluster_healthy(){
        --endpoints http://127.0.0.1:${ETCD_CLIENT_PORT} \
        cluster-health \
         | grep 'cluster is' | awk '{print $3}')" == "healthy" ]]; do
-    sleep 1
+    sleep 3
+    [[ -z "$(docker ps | grep "${ETCD_CID}")" ]] && docker start "${ETCD_CID}" &>/dev/null
   done
 
 }
@@ -575,7 +586,7 @@ function main(){
   local ETCD_CID
   local ROLE
   echo "Starting k8sup..." 1>&2
-  if [[ -d "/var/lib/etcd/member" ]]; then
+  if [[ -d "/var/lib/etcd/member" ]] || [[ -d "/var/lib/etcd/proxy" ]]; then
     echo "Found etcd data in the local storage (/var/lib/etcd), trying to start etcd with these data." 1>&2
     ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
              "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || exit 1
