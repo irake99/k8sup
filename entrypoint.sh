@@ -583,32 +583,43 @@ function main(){
     if [[ "${NEW_CLUSTER}" != "true" ]]; then
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
-      DISCOVERY_RESULTS="<nil>"
-      until [[ -z "$(echo "${DISCOVERY_RESULTS}" | grep '<nil>')" ]]; do
-        DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")" || true
-      done
-      echo "${DISCOVERY_RESULTS}"
+      while
+        DISCOVERY_RESULTS="<nil>"
+        until [[ -z "$(echo "${DISCOVERY_RESULTS}" | grep '<nil>')" ]]; do
+          DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")" || true
+        done
+        echo "${DISCOVERY_RESULTS}"
 
-      # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
-      local EXISTED_ETCD_NODE_LIST=""
-      local EXISTED_ETCD_NODE=""
-      if [[ -n "${CLUSTER_ID}" ]]; then
-        EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}" | awk '{print $2}')"
-        EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
-        if [[ -n "${EXISTED_ETCD_NODE}" ]]; then
-          echo "Found an existed cluster: ${CLUSTER_ID}." 1>&2
-          echo "Target etcd member: ${EXISTED_ETCD_NODE} in the cluster, try to join it..." 1>&2
-        else
-          echo "No such existed cluster: ${CLUSTER_ID}, starting a new cluster using ID: ${CLUSTER_ID}..." 1>&2
+        # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
+        local EXISTED_ETCD_NODE_LIST=""
+        local EXISTED_ETCD_NODE=""
+        if [[ -n "${CLUSTER_ID}" ]]; then
+          EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}" | awk '{print $2}')"
+          EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
+          if [[ -n "${EXISTED_ETCD_NODE}" ]]; then
+            echo "Found an existed cluster: ${CLUSTER_ID}." 1>&2
+            echo "Target etcd member: ${EXISTED_ETCD_NODE} in the cluster, try to join it..." 1>&2
+          elif [[ "${PROXY}" == "off" ]]; then
+            echo "No such existed cluster: ${CLUSTER_ID}, starting a new cluster using ID: ${CLUSTER_ID}..." 1>&2
+          fi
+        elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -eq "1" ]]; then
+          CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq)"
+          EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}" | awk '{print $2}')"
+          EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
+          echo "Target etcd member: ${EXISTED_ETCD_NODE} in the existed cluster, try to join it..." 1>&2
+        elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -gt "1" ]] && [[ "${PROXY}" == "off" ]]; then
+          CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
+          echo "Found multiple existed clusters, starting a new cluster using ID: ${CLUSTER_ID}..." 1>&2
         fi
-      elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -eq "1" ]]; then
-        EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | head -n 1 | awk '{print $2}')"
-        EXISTED_ETCD_NODE="${EXISTED_ETCD_NODE_LIST}"
-        echo "Target etcd member: ${EXISTED_ETCD_NODE} in the existed cluster, try to join it..." 1>&2
-      elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -gt "1" ]]; then
-        CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
-        echo "Found multiple existed clusters, starting a new cluster using ID: ${CLUSTER_ID}..." 1>&2
-      fi
+        [[ -z "${EXISTED_ETCD_NODE}" && "${PROXY}" == "on" ]]
+      do
+
+        if [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -gt "1" ]]; then
+          echo "Found more than one existed cluster, please re-run k8sup and specify Cluster ID or turn off other cluster(s) if you don't need, re-discovering..." 1>&2
+        else
+          echo "No such any existed cluster for this worker, re-discovering..." 1>&2
+        fi
+      done
     fi
 
     if [[ -z "${CLUSTER_ID}" ]]; then
@@ -621,11 +632,6 @@ function main(){
 
     if [[ -n "${EXISTED_ETCD_NODE}" ]]; then
       ETCD_CLIENT_PORT="$(echo "${EXISTED_ETCD_NODE}" | cut -d ':' -f 2)"
-    fi
-
-    if [[ -z "${EXISTED_ETCD_NODE}" ]] && [[ "${PROXY}" == "on" ]]; then
-      echo "Proxy mode needs a cluster to join, exiting..." 1>&2
-      exit 1
     fi
 
     if [[ -z "${EXISTED_ETCD_NODE}" ]] || [[ "${NEW_CLUSTER}" == "true" ]]; then
