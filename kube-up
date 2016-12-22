@@ -102,7 +102,7 @@ Options:
 -p, --worker                  Run as k8s worker
 -a, --apiserver-port=PORT     Apiserver port (Default: 6443)
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
--v, --version=VERSION         Specify k8s version (Default: 1.4.6)
+-v, --version=VERSION         Specify k8s version (Default: 1.5.1)
 -r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
     --forced-worker           Run as k8s worker persistently
     --reset-labels            Reset node labels
@@ -198,7 +198,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.4.6"
+    export EX_K8S_VERSION="1.5.1"
   fi
 
   if [[ -z "${EX_REGISTRY}" ]]; then
@@ -266,7 +266,7 @@ function main(){
   export REGISTRY="${EX_REGISTRY}"
   export ARCH=amd64
   export K8S_VERSION="${EX_K8S_VERSION}"
-  export ADDON_MGR_VER=v5.1
+  export ADDON_MGR_VER=v6.1
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
 
   # Reset node labels and exit

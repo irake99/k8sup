@@ -414,7 +414,7 @@ Options:
                              e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                              or \"eth0\" (Required option)
 -c, --cluster=CLUSTER_ID     Join a specified cluster
--v, --version=VERSION        Specify k8s version (Default: 1.4.6)
+-v, --version=VERSION        Specify k8s version (Default: 1.5.1)
     --max-etcd-members=NUM   Maximum etcd member size
     --new                    Force to start a new cluster
     --restore                Try to restore etcd data and start a new cluster
@@ -524,7 +524,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.4.6"
+    export EX_K8S_VERSION="1.5.1"
   fi
 
   if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
@@ -544,7 +544,7 @@ function main(){
   local K8S_REGISTRY="${EX_K8S_REGISTRY}"
   export ENV_ETCD_VERSION="3.0.15"
   export ENV_FLANNELD_VERSION="0.6.2"
-#  export ENV_K8S_VERSION="1.4.6"
+#  export ENV_K8S_VERSION="1.5.1"
   export ENV_ETCD_IMAGE="${COREOS_REGISTRY}/etcd:v${ENV_ETCD_VERSION}"
   export ENV_FLANNELD_IMAGE="${COREOS_REGISTRY}/flannel:v${ENV_FLANNELD_VERSION}"
 #  export ENV_HYPERKUBE_IMAGE="gcr.io/google_containers/hyperkube-amd64:v${ENV_K8S_VERSION}"
