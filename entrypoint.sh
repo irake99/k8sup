@@ -349,6 +349,7 @@ function rejoin_etcd(){
   local IP_AND_MASK="${EX_IP_AND_MASK}" && unset EX_IP_AND_MASK
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
   local SUBNET_ID_AND_MASK="${EX_SUBNET_ID_AND_MASK}" && unset EX_SUBNET_ID_AND_MASK
+  local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
   local ETCD_MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
   local ETCD_MEMBER_IP_LIST="$(echo "${ETCD_MEMBER_LIST}" \
@@ -370,11 +371,10 @@ function rejoin_etcd(){
     rm -rf "/var/lib/etcd/"*
   fi
 
-  DISCOVERY_RESULTS="<nil>"
-  until [[ -z "$(echo "${DISCOVERY_RESULTS}" | grep '<nil>')" ]]; do
-    DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")"
-  done
-  ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}" | awk '{print $2}')"
+  DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")"
+  ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
+                    | grep -w "clusterID=${CLUSTER_ID}" \
+                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
 
   # Get an existed etcd member
   for NODE in ${ETCD_NODE_LIST}; do
@@ -404,7 +404,7 @@ function rejoin_etcd(){
   # DNS-SD
   killall "registering" 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
-  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
+  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\" \"true\"" &
 }
 
 function show_usage(){
@@ -572,6 +572,7 @@ function main(){
   local K8S_INSECURE_PORT="8080"
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
   local DISCOVERY_RESULTS
+  local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
 
   sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true
   sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
@@ -592,20 +593,20 @@ function main(){
              "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || exit 1
   else
     if [[ "${NEW_CLUSTER}" != "true" ]]; then
+      bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\" \"false\"" &
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
       while
-        DISCOVERY_RESULTS="<nil>"
-        until [[ -z "$(echo "${DISCOVERY_RESULTS}" | grep '<nil>')" ]]; do
-          DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")" || true
-        done
+        DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")" || true
         echo "${DISCOVERY_RESULTS}"
 
         # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
         local EXISTED_ETCD_NODE_LIST=""
         local EXISTED_ETCD_NODE=""
         if [[ -n "${CLUSTER_ID}" ]]; then
-          EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}" | awk '{print $2}')"
+          EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
+                                    | grep -w "clusterID=${CLUSTER_ID}" \
+                                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
           EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
           if [[ -n "${EXISTED_ETCD_NODE}" ]]; then
             echo "Found an existed cluster: ${CLUSTER_ID}." 1>&2
@@ -613,9 +614,11 @@ function main(){
           elif [[ "${PROXY}" == "off" ]]; then
             echo "No such existed cluster: ${CLUSTER_ID}, starting a new cluster using ID: ${CLUSTER_ID}..." 1>&2
           fi
-        elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -eq "1" ]]; then
+        elif [[ "$(echo "${DISCOVERY_RESULTS}" | grep -w "etcdStarted=true" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -eq "1" ]]; then
           CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq)"
-          EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}" | awk '{print $2}')"
+          EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
+                                    | grep -w "clusterID=${CLUSTER_ID}" \
+                                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
           EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
           echo "Target etcd member: ${EXISTED_ETCD_NODE} in the existed cluster, try to join it..." 1>&2
         elif [[ "$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)" -gt "1" ]] && [[ "${PROXY}" == "off" ]]; then
@@ -636,11 +639,6 @@ function main(){
     if [[ -z "${CLUSTER_ID}" ]]; then
       CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
     fi
-    # DNS-SD
-    killall "registering" 2>/dev/null || true
-    echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-    bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\"" &
-
     if [[ -n "${EXISTED_ETCD_NODE}" ]]; then
       ETCD_CLIENT_PORT="$(echo "${EXISTED_ETCD_NODE}" | cut -d ':' -f 2)"
     fi
@@ -673,6 +671,11 @@ function main(){
   done
 
   wait_etcd_cluster_healthy "${ETCD_CID}" "${ETCD_CLIENT_PORT}"
+
+  # DNS-SD
+  killall "registering" 2>/dev/null || true
+  echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
+  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\" \"true\"" &
 
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"
