@@ -19,6 +19,7 @@ function get_filepath_from_volumes(){
   local FILENAME="$1"
   local VOLUMES="$2"
   local EXECUTABLE="$3"
+  local EXCLUDE_DIR_OPTION
   local VOL_SRC
   local VOL_DEST
   local FILEPATH
@@ -29,7 +30,9 @@ function get_filepath_from_volumes(){
   for VOL in ${VOLUMES}; do
     VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1)"
     VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
-    FILEPATH="$(find "${VOL_DEST}" ${EXECUTABLE_OPTION} -type f -name "${FILENAME}" -o -type l -name "${FILENAME}" 2>/dev/null | head -n 1)"
+    [[ -d "${VOL_DEST}/var/lib/docker" ]] && EXCLUDE_DIR_OPTION="-not -path */var/lib/docker/*" || EXCLUDE_DIR_OPTION=""
+    FILEPATH="$(find "${VOL_DEST}" ${EXECUTABLE_OPTION} -type f ${EXCLUDE_DIR_OPTION} \
+                -name "${FILENAME}" -o -type l -name "${FILENAME}" 2>/dev/null | head -n 1)"
     if [[ -n "${FILEPATH}" ]]; then
       if [[ -f "${VOL_DEST}" ]]; then
         VOL_DEST="$(dirname "${VOL_DEST}")"
@@ -371,7 +374,7 @@ function main(){
     "${DOMAIN_NAME}" \
     "DONT_HOLD" 1>/dev/null
 
-  echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
+  echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   iptables -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
 
   echo "Running Kubernetes ..."
@@ -419,8 +422,10 @@ function main(){
     sleep 1
   done
 
-  echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
-  iptables -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+  echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
+  until iptables -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"; do
+    sleep 1
+  done
 
   set_node_schedulable "${IPADDR}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}"
 }
