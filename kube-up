@@ -375,7 +375,7 @@ function main(){
     "DONT_HOLD" 1>/dev/null
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
-  iptables -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+  iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
 
   echo "Running Kubernetes ..."
   docker run \
@@ -423,7 +423,7 @@ function main(){
   done
 
   echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
-  until iptables -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"; do
+  until iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"; do
     sleep 1
   done
 
