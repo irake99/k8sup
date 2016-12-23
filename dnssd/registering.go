@@ -19,15 +19,16 @@ func main() {
 	//	fmt.Println(strconv.FormatInt(time.Now().UnixNano(), 10))
 	//	os.Exit(0)
 
-	if len(os.Args) != 6 {
-		fmt.Printf("Usage: registering {Hostname} {IP/Mask} {Port} {etcd_cluster_ID} {etcd_started}\n")
+	if len(os.Args) != 7 {
+		fmt.Printf("Usage: registering {Hostname} {IP/Mask} {Port} {etcd_cluster_ID} {etcd_proxy} {etcd_started}\n")
 		return
 	}
 	Instance := os.Args[1]
 	IPMask := os.Args[2]
 	Port, _ := strconv.Atoi(os.Args[3])
 	clusterID := os.Args[4]
-	etcdStarted := os.Args[5]
+	etcdProxy := os.Args[5]
+	etcdStarted := os.Args[6]
 	IPAddr, Network, err := net.ParseCIDR(IPMask)
 	var SRVtext []string
 	if clusterID != "" {
@@ -35,6 +36,7 @@ func main() {
 	}
 	SRVtext = append(SRVtext, "IPAddr="+IPAddr.String())
 	SRVtext = append(SRVtext, "etcdPort="+strconv.Itoa(Port))
+	SRVtext = append(SRVtext, "etcdProxy="+etcdProxy)
 	SRVtext = append(SRVtext, "etcdStarted="+etcdStarted)
 	SRVtext = append(SRVtext, "NetworkID="+Network.String())
 	SRVtext = append(SRVtext, "InstanceName="+Instance)
@@ -47,7 +49,7 @@ func main() {
 	}
 
 	// etcd health check (If it down, stop mDNS)
-	if clusterID != "" {
+	if etcdStarted == "true" {
 		go func() {
 			client := &http.Client{
 				Timeout: time.Duration(5e9),
