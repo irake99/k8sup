@@ -1,0 +1,87 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "kube-addon-manager",
+    "namespace": "kube-system",
+    "version": "v1"
+  },
+  "spec": {
+    "hostNetwork": true,
+    "containers": [
+      {
+        "name": "kube-addon-manager",
+        "image": "REGISTRY/kube-addon-manager-ARCH:ADDON_MGR_VER",
+        "resources": {
+          "requests": {
+            "cpu": "5m",
+            "memory": "50Mi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "addons",
+            "mountPath": "/etc/kubernetes/addons",
+            "readOnly": false
+          }
+        ]
+      },
+      {
+        "name": "kube-addon-manager-data",
+        "image": "REGISTRY/hyperkube-ARCH:VERSION",
+        "command": [
+          "/update-addons.sh",
+          "multinode"
+        ],
+        "securityContext": {
+          "privileged": true
+        },
+        "volumeMounts": [
+          {
+            "name": "addons",
+            "mountPath": "/srv/kubernetes/addons",
+            "readOnly": false
+          },
+          {
+            "name": "addons-kube-proxy",
+            "mountPath": "/etc/kubernetes/addons/multinode/kube-proxy.yaml",
+            "readOnly": false
+          },
+          {
+            "name": "addons-heapster",
+            "mountPath": "/etc/kubernetes/addons/multinode/heapster",
+            "readOnly": false
+          },
+          {
+            "name": "update-addons",
+            "mountPath": "/update-addons.sh"
+          }
+        ]
+      }
+    ],
+    "volumes": [
+      {
+        "name": "addons",
+        "emptyDir": {}
+      },
+      {
+        "name": "addons-kube-proxy",
+        "hostPath": {
+          "path": "/etc/kubernetes/addons/multinode/kube-proxy.yaml"
+        }
+      },
+      {
+        "name": "addons-heapster",
+        "hostPath": {
+          "path": "/etc/kubernetes/addons/multinode/heapster"
+        }
+      },
+      {
+        "name": "update-addons",
+        "hostPath": {
+          "path": "/etc/kubernetes/update-addons.sh"
+        }
+      }
+    ]
+  }
+}
