@@ -215,10 +215,15 @@ function test_proxy(){
 function get_API_Servers(){
   local APISERVER_PORT="$1"
   local ETCD_CLIENT_PORT="$2"
+  local KUBELET_VARLIB="$3"
   local APISERVERS=""
   local APISERVER=""
   local APIHOST=""
   local KUBE_NODE_LIST=""
+  local CERTS_DIR="${KUBELET_VARLIB}/kubeconfig"
+  local CERT_OPTS="--cert ${CERTS_DIR}/kubecfg.crt \
+                   --key ${CERTS_DIR}/kubecfg.key \
+                   --cacert ${CERTS_DIR}/ca.crt"
 
   until [[ -n "${KUBE_NODE_LIST}" ]]; do
     KUBE_NODE_LIST="$(curl -m 2 -sf "127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/services/endpoints/default/kubernetes" \
@@ -229,13 +234,13 @@ function get_API_Servers(){
 
   for KUBE_NODE in ${KUBE_NODE_LIST}; do
     APISERVER="https://${KUBE_NODE}:${APISERVER_PORT}"
-    if curl --insecure -u admin:admin -sf -m 3 "${APISERVER}/healthz" &>/dev/null; then
+    if curl ${CERT_OPTS} -sf -m 3 "${APISERVER}/healthz" &>/dev/null; then
       APISERVERS="${APISERVERS}","${APISERVER}"
     fi
   done
 
   APISERVERS="$(echo "${APISERVERS}" | cut -c 2-)"
-  echo "${APISERVERS}"
+  [[ -n "${APISERVERS}" ]] && echo "${APISERVERS}" || { echo "No such API servers, exiting..." 1>&2; return 1; }
 }
 
 function main(){
@@ -271,7 +276,7 @@ function main(){
 
   # Reset node labels and exit
   if [[ "${RESET_LABELS}" == "true" ]]; then
-    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
+    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" || exit 1
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
 
     local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
@@ -313,6 +318,26 @@ function main(){
   sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
 
+  echo "Cleaning up kube-proxy old iptables rules..." 1>&2
+  docker run \
+    --net=host \
+    --rm=true \
+    --privileged \
+    --volume=/var/run/dbus \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube proxy \
+      --cleanup-iptables
+
+  echo "Getting or generating certs..." 1>&2
+  docker run \
+    --net=host \
+    --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
+    --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    "/cp-certs.sh" \
+      "${DOMAIN_NAME}" \
+      "DONT_HOLD" 1>/dev/null
+
   # If etcd is running as a proxy, set k8s as a worker
   local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
   if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
@@ -338,7 +363,7 @@ function main(){
       fi
     fi
   else
-    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1
+    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" || exit 1
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
     APIHOST="${APISERVER:8}"
 
@@ -352,26 +377,6 @@ function main(){
   done
 
   local RBD_OPTIONS="$(rbd_env_detector)"
-
-  echo "Cleaning up kube-proxy old iptables rules..." 1>&2
-  docker run \
-    --net=host \
-    --rm=true \
-    --privileged \
-    --volume=/var/run/dbus \
-    "${HYPERKUBE_IMAGE_NAME}" \
-    /hyperkube proxy \
-      --cleanup-iptables
-
-  echo "Getting or generating certs..." 1>&2
-  docker run \
-    --net=host \
-    --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
-    --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
-    "${HYPERKUBE_IMAGE_NAME}" \
-    "/cp-certs.sh" \
-    "${DOMAIN_NAME}" \
-    "DONT_HOLD" 1>/dev/null
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"

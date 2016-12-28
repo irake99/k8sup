@@ -4,6 +4,7 @@ set -e
 function remove_node_from_endpoints(){
   local HYPERKUBE_IMAGE="$1"
   local APISERVER="$2"
+  local KUBELET_VARLIB="$3"
   local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
   local GW_IFACE="$(ip route | grep default | awk '{print $5}')"
   local IPADDR="$(ip addr show dev "${GW_IFACE}" | grep -o "${IPMASK_PATTERN}" | cut -d '/' -f 1)"
@@ -11,14 +12,13 @@ function remove_node_from_endpoints(){
   local NEW_ENDPOINTS="$(docker run \
     --net=host \
     --rm=true \
+    --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
     "${HYPERKUBE_IMAGE}" \
-    /hyperkube kubectl -s "${APISERVER}" \
-    --insecure-skip-tls-verify \
-    --username="admin" \
-    --password="admin" \
-    get ep kubernetes --namespace=default -o json \
-      | jq ".subsets[].addresses[] | select(.ip != \"${IPADDR}\")" \
-      | jq -s -c .)"
+    /hyperkube kubectl -s "${APISERVER}"
+      --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+      get ep kubernetes --namespace=default -o json \
+        | jq ".subsets[].addresses[] | select(.ip != \"${IPADDR}\")" \
+        | jq -s -c .)"
 
   [[ "${NEW_ENDPOINTS}" == "[]" ]] && return 0
 
@@ -27,14 +27,13 @@ function remove_node_from_endpoints(){
   docker run \
     --net=host \
     --rm=true \
+    --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
     "${HYPERKUBE_IMAGE}" \
     /hyperkube kubectl -s "${APISERVER}" \
-    --insecure-skip-tls-verify \
-    --username="admin" \
-    --password="admin" \
-    patch ep kubernetes \
-    --type='merge' \
-    -p "${NEW_PATCH}"
+      --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+      patch ep kubernetes \
+      --type='merge' \
+      -p "${NEW_PATCH}"
 }
 
 function get_endpoint_amount(){
@@ -54,10 +53,15 @@ function find_an_apiserver(){
   local ETCD_CLIENT_PORT="$1"
   local K8S_PORT="$2"
   local K8S_INSECURE_PORT="$3"
+  local KUBELET_VARLIB="$4"
   local APISERVER
   local NODE
+  local CERTS_DIR="${KUBELET_VARLIB}/kubeconfig"
+  local CERT_OPTS="--cert ${CERTS_DIR}/kubecfg.crt \
+                   --key ${CERTS_DIR}/kubecfg.key \
+                   --cacert ${CERTS_DIR}/ca.crt"
 
-  if curl --insecure -u admin:admin -m 2 -sf "http://127.0.0.1:${K8S_INSECURE_PORT}" &>/dev/null; then
+  if curl ${CERT_OPTS} -m 2 -sf "http://127.0.0.1:${K8S_INSECURE_PORT}" &>/dev/null; then
     APISERVER="http://127.0.0.1:${K8S_INSECURE_PORT}"
   else
     # If API server is not running on local, searching it from other nodes.
@@ -67,7 +71,7 @@ function find_an_apiserver(){
     [[ -z "${NODE_LIST}" ]] && { echo "Could not connect to etcd server!" 1>&2; return 1; }
 
     for NODE in ${NODE_LIST}; do
-      if curl --insecure -u admin:admin -m 2 -sf "https://${NODE}:${K8S_PORT}" &>/dev/null; then
+      if curl ${CERT_OPTS} -m 2 -sf "https://${NODE}:${K8S_PORT}" &>/dev/null; then
         APISERVER="https://${NODE}:${K8S_PORT}"
         break
       fi
@@ -81,31 +85,30 @@ function find_an_apiserver(){
 function stop_k8s(){
   local IPADDR="$1"
   local ETCD_CLIENT_PORT="$2"
-  local HYPERKUBE_IMAGE="$3"
-  local APISERVER="$4"
+  local KUBELET_VARLIB="$3"
+  local HYPERKUBE_IMAGE="$4"
+  local APISERVER="$5"
 
   # Drain node in preparation for maintenance.
   docker run \
     --net=host \
     --rm=true \
+    --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
     "${HYPERKUBE_IMAGE}" \
     /hyperkube kubectl -s "${APISERVER}" \
-    --insecure-skip-tls-verify \
-    --username="admin" \
-    --password="admin" \
-    drain "${IPADDR}" --force --ignore-daemonsets --delete-local-data
+      --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+      drain "${IPADDR}" --force --ignore-daemonsets --delete-local-data
 
   if [[ "${EXIT}" == "true" ]]; then
     # Exit k8s cluster
     docker run \
       --net=host \
       --rm=true \
+      --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
       "${HYPERKUBE_IMAGE}" \
       /hyperkube kubectl -s "${APISERVER}" \
-      --insecure-skip-tls-verify \
-      --username="admin" \
-      --password="admin" \
-      delete node "${IPADDR}"
+        --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+        delete node "${IPADDR}"
   fi
 
   # Remove k8s system pods conf
@@ -239,6 +242,7 @@ function main(){
   local REMOTE_ETCD="${EX_REMOTE_ETCD}"
   local REMOTE_IPADDR="${EX_REMOTE_IPADDR}"
   local FORCE="${EX_FORCE}"
+  local KUBELET_VARLIB="/var/lib/kubelet"
   local APISERVER
   local ENDPOINT_AMOUNT
   if [[ "${LOCAL_ETCD_ONLY}" == "true" ]]; then
@@ -259,14 +263,14 @@ function main(){
     fi
   else
     # Default removing
-    APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}")" || exit 1
+    APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")" || exit 1
     echo "Stopping k8s containers..." 1>&2
-    stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${HYPERKUBE_IMAGE}" "${APISERVER}"
+    stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE}" "${APISERVER}"
     ENDPOINT_AMOUNT="$(get_endpoint_amount "${ETCD_CLIENT_PORT}")" || exit 1
     if [[ "${ENDPOINT_AMOUNT}" -gt "1" ]]; then
       # Try to find another apiserver for removing this node from endpoints
-      APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}")" \
-       && remove_node_from_endpoints "${HYPERKUBE_IMAGE}" "${APISERVER}" || true
+      APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")" \
+       && remove_node_from_endpoints "${HYPERKUBE_IMAGE}" "${APISERVER}" "${KUBELET_VARLIB}" || true
     fi
     if [[ "${STOP_K8S_ONLY}" == "true" ]]; then
       exit 0

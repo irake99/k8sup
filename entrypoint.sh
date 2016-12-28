@@ -527,7 +527,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
-    export EX_MAX_ETCD_MEMBER_SIZE="5"
+    export EX_MAX_ETCD_MEMBER_SIZE="3"
   fi
 
   if [[ -z "${EX_COREOS_REGISTRY}" ]] || [[ -z "${EX_K8S_REGISTRY}" ]]; then
