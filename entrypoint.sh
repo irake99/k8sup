@@ -370,7 +370,7 @@ function rejoin_etcd(){
     rm -rf "/var/lib/etcd/"*
   fi
 
-  DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")"
+  DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")"
   ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                     | grep -w "clusterID=${CLUSTER_ID}" \
                     | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
@@ -403,7 +403,7 @@ function rejoin_etcd(){
   # DNS-SD
   killall "registering" 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
-  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\" \"${PROXY}\" \"true\"" &
+  bash -c "/go/dnssd/registering \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\" \"${PROXY}\" \"true\"" &
 }
 
 function show_usage(){
@@ -574,6 +574,8 @@ function main(){
   local DISCOVERY_RESULTS
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
 
+  export LD_LIBRARY_PATH="/lib:/mnt/lib"
+
   sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true
   sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
   sh -c 'docker stop k8sup-flannel' >/dev/null 2>&1 || true
@@ -593,11 +595,11 @@ function main(){
              "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || exit 1
   else
     if [[ "${NEW_CLUSTER}" != "true" ]]; then
-      bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\" \"${PROXY}\" \"false\"" &
+      bash -c "/go/dnssd/registering \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\" \"${PROXY}\" \"false\"" &
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
       while
-        DISCOVERY_RESULTS="$(go run /go/dnssd/browsing.go | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')" || true
+        DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')" || true
         echo "${DISCOVERY_RESULTS}"
 
         # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
@@ -703,7 +705,7 @@ function main(){
   killall "registering" 2>/dev/null &>/dev/null || true
   [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  bash -c "go run /go/dnssd/registering.go \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\" \"${PROXY}\" \"true\"" &
+  bash -c "/go/dnssd/registering \"${NODE_NAME}\" \"${IP_AND_MASK}\" \"${ETCD_CLIENT_PORT}\" \"${CLUSTER_ID}\" \"${PROXY}\" \"true\"" &
 
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"
