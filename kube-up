@@ -18,17 +18,27 @@ function set_role_labels(){
 function get_filepath_from_volumes(){
   local FILENAME="$1"
   local VOLUMES="$2"
+  local EXECUTABLE="$3"
+  local EXCLUDE_DIR_OPTION
   local VOL_SRC
   local VOL_DEST
   local FILEPATH
+
+  [[ "${EXECUTABLE}" == "true" ]] && local EXECUTABLE_OPTION="-executable"
 
   [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
   for VOL in ${VOLUMES}; do
     VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1)"
     VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
-    FILEPATH="$(find "${VOL_DEST}" -type f -name "${FILENAME}" -o -type l -name "${FILENAME}" 2>/dev/null | head -n 1)"
+    [[ -d "${VOL_DEST}/var/lib/docker" ]] && EXCLUDE_DIR_OPTION="-not -path */var/lib/docker/*" || EXCLUDE_DIR_OPTION=""
+    FILEPATH="$(find "${VOL_DEST}" ${EXECUTABLE_OPTION} -type f ${EXCLUDE_DIR_OPTION} \
+                -name "${FILENAME}" -o -type l -name "${FILENAME}" 2>/dev/null | head -n 1)"
     if [[ -n "${FILEPATH}" ]]; then
-      echo "${FILEPATH}"
+      if [[ -f "${VOL_DEST}" ]]; then
+        VOL_DEST="$(dirname "${VOL_DEST}")"
+        VOL_SRC="$(dirname "${VOL_SRC}")"
+      fi
+      echo "$(echo "${FILEPATH}" | sed "s|${VOL_DEST}|${VOL_SRC}|g" | sed "s|//|/|g")"
       return 0
     fi
   done
@@ -46,10 +56,10 @@ function rbd_env_detector(){
 
   [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
     && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
-    && RBD_CMD_PATH="$(get_filepath_from_volumes "rbd" "${VOLUMES}")" \
+    && RBD_CMD_PATH="$(get_filepath_from_volumes "rbd" "${VOLUMES}" "true")" \
     && RBD_KO_PATH="$(get_filepath_from_volumes "rbd.ko" "${VOLUMES}")" \
-    && MODPROBE_CMD_PATH="$(get_filepath_from_volumes "modprobe" "${VOLUMES}")" \
-    && DOCKER_CMD_PATH="$(get_filepath_from_volumes "docker" "$(echo "${VOLUMES}" | grep "/bin")")" \
+    && MODPROBE_CMD_PATH="$(get_filepath_from_volumes "modprobe" "${VOLUMES}" "true")" \
+    && DOCKER_CMD_PATH="$(get_filepath_from_volumes "docker" "$(echo "${VOLUMES}" | grep "/bin")" "true")" \
     && LIBDEVMAPPER_SO_PATH="$(get_filepath_from_volumes "libdevmapper.so.*" "$(echo "${VOLUMES}" | grep "/usr/lib")")" \
     || { echo "RBD mounting is not available on this host." 1>&2 && return 1; }
 
@@ -198,7 +208,7 @@ function get_options(){
 
 # Get test kube-proxy
 function test_proxy(){
-  echo $(grep -o "10.0.0.1/32" <<<"$(iptables -S -t nat | grep 10.0.0.1/32)" | wc -l)
+  echo $(grep -o "10.0.0.1/32" <<<"$(iptables -S -t nat | grep 10.0.0.1/32 | grep 'KUBE-SERVICES')" | wc -l)
 }
 
 # Get k8s apiservers form the list of etcd members
@@ -211,9 +221,9 @@ function get_API_Servers(){
   local KUBE_NODE_LIST=""
 
   until [[ -n "${KUBE_NODE_LIST}" ]]; do
-    KUBE_NODE_LIST="$(curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/minions \
-                          | jq -r .node.nodes[].value 2>/dev/null \
-                          | jq -r '.status.addresses[] | select(.type == "InternalIP") | .address' 2>/dev/null)" || true
+    KUBE_NODE_LIST="$(curl -m 2 -sf "127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/services/endpoints/default/kubernetes" \
+                       | jq -r '.node.value' \
+                       | jq -r '.subsets[].addresses[].ip' 2>/dev/null)" || true
     sleep 1
   done
 
@@ -364,8 +374,8 @@ function main(){
     "${DOMAIN_NAME}" \
     "DONT_HOLD" 1>/dev/null
 
-  echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
-  iptables -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+  echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
+  iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
 
   echo "Running Kubernetes ..."
   docker run \
@@ -408,12 +418,14 @@ function main(){
           --node-labels="$(set_role_labels "${WORKER}" "${FORCED_WORKER}")"
 
   echo "Waiting for kube-proxy connect to apiserver..."
-  until [[ "$(test_proxy)" -gt "1" ]]; do
+  until [[ "$(test_proxy)" -ge "1" ]]; do
     sleep 1
   done
 
-  echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST}"
-  iptables -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+  echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
+  until iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"; do
+    sleep 1
+  done
 
   set_node_schedulable "${IPADDR}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}"
 }

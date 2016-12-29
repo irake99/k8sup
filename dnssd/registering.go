@@ -14,40 +14,60 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 5 {
-		fmt.Printf("Usage: registering {Hostname} {IP/Mask} {Port} {etcd_cluster_ID}\n")
+	//	fmt.Println(time.Now().String())
+	//	fmt.Println(time.Now().UnixNano())
+	//	fmt.Println(strconv.FormatInt(time.Now().UnixNano(), 10))
+	//	os.Exit(0)
+
+	if len(os.Args) != 7 {
+		fmt.Printf("Usage: registering {Hostname} {IP/Mask} {Port} {etcd_cluster_ID} {etcd_proxy} {etcd_started}\n")
 		return
 	}
-	Hostname := os.Args[1]
+	Instance := os.Args[1]
 	IPMask := os.Args[2]
 	Port, _ := strconv.Atoi(os.Args[3])
 	clusterID := os.Args[4]
+	etcdProxy := os.Args[5]
+	etcdStarted := os.Args[6]
 	IPAddr, Network, err := net.ParseCIDR(IPMask)
-	fmt.Printf("Registering: %s %s:%d %s\n", Hostname, IPAddr, Port, clusterID)
+	var SRVtext []string
+	if clusterID != "" {
+		SRVtext = append(SRVtext, "clusterID="+clusterID)
+	}
+	SRVtext = append(SRVtext, "IPAddr="+IPAddr.String())
+	SRVtext = append(SRVtext, "etcdPort="+strconv.Itoa(Port))
+	SRVtext = append(SRVtext, "etcdProxy="+etcdProxy)
+	SRVtext = append(SRVtext, "etcdStarted="+etcdStarted)
+	SRVtext = append(SRVtext, "NetworkID="+Network.String())
+	SRVtext = append(SRVtext, "InstanceName="+Instance)
+	SRVtext = append(SRVtext, "UnixNanoTime="+strconv.FormatInt(time.Now().UnixNano(), 10))
+	fmt.Printf("Registering: %s %s:%d %s\n", Instance, IPAddr, Port, clusterID)
 	// Run registration (blocking call)
-	s, err := bonjour.RegisterProxy(Hostname, "_etcd._tcp", "", Port, Hostname, IPAddr.String(), []string{"clusterID=" + clusterID, "NetworkID=" + Network.String()}, nil)
+	s, err := bonjour.RegisterProxy(Instance, "_etcd._tcp", "", Port, Instance, IPAddr.String(), SRVtext, nil)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
 
 	// etcd health check (If it down, stop mDNS)
-	go func() {
-		client := &http.Client{
-			Timeout: time.Duration(5e9),
-		}
-		etcdURL := "http://127.0.0.1:" + strconv.Itoa(Port) + "/health"
-		for {
-			// Check etcd every 5 seconds
-			time.Sleep(5e9)
-			_, err := client.Get(etcdURL)
-			if err != nil {
-				fmt.Println("mDNS stopped!")
-				s.Shutdown()
-				time.Sleep(1e9)
-				os.Exit(0)
+	if etcdStarted == "true" {
+		go func() {
+			client := &http.Client{
+				Timeout: time.Duration(5e9),
 			}
-		}
-	}()
+			etcdURL := "http://127.0.0.1:" + strconv.Itoa(Port) + "/health"
+			for {
+				// Check etcd every 5 seconds
+				time.Sleep(5e9)
+				_, err := client.Get(etcdURL)
+				if err != nil {
+					fmt.Println("mDNS stopped!")
+					s.Shutdown()
+					time.Sleep(1e9)
+					os.Exit(0)
+				}
+			}
+		}()
+	}
 
 	fmt.Println("Press Ctrl+C to stop...")
 	// Ctrl+C handling
