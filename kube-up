@@ -269,6 +269,8 @@ function main(){
   export ADDON_MGR_VER=v5.1
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
 
+  export LD_LIBRARY_PATH="/lib:/mnt/lib"
+
   # Reset node labels and exit
   if [[ "${RESET_LABELS}" == "true" ]]; then
     APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}")" || exit 1

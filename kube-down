@@ -241,6 +241,9 @@ function main(){
   local FORCE="${EX_FORCE}"
   local APISERVER
   local ENDPOINT_AMOUNT
+
+  export LD_LIBRARY_PATH="/lib:/mnt/lib"
+
   if [[ "${LOCAL_ETCD_ONLY}" == "true" ]]; then
     exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
     exit 0

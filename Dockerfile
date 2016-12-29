@@ -7,14 +7,14 @@ RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime p
 
 RUN go get "github.com/oleksandr/bonjour"
 
-RUN mkdir -p /go/downloads && curl -sf -o /go/downloads/heapster.tar.gz -L https://github.com/kubernetes/heapster/archive/v1.2.0.tar.gz && tar xfz /go/downloads/heapster.tar.gz && rm -rf /go/downloads/heapster.tar.gz
+WORKDIR /go
+# ToDo: Remove /go/heapster-1.2.0 (30MB) to save space?
+RUN mkdir -p /go/downloads && curl -skf -o /go/downloads/heapster.tar.gz -L https://github.com/kubernetes/heapster/archive/v1.2.0.tar.gz && tar xfz /go/downloads/heapster.tar.gz && rm -rf /go/downloads/heapster.tar.gz
 
 COPY cni-conf /go/cni-conf
 COPY kube-conf /go/kube-conf
 COPY dnssd /go/dnssd
 COPY flannel-conf /go/flannel-conf
-
-WORKDIR /go
 
 ADD kube-up /go/kube-up
 ADD kube-down /go/kube-down
