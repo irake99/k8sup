@@ -1,12 +1,15 @@
-FROM scratch
+FROM golang:1.6.3
 MAINTAINER hsfeng@gmail.com
 
-ADD rootfs.tar.gz /
-WORKDIR /go
+RUN apt-get -y update
 
-# TODO: Remove /go/heapster-1.2.0(30MB) to save space?
-RUN mkdir -p /go/downloads && curl -k -o /go/downloads/heapster.tar.gz -L https://github.com/kubernetes/heapster/archive/v1.2.0.tar.gz 
-RUN tar -xvf /go/downloads/heapster.tar.gz && rm -rf /go/downloads/heapster.tar.gz
+RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime psmisc
+
+RUN go get "github.com/oleksandr/bonjour"
+
+WORKDIR /go
+# ToDo: Remove /go/heapster-1.2.0 (30MB) to save space?
+RUN mkdir -p /go/downloads && curl -skf -o /go/downloads/heapster.tar.gz -L https://github.com/kubernetes/heapster/archive/v1.2.0.tar.gz && tar xfz /go/downloads/heapster.tar.gz && rm -rf /go/downloads/heapster.tar.gz
 
 COPY cni-conf /go/cni-conf
 COPY kube-conf /go/kube-conf
