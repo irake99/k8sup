@@ -208,7 +208,7 @@ function get_options(){
 
 # Get test kube-proxy
 function test_proxy(){
-  echo $(grep -o "10.0.0.1/32" <<<"$(iptables -S -t nat | grep 10.0.0.1/32 | grep 'KUBE-SERVICES')" | wc -l)
+  echo $(grep -o "10.0.0.1/32" <<<"$(iptables -w -S -t nat | grep 10.0.0.1/32 | grep 'KUBE-SERVICES')" | wc -l)
 }
 
 # Get k8s apiservers form the list of etcd members
