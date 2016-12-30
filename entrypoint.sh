@@ -538,6 +538,7 @@ function get_options(){
 }
 
 function main(){
+  source ./runcom
   get_options "$@"
 
   local COREOS_REGISTRY="${EX_COREOS_REGISTRY}"

@@ -19,6 +19,7 @@ RUN go get "github.com/oleksandr/bonjour" \
     && go build -o /go/dnssd/registering /go/dnssd/registering.go \
     && go build -o /go/dnssd/browsing /go/dnssd/browsing.go
 
+ADD runcom /go/runcom
 ADD kube-up /go/kube-up
 ADD kube-down /go/kube-down
 ADD entrypoint.sh /go/entrypoint.sh

@@ -223,6 +223,7 @@ function get_options(){
 }
 
 function main(){
+  source ./runcom
   get_options "$@"
   local EXIT="${EX_EXIT}"
 

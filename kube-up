@@ -69,7 +69,7 @@ function rbd_env_detector(){
         --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
         --volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro \
         --volume=${DOCKER_CMD_PATH}:/bin/docker:ro \
-        --volume=${LIBDEVMAPPER_SO_PATH}:${LIBDEVMAPPER_SO_PATH}:ro \
+        --volume=/usr/lib/:/mnt/lib:ro \
         --volume=/lib/modules:/lib/modules:ro"
 
   echo "${RBD_OPTIONS}"
@@ -244,7 +244,7 @@ function get_API_Servers(){
 }
 
 function main(){
-
+  source ./runcom
   get_options "$@"
   local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
   local WORKER="${EX_WORKER}" && unset EX_WORKER
