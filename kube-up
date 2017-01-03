@@ -333,6 +333,7 @@ function main(){
     --net=host \
     --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
     --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+    --name=k8sup-certs \
     "${HYPERKUBE_IMAGE_NAME}" \
     "/cp-certs.sh" \
       "${DOMAIN_NAME}" \

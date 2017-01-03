@@ -139,8 +139,8 @@ function exit_etcd(){
     local MEMBER_ID="$(echo "${MEMBER_LIST}" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
     test "${MEMBER_ID}" && curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
     if [[ "${LOCAL_ETCD}" == "true" ]]; then
-      docker stop k8sup-etcd
-      docker rm k8sup-etcd
+      docker stop k8sup-etcd 1>/dev/null
+      docker rm k8sup-etcd 1>/dev/null
       rm -rf "/var/lib/etcd/"*
     fi
   fi
@@ -258,7 +258,7 @@ function main(){
   if [[ "${FORCE}" == "true" ]]; then
     echo "Trying to kill k8s containers..." 1>&2
     docker stop $(docker ps -a | grep -E "k8sup-kubelet" | awk '{print $1}') 1>/dev/null || true
-    docker rm -f -v $(docker ps -a | grep -E "${REGISTRY}/hyperkube|${REGISTRY}/pause|${REGISTRY}/kube-addon-manager" | awk '{print $1}') 1>/dev/null || true
+    docker rm -f -v $(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}') 1>/dev/null || true
     if [[ "${EXIT}" == "true" ]]; then
       exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
     fi
@@ -282,8 +282,8 @@ function main(){
   fi
 
   echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup..." 1>&2
-  docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null || true
-  docker rm -v $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null || true
+  docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
+  docker rm -v $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
 
   docker rm -f -v $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
 }

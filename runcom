@@ -15,3 +15,5 @@ function docker(){
 
   bash -c "LD_LIBRARY_PATH=/lib:/host/lib $(which docker) ${ARGS}"
 }
+
+export -f docker
