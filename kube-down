@@ -90,14 +90,17 @@ function stop_k8s(){
   local APISERVER="$5"
 
   # Drain node in preparation for maintenance.
-  docker run \
-    --net=host \
-    --rm=true \
-    --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
-    "${HYPERKUBE_IMAGE}" \
-    /hyperkube kubectl -s "${APISERVER}" \
-      --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
-      drain "${IPADDR}" --force --ignore-daemonsets --delete-local-data
+  until \
+      docker run \
+        --net=host \
+        --rm=true \
+        --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
+        "${HYPERKUBE_IMAGE}" \
+        /hyperkube kubectl -s "${APISERVER}" \
+          --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+          drain "${IPADDR}" --force --ignore-daemonsets --delete-local-data 2>/dev/null; do
+    sleep 1
+  done
 
   if [[ "${EXIT}" == "true" ]]; then
     # Exit k8s cluster
@@ -114,6 +117,11 @@ function stop_k8s(){
   # Remove k8s system pods conf
   echo '{}' | tee /etc/kubernetes/manifests-multi/master-multi.json &>/dev/null
   echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager-multinode.json &>/dev/null
+
+  docker stop k8sup-kubelet 1>/dev/null || true
+  docker kill $(docker ps -a | grep -E "k8s_.*(kube-addon-manager-|setup).*_kube-system" | awk '{print $1}') 1>/dev/null || true
+  docker stop $(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}') 1>/dev/null || true
+  docker rm -v $(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}') 1>/dev/null || true
 
   echo -n "Waiting for all k8s pods stopped ..." 1>&2
   until [[ "$(docker ps | grep "${HYPERKUBE_IMAGE}" | wc -l)" -le "2" ]]; do
