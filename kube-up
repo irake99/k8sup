@@ -69,7 +69,7 @@ function rbd_env_detector(){
         --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
         --volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro \
         --volume=${DOCKER_CMD_PATH}:/bin/docker:ro \
-        --volume=/usr/lib/:/mnt/lib:ro \
+        --volume=/usr/lib/:/host/lib:ro \
         --volume=/lib/modules:/lib/modules:ro"
 
   echo "${RBD_OPTIONS}"
