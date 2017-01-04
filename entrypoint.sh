@@ -54,7 +54,7 @@ function etcd_creator(){
       --initial-cluster "${ETCD_NAME}=http://${IPADDR}:${PEER_PORT}" \
       --initial-cluster-state new \
       --data-dir /var/lib/etcd \
-      --proxy off
+      --proxy off || return 1
 
   echo "Waiting for all etcd members ready..." 1>&2
   until curl -sf -m 1 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
@@ -188,7 +188,7 @@ function etcd_follower(){
       --initial-cluster "${ENDPOINTS}" \
       --initial-cluster-state existing \
       --data-dir /var/lib/etcd \
-      --proxy "${PROXY}"
+      --proxy "${PROXY}" || return 1
 
 
   if [[ "${ALREADY_MEMBER}" != "true" ]] && [[ "${PROXY}" == "off" ]]; then
@@ -200,28 +200,26 @@ function etcd_follower(){
 }
 
 function wait_etcd_cluster_healthy(){
-  local ETCD_CID="$1"
-  local ETCD_CLIENT_PORT="$2"
+  local ETCD_CLIENT_PORT="$1"
 
   echo "Waiting until etcd cluster is healthy..." 1>&2
   until [[ \
     "$(docker exec \
-       "${ETCD_CID}" \
+       k8sup-etcd \
        /usr/local/bin/etcdctl \
        --endpoints http://127.0.0.1:${ETCD_CLIENT_PORT} \
        cluster-health \
         | grep 'cluster is' | awk '{print $3}')" == "healthy" ]]; do
     sleep 3
-    [[ -z "$(docker ps | grep "${ETCD_CID}")" ]] && docker start "${ETCD_CID}" &>/dev/null
+    [[ -z "$(docker ps | grep k8sup-etcd)" ]] && docker start k8sup-etcd &>/dev/null
   done
 
 }
 
 function flanneld(){
   local IPADDR="$1"
-  local ETCD_CID="$2"
-  local ETCD_CLIENT_PORT="$3"
-  local ROLE="$4"
+  local ETCD_CLIENT_PORT="$2"
+  local ROLE="$3"
 
   if [[ "${ROLE}" == "creator" ]]; then
     echo "Setting flannel parameters to etcd"
@@ -240,7 +238,7 @@ function flanneld(){
       local FLANNDL_CONF="$(cat /go/flannel-conf/network.json)"
     fi
     docker exec -d \
-      "${ETCD_CID}" \
+      k8sup-etcd \
       /usr/local/bin/etcdctl \
       --endpoints http://127.0.0.1:${ETCD_CLIENT_PORT} \
       set /coreos.com/network/config "${FLANNDL_CONF}"
@@ -402,7 +400,7 @@ function rejoin_etcd(){
 
   # DNS-SD
   local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
-  kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
+  [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
   /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
 }
@@ -576,23 +574,18 @@ function main(){
   local DISCOVERY_RESULTS
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
 
-  sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true
-  sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
-  sh -c 'docker stop k8sup-flannel' >/dev/null 2>&1 || true
-  sh -c 'docker rm k8sup-flannel' >/dev/null 2>&1 || true
-  sh -c 'docker stop k8sup-kubelet' >/dev/null 2>&1 || true
-  sh -c 'docker rm k8sup-kubelet' >/dev/null 2>&1 || true
-  sh -c 'ip link delete cni0' >/dev/null 2>&1 || true
+  bash -c 'docker stop k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
+  bash -c 'docker rm k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
+  bash -c 'ip link delete cni0' &>/dev/null || true
 
   local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
   local ETCD_CLIENT_PORT="2379"
-  local ETCD_CID
   local ROLE
   echo "Starting k8sup..." 1>&2
   if [[ -d "/var/lib/etcd/member" ]] || [[ -d "/var/lib/etcd/proxy" ]]; then
     echo "Found etcd data in the local storage (/var/lib/etcd), trying to start etcd with these data." 1>&2
-    ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
-             "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") && ROLE="follower" || exit 1
+    etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
+      "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" && ROLE="follower" || exit 1
   else
     if [[ "${NEW_CLUSTER}" != "true" ]]; then
       /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "false" &
@@ -687,10 +680,10 @@ function main(){
 
     echo "Running etcd"
     if [[ "${ROLE}" == "creator" ]]; then
-      ETCD_CID=$(etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
-               "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}") || exit 1
+      etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
+        "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" || exit 1
     else
-      ETCD_CID=$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_NODE_LIST}" "${PROXY}") || exit 1
+      etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTED_ETCD_NODE_LIST}" "${PROXY}" || exit 1
     fi
   fi
 
@@ -699,17 +692,17 @@ function main(){
     sleep 1
   done
 
-  wait_etcd_cluster_healthy "${ETCD_CID}" "${ETCD_CLIENT_PORT}"
+  wait_etcd_cluster_healthy "${ETCD_CLIENT_PORT}"
 
   # DNS-SD
   local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
-  kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
+  [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
   /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
 
   echo "Running flanneld"
-  flanneld "${IPADDR}" "${ETCD_CID}" "${ETCD_CLIENT_PORT}" "${ROLE}"
+  flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"
 
   # Write configure to file
   echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"

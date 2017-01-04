@@ -69,7 +69,7 @@ function rbd_env_detector(){
         --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
         --volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro \
         --volume=${DOCKER_CMD_PATH}:/bin/docker:ro \
-        --volume=/usr/lib/:/mnt/lib:ro \
+        --volume=/usr/lib/:/host/lib:ro \
         --volume=/lib/modules:/lib/modules:ro"
 
   echo "${RBD_OPTIONS}"
@@ -333,6 +333,7 @@ function main(){
     --net=host \
     --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
     --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+    --name=k8sup-certs \
     "${HYPERKUBE_IMAGE_NAME}" \
     "/cp-certs.sh" \
       "${DOMAIN_NAME}" \

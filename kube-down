@@ -90,14 +90,17 @@ function stop_k8s(){
   local APISERVER="$5"
 
   # Drain node in preparation for maintenance.
-  docker run \
-    --net=host \
-    --rm=true \
-    --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
-    "${HYPERKUBE_IMAGE}" \
-    /hyperkube kubectl -s "${APISERVER}" \
-      --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
-      drain "${IPADDR}" --force --ignore-daemonsets --delete-local-data
+  until \
+      docker run \
+        --net=host \
+        --rm=true \
+        --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
+        "${HYPERKUBE_IMAGE}" \
+        /hyperkube kubectl -s "${APISERVER}" \
+          --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+          drain "${IPADDR}" --force --ignore-daemonsets --delete-local-data 2>/dev/null; do
+    sleep 1
+  done
 
   if [[ "${EXIT}" == "true" ]]; then
     # Exit k8s cluster
@@ -114,6 +117,11 @@ function stop_k8s(){
   # Remove k8s system pods conf
   echo '{}' | tee /etc/kubernetes/manifests-multi/master-multi.json &>/dev/null
   echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager-multinode.json &>/dev/null
+
+  docker stop k8sup-kubelet 1>/dev/null || true
+  docker kill $(docker ps -a | grep -E "k8s_.*(kube-addon-manager-|setup).*_kube-system" | awk '{print $1}') 1>/dev/null || true
+  docker stop $(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}') 1>/dev/null || true
+  docker rm -v $(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}') 1>/dev/null || true
 
   echo -n "Waiting for all k8s pods stopped ..." 1>&2
   until [[ "$(docker ps | grep "${HYPERKUBE_IMAGE}" | wc -l)" -le "2" ]]; do
@@ -139,8 +147,8 @@ function exit_etcd(){
     local MEMBER_ID="$(echo "${MEMBER_LIST}" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
     test "${MEMBER_ID}" && curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
     if [[ "${LOCAL_ETCD}" == "true" ]]; then
-      docker stop k8sup-etcd
-      docker rm k8sup-etcd
+      docker stop k8sup-etcd 1>/dev/null
+      docker rm k8sup-etcd 1>/dev/null
       rm -rf "/var/lib/etcd/"*
     fi
   fi
@@ -258,7 +266,7 @@ function main(){
   if [[ "${FORCE}" == "true" ]]; then
     echo "Trying to kill k8s containers..." 1>&2
     docker stop $(docker ps -a | grep -E "k8sup-kubelet" | awk '{print $1}') 1>/dev/null || true
-    docker rm -f -v $(docker ps -a | grep -E "${REGISTRY}/hyperkube|${REGISTRY}/pause|${REGISTRY}/kube-addon-manager" | awk '{print $1}') 1>/dev/null || true
+    docker rm -f -v $(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}') 1>/dev/null || true
     if [[ "${EXIT}" == "true" ]]; then
       exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${LOCAL_ETCD}"
     fi
@@ -282,8 +290,8 @@ function main(){
   fi
 
   echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup..." 1>&2
-  docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null || true
-  docker rm -v $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd" | awk '{print $1}') 1>/dev/null || true
+  docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
+  docker rm -v $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
 
   docker rm -f -v $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
 }
