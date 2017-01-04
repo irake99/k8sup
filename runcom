@@ -5,7 +5,9 @@ function docker(){
 
   local ARGS=""
   for ARG in "$@"; do
-    if [[ "$(echo "${ARG}" | wc -l)" -gt "1" ]]; then
+    if [[ -n "$(echo "${ARG}" | jq . 2>/dev/null)" ]]; then
+      ARGS="${ARGS} \"$(echo ${ARG} | jq -c . | sed "s/\"/\\\\\"/g")\""
+    elif [[ "$(echo "${ARG}" | wc -l)" -gt "1" ]]; then
       ARGS="${ARGS} \"$(echo "${ARG}" | sed "s/\"/\\\\\"/g")\""
     else
       ARGS="${ARGS} ${ARG}"

@@ -2,19 +2,30 @@
 set -e
 
 function remove_node_from_endpoints(){
-  local HYPERKUBE_IMAGE="$1"
-  local APISERVER="$2"
-  local KUBELET_VARLIB="$3"
   local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
+  local HYPERKUBE_IMAGE="$1"
+  local APIHOST="$(echo "$2" | grep -o "${IPPORT_PATTERN}")"
+  local KUBELET_VARLIB="$3"
   local GW_IFACE="$(ip route | grep default | awk '{print $5}')"
   local IPADDR="$(ip addr show dev "${GW_IFACE}" | grep -o "${IPMASK_PATTERN}" | cut -d '/' -f 1)"
+  local APISERVER=""
+
+  if [[ "${APIHOST}" == "127.0.0.1"* ]]; then
+    APISERVER="http://${APIHOST}"
+  elif [[ -n "${APIHOST}" ]]; then
+    iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+    APISERVER="https://10.0.0.1:443"
+  else
+    return 1
+  fi
 
   local NEW_ENDPOINTS="$(docker run \
     --net=host \
     --rm=true \
     --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
     "${HYPERKUBE_IMAGE}" \
-    /hyperkube kubectl -s "${APISERVER}"
+    /hyperkube kubectl -s "${APISERVER}" \
       --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
       get ep kubernetes --namespace=default -o json \
         | jq ".subsets[].addresses[] | select(.ip != \"${IPADDR}\")" \
@@ -34,6 +45,10 @@ function remove_node_from_endpoints(){
       patch ep kubernetes \
       --type='merge' \
       -p "${NEW_PATCH}"
+
+  if [[ -n "$(iptables -w -S -t nat | grep 10.0.0.1/32 | grep "${APIHOST}")" ]]; then
+    iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+  fi
 }
 
 function get_endpoint_amount(){
@@ -71,7 +86,7 @@ function find_an_apiserver(){
     [[ -z "${NODE_LIST}" ]] && { echo "Could not connect to etcd server!" 1>&2; return 1; }
 
     for NODE in ${NODE_LIST}; do
-      if curl ${CERT_OPTS} -m 2 -sf "https://${NODE}:${K8S_PORT}" &>/dev/null; then
+      if curl -k -m 2 -s "https://${NODE}:${K8S_PORT}" &>/dev/null; then
         APISERVER="https://${NODE}:${K8S_PORT}"
         break
       fi
@@ -82,12 +97,25 @@ function find_an_apiserver(){
   echo "${APISERVER}"
 }
 
+# TODO: Exit remote k8s node
 function stop_k8s(){
+  local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
   local IPADDR="$1"
   local ETCD_CLIENT_PORT="$2"
   local KUBELET_VARLIB="$3"
   local HYPERKUBE_IMAGE="$4"
-  local APISERVER="$5"
+  local APIHOST="$(echo "$5" | grep -o "${IPPORT_PATTERN}")"
+  local CONTAINER_IDS=""
+  local APISERVER=""
+
+  if [[ "${APIHOST}" == "127.0.0.1"* ]]; then
+    APISERVER="http://${APIHOST}"
+  elif [[ -n "${APIHOST}" ]]; then
+    iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+    APISERVER="https://10.0.0.1:443"
+  else
+    return 1
+  fi
 
   # Drain node in preparation for maintenance.
   until \
@@ -119,11 +147,14 @@ function stop_k8s(){
   echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager-multinode.json &>/dev/null
 
   docker stop k8sup-kubelet 1>/dev/null || true
-  docker kill $(docker ps -a | grep -E "k8s_.*(kube-addon-manager-|setup).*_kube-system" | awk '{print $1}') 1>/dev/null || true
-  docker stop $(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}') 1>/dev/null || true
-  docker rm -v $(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}') 1>/dev/null || true
+  CONTAINER_IDS="$(docker ps -a | grep -E "k8s_.*(kube-addon-manager-|setup).*_kube-system" | awk '{print $1}')"
+  [[ -n "${CONTAINER_IDS}" ]] && docker kill ${CONTAINER_IDS} 1>/dev/null || true
+  CONTAINER_IDS="$(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}')"
+  [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
+  CONTAINER_IDS="$(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}')"
+  [[ -n "${CONTAINER_IDS}" ]] && docker rm -v ${CONTAINER_IDS} 1>/dev/null || true
 
-  echo -n "Waiting for all k8s pods stopped ..." 1>&2
+  echo -n "Waiting for all k8s pods stopped..." 1>&2
   until [[ "$(docker ps | grep "${HYPERKUBE_IMAGE}" | wc -l)" -le "2" ]]; do
     echo -n "." 1>&2
     sleep 1
@@ -134,6 +165,10 @@ function stop_k8s(){
     docker stop k8sup-kubelet 1>/dev/null || true
     docker rm k8sup-kubelet 1>/dev/null || true
   done
+
+  if [[ -n "$(iptables -w -S -t nat | grep 10.0.0.1/32 | grep "${APIHOST}")" ]]; then
+    iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+  fi
 }
 
 function exit_etcd(){
@@ -146,11 +181,13 @@ function exit_etcd(){
   if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
     local MEMBER_ID="$(echo "${MEMBER_LIST}" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
     test "${MEMBER_ID}" && curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
-    if [[ "${LOCAL_ETCD}" == "true" ]]; then
-      docker stop k8sup-etcd 1>/dev/null
-      docker rm k8sup-etcd 1>/dev/null
-      rm -rf "/var/lib/etcd/"*
-    fi
+  fi
+  if [[ "${LOCAL_ETCD}" == "true" ]]; then
+    docker stop k8sup-etcd 1>/dev/null
+    docker rm k8sup-etcd 1>/dev/null
+    rm -rf "/var/lib/etcd/"*
+  else
+    echo "Node ${IPADDR} has been exited." 1>&2
   fi
 }
 
@@ -231,7 +268,7 @@ function get_options(){
 }
 
 function main(){
-  source ./runcom
+  source "$(dirname "$0")/runcom"
   get_options "$@"
   local EXIT="${EX_EXIT}"
 
@@ -272,8 +309,8 @@ function main(){
     fi
   else
     # Default removing
-    APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")" || exit 1
-    echo "Stopping k8s containers..." 1>&2
+    echo "Stopping k8s containers........." 1>&2
+    APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")"
     stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE}" "${APISERVER}"
     ENDPOINT_AMOUNT="$(get_endpoint_amount "${ETCD_CLIENT_PORT}")" || exit 1
     if [[ "${ENDPOINT_AMOUNT}" -gt "1" ]]; then

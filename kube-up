@@ -244,7 +244,7 @@ function get_API_Servers(){
 }
 
 function main(){
-  source ./runcom
+  source "$(dirname "$0")/runcom"
   get_options "$@"
   local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
   local WORKER="${EX_WORKER}" && unset EX_WORKER

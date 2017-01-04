@@ -29,6 +29,7 @@ function etcd_creator(){
 
   if [[ "${RESTORE_ETCD}" == "true" ]]; then
     local RESTORE_CMD="--force-new-cluster=true"
+    RESTART_WITH_OLD_DATA="true"
   fi
 
   if [[ -d "/var/lib/etcd/member" ]] || [[ -d "/var/lib/etcd/proxy" ]]; then
@@ -70,6 +71,14 @@ function etcd_creator(){
     fi
     curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" -XPUT -d value="${CLUSTER_ID}" 1>/dev/null
   fi
+
+  if [[ "${RESTORE_ETCD}" == "true" ]]; then
+    echo "etcd data has successfully restored, exiting..." 1>&2
+    docker stop k8sup-etcd 1>/dev/null
+    docker rm k8sup-etcd 1>/dev/null
+    docker rm -f k8sup 1>/dev/null
+    exit 0
+  fi
 }
 
 function etcd_follower(){
@@ -106,7 +115,7 @@ function etcd_follower(){
       -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
   fi
 
-  docker pull "${ENV_ETCD_IMAGE}" 1>&2
+  docker pull "${ENV_ETCD_IMAGE}" &>/dev/null
 
   # Check if this node has joined etcd this cluster
   local MEMBERS="$(curl -sf --retry 10 http://${ETCD_NODE}:${CLIENT_PORT}/v2/members)"
@@ -197,6 +206,11 @@ function etcd_follower(){
         sleep 1
     done
   fi
+
+  echo "Waiting for all etcd members ready..." 1>&2
+  until curl -sf -m 1 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
+    sleep 3
+  done
 }
 
 function wait_etcd_cluster_healthy(){
@@ -368,15 +382,14 @@ function rejoin_etcd(){
     rm -rf "/var/lib/etcd/"*
   fi
 
-  DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")"
+  DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
   ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                     | grep -w "clusterID=${CLUSTER_ID}" \
                     | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
 
   # Get an existed etcd member
   for NODE in ${ETCD_NODE_LIST}; do
-    if curl -s -m 10 "${NODE}/health"; then
-#      ETCD_NODE_LIST="$(echo "${ETCD_NODE_LIST}" | sed /^${NODE}$/d)"
+    if curl -s -m 10 "${NODE}/health" &>/dev/null; then
       EXISTED_ETCD_NODE="${NODE}"
       break
     fi
@@ -387,21 +400,16 @@ function rejoin_etcd(){
   fi
 
   # Stop the etcd service in the loacl
-  sh -c 'docker stop k8sup-etcd' >/dev/null 2>&1 || true
-  sh -c 'docker rm k8sup-etcd' >/dev/null 2>&1 || true
+  bash -c 'docker stop k8sup-etcd' 1>/dev/null || true
+  bash -c 'docker rm k8sup-etcd' 1>/dev/null || true
 
   # Join the same etcd cluster again
   etcd_follower "${IPADDR}" "${NODE_NAME}" "${ETCD_NODE_LIST}" "${PROXY}"
 
-  until curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys 1>/dev/null 2>&1; do
-    echo "Waiting for etcd ready..."
-    sleep 1
-  done
-
   # DNS-SD
   local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
-  CLUSTER_ID="$(curl -sf "http://127.0.0.1:${CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
+  CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
   /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
 }
 
@@ -413,7 +421,7 @@ Options:
                              or \"eth0\" (Required option)
 -c, --cluster=CLUSTER_ID     Join a specified cluster
 -v, --version=VERSION        Specify k8s version (Default: 1.5.1)
-    --max-etcd-members=NUM   Maximum etcd member size
+    --max-etcd-members=NUM   Maximum etcd member size (Default: 3)
     --new                    Force to start a new cluster
     --restore                Try to restore etcd data and start a new cluster
     --rejoin-etcd            Re-join the same etcd cluster
@@ -502,10 +510,6 @@ function get_options(){
     export EX_PROXY="off"
   fi
 
-  if [[ "${EX_RESTORE_ETCD}" == "true" ]]; then
-    export EX_NEW_CLUSTER="true"
-  fi
-
   if [[ -z "${EX_NETWORK}" ]] && [[ -z "${EX_REJOIN_ETCD}" ]]; then
     echo "--network (-n) is required, exiting..." 1>&2
     exit 1
@@ -514,6 +518,10 @@ function get_options(){
   if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
     echo "Error! '--new' can not use specified cluster ID, exiting..." 1>&2
     exit 1
+  fi
+
+  if [[ "${EX_RESTORE_ETCD}" == "true" ]]; then
+    export EX_NEW_CLUSTER="true"
   fi
 
   if [[ "${EX_PROXY}" == "on" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
@@ -536,7 +544,7 @@ function get_options(){
 }
 
 function main(){
-  source ./runcom
+  source "$(dirname "$0")/runcom"
   get_options "$@"
 
   local COREOS_REGISTRY="${EX_COREOS_REGISTRY}"
