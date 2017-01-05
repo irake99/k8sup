@@ -95,6 +95,16 @@ function set_node_schedulable(){
   done
 }
 
+function mark_default_iface_ipaddr(){
+  local IPADDR="$1"
+  local ETCD_CLIENT_PORT="$2"
+  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  local GW_IFACE="$(ip route | grep default | awk '{print $5}')"
+  local GW_IPADDR=$(ip addr show dev "${GW_IFACE}" | grep -o "${IPMASK_PATTERN}" | cut -d '/' -f 1)
+
+  curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/default-iface-ipaddr/${IPADDR}" -XPUT -d value="${GW_IPADDR}" 1>/dev/null
+}
+
 function show_usage(){
   USAGE="Usage: ${0##*/} [options...]
 Options:
@@ -234,7 +244,7 @@ function get_API_Servers(){
 
   for KUBE_NODE in ${KUBE_NODE_LIST}; do
     APISERVER="https://${KUBE_NODE}:${APISERVER_PORT}"
-    if curl ${CERT_OPTS} -sf -m 3 "${APISERVER}/healthz" &>/dev/null; then
+    if curl ${CERT_OPTS} -s -k -m 2 "${APISERVER}/healthz" &>/dev/null; then
       APISERVERS="${APISERVERS}","${APISERVER}"
     fi
   done
@@ -433,6 +443,12 @@ function main(){
   done
 
   set_node_schedulable "${IPADDR}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}"
+
+  mark_default_iface_ipaddr "${IPADDR}" "${ETCD_CLIENT_PORT}"
+
+  #TODO: update labels
+
+  echo "kubelet started!" 1>&2
 }
 
 main "$@"

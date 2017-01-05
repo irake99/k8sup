@@ -90,6 +90,7 @@ function etcd_follower(){
   local PROXY="$4"
   local PEER_PORT="2380"
   local ETCD_PATH="k8sup/cluster"
+  local MIN_ETCD_MEMBER_SIZE="1"
   local ETCD_EXISTED_MEMBER_SIZE
   local NODE
 
@@ -109,8 +110,8 @@ function etcd_follower(){
   # Prevent the cap of etcd member size less then 3
   local MAX_ETCD_MEMBER_SIZE="$(curl -s --retry 10 "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" 2>/dev/null \
                                 | jq -r '.node.value')"
-  if [[ "${MAX_ETCD_MEMBER_SIZE}" -lt "3" ]]; then
-    MAX_ETCD_MEMBER_SIZE="3"
+  if [[ "${MAX_ETCD_MEMBER_SIZE}" -lt "${MIN_ETCD_MEMBER_SIZE}" ]]; then
+    MAX_ETCD_MEMBER_SIZE="${MIN_ETCD_MEMBER_SIZE}"
     curl -s "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/k8sup/cluster/max_etcd_member_size" \
       -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
   fi
@@ -347,11 +348,38 @@ function get_ipaddr_and_mask_from_netinfo(){
   echo "${IP_AND_MASK}"
 }
 
+function kube_up(){
+  local CONFIG_FILE="$1"
+  source "${CONFIG_FILE}" || exit 1
+
+  local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
+  local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
+  local REGISTRY="${EX_REGISTRY}" && unset EX_REGISTRY
+  local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
+
+  bash -c 'docker stop k8sup-certs k8sup-kubelet' &>/dev/null || true
+  bash -c 'docker rm k8sup-certs k8sup-kubelet' &>/dev/null || true
+
+  [[ -n "$(docker ps | grep -w 'k8sup-flannel')" ]] \
+  && curl -sf -m 3 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys &>/dev/null \
+  || { echo "etcd or flannel not ready, exiting..." && return 1; }
+
+  echo "Running Kubernetes" 1>&2
+  if [[ -n "${REGISTRY}" ]]; then
+    local REGISTRY_OPTION="--registry=${REGISTRY}"
+  fi
+  if [[ "${FORCED_WORKER}" == "on" ]]; then
+    local FORCED_WORKER_OPT="--forced-worker"
+  fi
+  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT}
+}
+
 function rejoin_etcd(){
   local CONFIG_FILE="$1"
   local PROXY="$2"
-  source "${CONFIG_FILE}" || exit 1
-  [[ -z "${PROXY}" ]] && exit 1
+  source "${CONFIG_FILE}" || return 1
+  [[ -z "${PROXY}" ]] && return 1
 
   local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
@@ -366,7 +394,7 @@ function rejoin_etcd(){
   local ETCD_MEMBER_IP_LIST="$(echo "${ETCD_MEMBER_LIST}" \
           | jq -r '.members[].clientURLs[0]' \
           | grep -o "${IPPORT_PATTERN}")" \
-          || exit 1
+          || return 1
 
   local EXISTED_ETCD_NODE
   local NODE
@@ -377,8 +405,6 @@ function rejoin_etcd(){
   if [[ "${ETCD_MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
     local MEMBER_ID="$(echo "${ETCD_MEMBER_LIST}" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
     test "${MEMBER_ID}" && curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
-    docker stop k8sup-etcd
-    docker rm k8sup-etcd
     rm -rf "/var/lib/etcd/"*
   fi
 
@@ -396,12 +422,12 @@ function rejoin_etcd(){
   done
   if [[ -z "${EXISTED_ETCD_NODE}" ]]; then
     echo "No etcd member available, exiting..." 1>&2
-    exit 1
+    return 1
   fi
 
   # Stop the etcd service in the loacl
-  bash -c 'docker stop k8sup-etcd' 1>/dev/null || true
-  bash -c 'docker rm k8sup-etcd' 1>/dev/null || true
+  bash -c 'docker stop k8sup-etcd' &>/dev/null || true
+  bash -c 'docker rm k8sup-etcd' &>/dev/null || true
 
   # Join the same etcd cluster again
   etcd_follower "${IPADDR}" "${NODE_NAME}" "${ETCD_NODE_LIST}" "${PROXY}"
@@ -424,7 +450,9 @@ Options:
     --max-etcd-members=NUM   Maximum etcd member size (Default: 3)
     --new                    Force to start a new cluster
     --restore                Try to restore etcd data and start a new cluster
+    --restart                Restart etcd and k8s services
     --rejoin-etcd            Re-join the same etcd cluster
+    --start-kube-svcs-only   Try to start kubernetes services (Assume etcd and flannel are ready)
     --worker                 Force to run as k8s worker and etcd proxy
     --debug                  Enable debug mode
 -r, --registry=REGISTRY      Registry of docker image
@@ -438,7 +466,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:v:r:h"
-  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,rejoin-etcd,registry:,help"
+  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,registry:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -471,8 +499,16 @@ function get_options(){
               export EX_RESTORE_ETCD="true"
               shift
               ;;
+             --restart)
+              export EX_RESTART="true"
+              shift
+              ;;
              --rejoin-etcd)
               export EX_REJOIN_ETCD="true"
+              shift
+              ;;
+             --start-kube-svcs-only)
+              export EX_START_KUBE_SVCS_ONLY="true"
               shift
               ;;
              --debug)
@@ -510,9 +546,12 @@ function get_options(){
     export EX_PROXY="off"
   fi
 
-  if [[ -z "${EX_NETWORK}" ]] && [[ -z "${EX_REJOIN_ETCD}" ]]; then
-    echo "--network (-n) is required, exiting..." 1>&2
-    exit 1
+  if [[ -z "${EX_NETWORK}" ]] \
+    && [[ -z "${EX_REJOIN_ETCD}" ]] \
+    && [[ -z "${EX_START_KUBE_SVCS_ONLY}" ]] \
+    && [[ -z "${EX_RESTART}" ]]; then
+      echo "--network (-n) is required, exiting..." 1>&2
+      exit 1
   fi
 
   if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
@@ -564,7 +603,21 @@ function main(){
   # Just re-join etcd cluster only
   if [[ "${REJOIN_ETCD}" == "true" ]]; then
     rejoin_etcd "${CONFIG_FILE}" "${PROXY}"
-    exit 0
+    exit "$?"
+  fi
+
+  local START_KUBE_SVCS_ONLY="${EX_START_KUBE_SVCS_ONLY}" && unset EX_START_KUBE_SVCS_ONLY
+  if [[ "${START_KUBE_SVCS_ONLY}" == "true" ]]; then
+    kube_up "${CONFIG_FILE}"
+    exit "$?"
+  fi
+
+  local RESTART="${EX_RESTART}" && unset EX_RESTART
+  if [[ "${RESTART}" == "true" ]]; then
+    /go/kube-down --stop-k8s-only
+    rejoin_etcd "${CONFIG_FILE}" "${PROXY}"
+    kube_up "${CONFIG_FILE}"
+    exit "$?"
   fi
 
   local IP_AND_MASK=""
@@ -715,6 +768,7 @@ function main(){
   # Write configure to file
   echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
   echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
+  echo "export EX_FORCED_WORKER=${PROXY}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_INSECURE_PORT=${K8S_INSECURE_PORT}" >> "${CONFIG_FILE}"
@@ -725,14 +779,7 @@ function main(){
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
   echo "export EX_HYPERKUBE_IMAGE=${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" >> "${CONFIG_FILE}"
 
-  # echo "Running Kubernetes"
-  if [[ -n "${K8S_REGISTRY}" ]]; then
-    local REGISTRY_OPTION="--registry=${K8S_REGISTRY}"
-  fi
-  if [[ "${PROXY}" == "on" ]]; then
-    local FORCED_WORKER_OPT="--forced-worker"
-  fi
-  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT}
+  kube_up "${CONFIG_FILE}"
 
   echo "Kubernetes started, hold..." 1>&2
   tail -f /dev/null
