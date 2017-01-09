@@ -51,6 +51,11 @@
             "name": "addons-heapster",
             "mountPath": "/etc/kubernetes/addons/multinode/heapster",
             "readOnly": false
+          },
+          {
+            "name": "addons-ntpserver",
+            "mountPath": "/etc/kubernetes/addons/multinode/ntpserver",
+            "readOnly": false
           }
         ]
       }
@@ -70,6 +75,12 @@
         "name": "addons-heapster",
         "hostPath": {
           "path": "/etc/kubernetes/addons/multinode/heapster"
+        }
+      },
+      {
+        "name": "addons-ntpserver",
+        "hostPath": {
+          "path": "/etc/kubernetes/addons/multinode/ntpserver"
         }
       }
     ]

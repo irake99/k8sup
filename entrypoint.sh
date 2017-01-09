@@ -1,5 +1,8 @@
 #!/bin/bash
 set -e
+source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting...' >&2 && exit 1 ; }
+
+#---
 
 function get_alive_etcd_member_size(){
   local MEMBER_LIST="$1"
@@ -270,38 +273,6 @@ function flanneld(){
     /opt/bin/flanneld \
       --etcd-endpoints="http://${IPADDR}:${ETCD_CLIENT_PORT}" \
       --iface="${IPADDR}"
-}
-
-# Convert CIDR to submask format. e.g. 23 => 255.255.254.0
-function cidr2mask(){
-   # Number of args to shift, 255..255, first non-255 byte, zeroes
-   set -- $(( 5 - ($1 / 8) )) 255 255 255 255 $(( (255 << (8 - ($1 % 8))) & 255 )) 0 0 0
-   [ $1 -gt 1 ] && shift $1 || shift
-   echo ${1-0}.${2-0}.${3-0}.${4-0}
-}
-
-# Convert IP address from decimal to heximal. e.g. 192.168.1.200 => 0xC0A801C8
-function addr2hex(){
-  local IPADDR="$1"
-  echo "0x$(printf '%02X' ${IPADDR//./ } ; echo)"
-}
-
-# Convert IP/Mask to SubnetID/Mask. e.g. 192.168.1.200/24 => 192.168.0.0/23
-function get_subnet_id_and_mask(){
-  local ADDR_AND_MASK="$1"
-  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
-  echo "${ADDR_AND_MASK}" | grep -o "${IPMASK_PATTERN}" &>/dev/null || { echo "Wrong Address/Mask pattern, exiting..." 1>&2; exit 1; }
-
-  local ADDR="$(echo "${ADDR_AND_MASK}" | cut -d '/' -f 1)"
-  local MASK="$(echo "${ADDR_AND_MASK}" | cut -d '/' -f 2)"
-
-  local HEX_ADDR=$(addr2hex "${ADDR}")
-  local HEX_MASK=$(addr2hex $(cidr2mask "${MASK}"))
-  local HEX_NETWORK=$(printf '%02X' $((${HEX_ADDR} & ${HEX_MASK})))
-
-  local NETWORK=$(printf '%d.' 0x${HEX_NETWORK:0:2} 0x${HEX_NETWORK:2:2} 0x${HEX_NETWORK:4:2} 0x${HEX_NETWORK:6:2})
-  SUBNET_ID="${NETWORK:0:-1}"
-  echo "${SUBNET_ID}/${MASK}"
 }
 
 function get_ipaddr_and_mask_from_netinfo(){
@@ -583,7 +554,6 @@ function get_options(){
 }
 
 function main(){
-  source "$(dirname "$0")/runcom"
   get_options "$@"
 
   local COREOS_REGISTRY="${EX_COREOS_REGISTRY}"

@@ -1,5 +1,8 @@
 #!/bin/bash
 set -e
+source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting...' >&2 && exit 1 ; }
+
+#---
 
 function set_role_labels(){
   local WORKER="$1"
@@ -254,7 +257,6 @@ function get_API_Servers(){
 }
 
 function main(){
-  source "$(dirname "$0")/runcom"
   get_options "$@"
   local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
   local WORKER="${EX_WORKER}" && unset EX_WORKER
@@ -327,6 +329,13 @@ function main(){
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
+
+  local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
+  local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
+  sed -i "s|K8SUP_SUBNET_ID|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntpserver/*.yaml
+  sed -i "s|K8SUP_NTPSERVER_CLUSTER_IP|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntpserver/*.yaml
+  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntpserver/*.yaml
+  sed -i "s|K8SUP_NTPSERVER_VERSION|0.0.1|g" "${KUBE_ADDONS_CONF_PATH/}"/ntpserver/*.yaml
 
   echo "Cleaning up kube-proxy old iptables rules..." 1>&2
   docker run \
