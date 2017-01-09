@@ -361,7 +361,8 @@ function rejoin_etcd(){
   local SUBNET_ID_AND_MASK="${EX_SUBNET_ID_AND_MASK}" && unset EX_SUBNET_ID_AND_MASK
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
-  local ETCD_MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+  local ETCD_MEMBER_LIST="$(curl -sf http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+  [[ -z "${ETCD_MEMBER_LIST}" ]] && return 1
   local ETCD_MEMBER_IP_LIST="$(echo "${ETCD_MEMBER_LIST}" \
           | jq -r '.members[].clientURLs[0]' \
           | grep -o "${IPPORT_PATTERN}")" \
@@ -371,12 +372,17 @@ function rejoin_etcd(){
   local NODE
   local DISCOVERY_RESULTS
   local ETCD_NODE_LIST
+  local ETCD_MEMBER_SIZE
+
+  ETCD_MEMBER_SIZE="$(echo "${ETCD_MEMBER_LIST}" | jq '.[] | length')"
 
   # If this node was a etcd member, exit from the cluster
-  if [[ "${ETCD_MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+  if [[ "${ETCD_MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]] && [[ "${ETCD_MEMBER_SIZE}" -gt "1" ]]; then
     local MEMBER_ID="$(echo "${ETCD_MEMBER_LIST}" | jq -r ".members[] | select(contains({clientURLs: [\"/${IPADDR}:\"]})) | .id")"
     test "${MEMBER_ID}" && curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
     rm -rf "/var/lib/etcd/"*
+  elif [[ "${ETCD_MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+    return 1
   fi
 
   DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
@@ -585,7 +591,7 @@ function main(){
   local RESTART="${EX_RESTART}" && unset EX_RESTART
   if [[ "${RESTART}" == "true" ]]; then
     /go/kube-down --stop-k8s-only
-    rejoin_etcd "${CONFIG_FILE}" "${PROXY}"
+    rejoin_etcd "${CONFIG_FILE}" "${PROXY}" || true
     kube_up "${CONFIG_FILE}"
     exit "$?"
   fi
@@ -703,7 +709,6 @@ function main(){
     fi
 
     echo "Copy cni plugins"
-#   cp -rf bin /opt/cni
     mkdir -p /etc/cni/net.d/
     cp -f /go/cni-conf/10-containernet.conf /etc/cni/net.d/
     cp -f /go/cni-conf/99-loopback.conf /etc/cni/net.d/
