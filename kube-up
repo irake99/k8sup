@@ -275,6 +275,7 @@ function main(){
   local IP_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local MASTER_PUB_DN="kubernetes-public.default.svc.cluster.local"
   local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN}"
+  local KUBEDNS_CLUSTER_IP="10.0.0.10"
   local KUBEDNS
   local KUBEDNS_OPTION
   local CERT_DIRS
@@ -442,7 +443,7 @@ function main(){
           --network-plugin=cni \
           --network-plugin-dir=/etc/cni/net.d \
           --pod-infra-container-image=${REGISTRY}/pause-${ARCH}:3.0 \
-          --cluster-dns=10.0.0.10 \
+          --cluster-dns=${KUBEDNS_CLUSTER_IP} \
           --cluster-domain=cluster.local \
           --node-labels="$(set_role_labels "${WORKER}" "${FORCED_WORKER}")"
 
@@ -459,6 +460,9 @@ function main(){
   set_node_schedulable "${IPADDR}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}"
 
   mark_default_iface_ipaddr "${IPADDR}" "${ETCD_CLIENT_PORT}"
+
+  # Set routing table to make host can access cni services using cluster IP
+  cni_svc_route_maintainer "10.0.0.0/24" &
 
   #TODO: update labels
 
