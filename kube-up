@@ -348,13 +348,14 @@ function main(){
       --cleanup-iptables
 
   echo "Getting or generating certs..." 1>&2
+  [[ "$-" == *x* ]] && local DEBUG_CMD="bash -x"
   docker run \
     --net=host \
     --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
     --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
     --name=k8sup-certs \
     "${HYPERKUBE_IMAGE_NAME}" \
-    "/cp-certs.sh" \
+    "${DEBUG_CMD} /cp-certs.sh" \
       "${DOMAIN_NAME}" \
       "DONT_HOLD" 1>/dev/null
 
