@@ -279,12 +279,16 @@ function main(){
   local KUBEDNS_OPTION
   local CERT_DIRS
   local CERT_DIR
+  local EMPTY_DIRS
 
   export REGISTRY="${EX_REGISTRY}"
   export ARCH=amd64
   export K8S_VERSION="${EX_K8S_VERSION}"
   export ADDON_MGR_VER=v6.1
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
+
+  # Erase old k8s emptyDir
+  for EMPTY_DIRS in $(find "/var/lib/kubelet/pods" -type d -name 'kubernetes.io~empty-dir'); do rm -rf "${EMPTY_DIRS}"; done
 
   # Reset node labels and exit
   if [[ "${RESET_LABELS}" == "true" ]]; then
