@@ -427,6 +427,10 @@ function main(){
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
 
+  # Make sure that this host will use the right interface while accessing API server
+  local GW_IFACE="$(ip route | grep default | awk '{print $5}')"
+  ip route add 10.0.0.1/32 dev "${GW_IFACE}" &>/dev/null || true
+
   echo "Running Kubernetes ..."
   docker run \
       --volume=/:/rootfs:ro \
