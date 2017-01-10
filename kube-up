@@ -364,10 +364,11 @@ function main(){
 
   local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
   local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
+  [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local NTPSERVER_REGISTRY="wcen" || local NTPSERVER_REGISTRY="${REGISTRY}"
   sed -i "s|K8SUP_SUBNET_ID|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
   sed -i "s|K8SUP_NTPSERVER_CLUSTER_IP|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
-  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
-  sed -i "s|K8SUP_NTPSERVER_VERSION|0.0.1|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|NTPSERVER_REGISTRY|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|K8SUP_NTPSERVER_VERSION|latest|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
 
   sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_CONF_PATH}"/*.json
   sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
