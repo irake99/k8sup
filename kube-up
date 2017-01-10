@@ -443,7 +443,17 @@ function main(){
   local RBD_OPTIONS="$(rbd_env_detector)"
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
-  iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+  # Remove old/duplicate iptables rules
+  while read -r RM_RULE_CMD; do
+    bash -c "${RM_RULE_CMD}"
+  done < <(iptables-save \
+           | grep 'comment k8sup' \
+           | grep 10.0.0.1/32 \
+           | sed "s/^-A/-D/g" \
+           | sed -n 's|\(^.*$\)|iptables -w -t nat \1|p')
+  # Add new a rule
+  iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 \
+    -m comment --comment "k8sup" -j DNAT --to-dest "${APIHOST}"
 
   # Make sure that this host will use the right interface while accessing API server
   local GW_IFACE="$(ip route | grep default | awk '{print $5}')"
@@ -495,7 +505,8 @@ function main(){
   done
 
   echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
-  until iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"; do
+  until iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 \
+         -m comment --comment "k8sup" -j DNAT --to-dest "${APIHOST}"; do
     sleep 1
   done
 
