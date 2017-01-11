@@ -3,7 +3,7 @@ MAINTAINER hsfeng@gmail.com
 
 RUN apt-get -y update
 
-RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime psmisc
+RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime psmisc ntpdate
 
 # ToDo: Remove /go/heapster-1.2.0 (30MB) to save space?
 RUN mkdir -p /go/downloads && curl -sfk -o /go/downloads/heapster.tar.gz -L https://github.com/kubernetes/heapster/archive/v1.2.0.tar.gz && tar xfz /go/downloads/heapster.tar.gz && rm -rf /go/downloads/heapster.tar.gz

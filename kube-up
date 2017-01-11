@@ -77,6 +77,24 @@ function rbd_env_detector(){
   return 0
 }
 
+function ntp_updater(){
+  local K8SUP_NTPSERVER_CLUSTER_IP="$1"
+  local TIME_GAP="$2"
+  local RESULT
+
+  until ntpdate "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>/dev/null; do
+    sleep 1
+  done
+  echo "NTP client synchronized!" 1>&2
+  sleep "${TIME_GAP}"
+
+  while true; do
+    RESULT="$(ntpdate "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>&1)" || true
+    [[ "$-" == *x* ]] && echo "${RESULT}" 1>&2
+    sleep "${TIME_GAP}"
+  done
+}
+
 # Try to set this node as schedulable
 function set_node_schedulable(){
   local IPADDR="$1"
@@ -344,6 +362,14 @@ function main(){
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
   cp -rf /go/heapster-1.2.0/deploy/kube-config/influxdb "${KUBE_ADDONS_CONF_PATH}/heapster"
 
+  local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
+  local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
+  [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local NTPSERVER_REGISTRY="wcen" || local NTPSERVER_REGISTRY="${REGISTRY}"
+  sed -i "s|K8SUP_SUBNET_ID|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|K8SUP_NTPSERVER_CLUSTER_IP|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|NTPSERVER_REGISTRY|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|K8SUP_NTPSERVER_VERSION|latest|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+
   sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_CONF_PATH}"/*.json
   sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
   sed -i "s|ARCH|${ARCH}|g" "${KUBE_CONF_PATH}"/*.json
@@ -354,13 +380,6 @@ function main(){
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
-
-  local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
-  local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
-  sed -i "s|K8SUP_SUBNET_ID|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntpserver/*.yaml
-  sed -i "s|K8SUP_NTPSERVER_CLUSTER_IP|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntpserver/*.yaml
-  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntpserver/*.yaml
-  sed -i "s|K8SUP_NTPSERVER_VERSION|0.0.1|g" "${KUBE_ADDONS_CONF_PATH/}"/ntpserver/*.yaml
 
   echo "Cleaning up kube-proxy old iptables rules..." 1>&2
   docker run \
@@ -425,7 +444,17 @@ function main(){
   local RBD_OPTIONS="$(rbd_env_detector)"
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
-  iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
+  # Remove old/duplicate iptables rules
+  while read -r RM_RULE_CMD; do
+    bash -c "${RM_RULE_CMD}"
+  done < <(iptables-save \
+           | grep 'comment k8sup' \
+           | grep 10.0.0.1/32 \
+           | sed "s/^-A/-D/g" \
+           | sed -n 's|\(^.*$\)|iptables -w -t nat \1|p')
+  # Add new a rule
+  iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 \
+    -m comment --comment "k8sup" -j DNAT --to-dest "${APIHOST}"
 
   # Make sure that this host will use the right interface while accessing API server
   local GW_IFACE="$(ip route | grep default | awk '{print $5}')"
@@ -477,7 +506,8 @@ function main(){
   done
 
   echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
-  until iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"; do
+  until iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 \
+         -m comment --comment "k8sup" -j DNAT --to-dest "${APIHOST}"; do
     sleep 1
   done
 
@@ -488,6 +518,7 @@ function main(){
 
   # Set routing table to make host can access cni services using cluster IP
   cni_svc_route_maintainer "10.0.0.0/24" &
+  ntp_updater "${K8SUP_NTPSERVER_CLUSTER_IP}" "300" &
 
   echo "kubelet started!" 1>&2
 }

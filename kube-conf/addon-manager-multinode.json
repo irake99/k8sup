@@ -54,7 +54,7 @@
           },
           {
             "name": "addons-ntpserver",
-            "mountPath": "/etc/kubernetes/addons/multinode/ntpserver",
+            "mountPath": "/etc/kubernetes/addons/multinode/ntp-server",
             "readOnly": false
           }
         ]
@@ -80,7 +80,7 @@
       {
         "name": "addons-ntpserver",
         "hostPath": {
-          "path": "/etc/kubernetes/addons/multinode/ntpserver"
+          "path": "/etc/kubernetes/addons/multinode/ntp-server"
         }
       }
     ]
