@@ -16,11 +16,76 @@ function set_role_labels(){
   echo "${ROLE_LABELS}"
 }
 
+function get_container_dirpath_from_host_volumes(){
+  local HOST_DIR_PATH="$1"
+  local VOLUMES="$2"
+  local EXCLUDE_DIR_OPTION
+  local VOL_SRC
+  local VOL_DEST
+  local CONTAINER_DIR_PATH
+  local IFS
+  local IDX
+  local DROP
+  local AVAILABLE_VOLUME
+  local VOL
+  local DIR
+  local PATH_ADD
+  local TEST_FILE
+
+  # Find the volume that include the expected host path
+  [[ -z "${HOST_DIR_PATH}" ]] && return 1
+  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
+  for VOL in ${VOLUMES}; do
+    VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1 | sed "s|/$||g")"
+    VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2 | sed "s|/$||g")"
+
+    [[ "${VOL_SRC}" == "/" ]] && { echo "${VOL_DEST}${HOST_DIR_PATH}" | sed "s|//|/|g" | sed "s|/$||g"; return 0; }
+
+    DROP="false"
+    IDX="1"
+    IFS='/' read -ra DIRS <<< ${VOL_SRC}
+    for DIR in "${DIRS[@]}"; do
+      if [[ "${DIR}" != "$(echo "${HOST_DIR_PATH}" | cut -d '/' -f "${IDX}")" ]]; then
+        DROP="true"
+        break
+      fi
+      ((IDX++))
+    done
+    # Check if it is read-only
+    if [[ "${DROP}" == "false" ]] \
+       && TEST_FILE="$(uuidgen -r)" \
+       && touch "${VOL_DEST}/${TEST_FILE}" 2>/dev/null; then
+      rm "${VOL_DEST}/${TEST_FILE}"
+      AVAILABLE_VOLUME="${VOL}"
+      break
+    fi
+  done
+
+  # Get the container path that equal the expected host path
+  if [[ -n "${AVAILABLE_VOLUME}" ]]; then
+    VOL_SRC="$(echo "${AVAILABLE_VOLUME}" | cut -d ':' -f 1 | sed "s|/$||g")"
+    VOL_DEST="$(echo "${AVAILABLE_VOLUME}" | cut -d ':' -f 2 | sed "s|/$||g")"
+    IDX="1"
+    IFS='/' read -ra DIRS <<< "${HOST_DIR_PATH}"
+    for DIR in "${DIRS[@]}"; do
+      if [[ "${DIR}" != "$(echo "${VOL_SRC}" | cut -d '/' -f "${IDX}")" ]]; then
+        PATH_ADD="${PATH_ADD}/${DIR}"
+      fi
+      ((IDX++))
+    done
+    echo "$(echo "${VOL_DEST}/${PATH_ADD}" | sed "s|//|/|g" | sed "s|/$||g")"
+    return 0
+  fi
+
+  return 1
+}
+
 function get_filepath_from_volumes(){
   local FILENAME="$1"
   local VOLUMES="$2"
   local EXECUTABLE="$3"
   local EXCLUDE_DIR_OPTION
+  local VOL
   local VOL_SRC
   local VOL_DEST
   local FILEPATH
@@ -32,7 +97,7 @@ function get_filepath_from_volumes(){
     VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1)"
     VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
     [[ -d "${VOL_DEST}/var/lib/docker" ]] && EXCLUDE_DIR_OPTION="-not -path */var/lib/docker/*" || EXCLUDE_DIR_OPTION=""
-    FILEPATH="$(find "${VOL_DEST}" ${EXECUTABLE_OPTION} -type f ${EXCLUDE_DIR_OPTION} \
+    FILEPATH="$(find "${VOL_DEST}" ${EXECUTABLE_OPTION} -type f ${EXCLUDE_DIR_OPTION} ! -size 0 \
                 -name "${FILENAME}" -o -type l -name "${FILENAME}" 2>/dev/null | head -n 1)"
     if [[ -n "${FILEPATH}" ]]; then
       if [[ -f "${VOL_DEST}" ]]; then
@@ -47,24 +112,43 @@ function get_filepath_from_volumes(){
   return 1
 }
 
-function rbd_env_detector(){
-  local RBD_CMD_PATH
-  local RBD_KO_PATH
-  local MODPROBE_CMD_PATH
-  local DOCKER_CMD_PATH
-  local LIBDEVMAPPER_SO_PATH
-  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
+function update_master_multi_rbd_mount(){
+  local ARGS=("$@")
+  local RBD_CMD_PATH="${ARGS[0]}"
+  local DOCKER_CMD_PATH="${ARGS[3]}"
+  local MASTER_MULTI_JSON_FILE_PATH="${ARGS[4]}"
+  local NEW_MASTER_MULTI_VOLUME_MOUNTS
+  local NEW_MASTER_MULTI_VOLUMES
+  local NEW_MASTER_MULTI_JSON
+  [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
 
-  [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
-    && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
-    && RBD_CMD_PATH="$(get_filepath_from_volumes "rbd" "${VOLUMES}" "true")" \
-    && RBD_KO_PATH="$(get_filepath_from_volumes "rbd.ko" "${VOLUMES}")" \
-    && MODPROBE_CMD_PATH="$(get_filepath_from_volumes "modprobe" "${VOLUMES}" "true")" \
-    && DOCKER_CMD_PATH="$(get_filepath_from_volumes "docker" "$(echo "${VOLUMES}" | grep "/bin")" "true")" \
-    && LIBDEVMAPPER_SO_PATH="$(get_filepath_from_volumes "libdevmapper.so.*" "$(echo "${VOLUMES}" | grep "/usr/lib")")" \
-    || { echo "RBD mounting is not available on this host." 1>&2 && return 1; }
+  NEW_MASTER_MULTI_VOLUME_MOUNTS="$(echo '[]' \
+                   | jq ". |= .+ [{\"name\":\"rbd\",\"mountPath\":\"/bin/rbd\"}]" \
+                   | jq ". |= .+ [{\"name\":\"usr-lib\",\"mountPath\":\"/host/lib\"}]" \
+                   | jq ". |= .+ [{\"name\":\"docker\",\"mountPath\":\"/bin/docker\"}]" \
+                   | jq ". |= .+ [{\"name\":\"docker-sock\",\"mountPath\":\"/var/run/docker.sock\"}]")"
+  NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
+             | jq ". |= .+ [{\"name\":\"rbd\",\"hostPath\":{\"path\":\"${RBD_CMD_PATH}\"}}]" \
+             | jq ". |= .+ [{\"name\":\"usr-lib\",\"hostPath\":{\"path\":\"/usr/lib/\"}}]" \
+             | jq ". |= .+ [{\"name\":\"docker\",\"hostPath\":{\"path\":\"${DOCKER_CMD_PATH}\"}}]" \
+             | jq ". |= .+ [{\"name\":\"docker-sock\",\"hostPath\":{\"path\":\"/var/run/docker.sock\"}}]")"
+  NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
+    | jq ".spec.containers[0].volumeMounts |= .+ ${NEW_MASTER_MULTI_VOLUME_MOUNTS}" \
+    | jq ".spec.volumes |= .+ ${NEW_MASTER_MULTI_VOLUMES}" \
+    | jq ".spec.containers[1].command |= .+ [\"--service-node-port-range=1-32767\"]" \
+    | sed "s|\"--admission-control=\(.*\)\",|\"--admission-control=\1,DefaultStorageClass\",|g")"
+  [[ -z "${NEW_MASTER_MULTI_JSON}" ]] || [[ "${NEW_MASTER_MULTI_JSON}" == "null" ]] && return 1
 
-  echo "RBD mounting is available on this host." 1>&2
+  echo "${NEW_MASTER_MULTI_JSON}" > "${MASTER_MULTI_JSON_FILE_PATH}"
+}
+
+function make_rbd_docker_option(){
+  local ARGS=("$@")
+  local RBD_CMD_PATH="${ARGS[0]}"
+  local RBD_KO_PATH="${ARGS[1]}"
+  local MODPROBE_CMD_PATH="${ARGS[2]}"
+  local DOCKER_CMD_PATH="${ARGS[3]}"
+  [[ -z "${RBD_CMD_PATH}" ]] && return 1
 
   local RBD_OPTIONS="--volume=${RBD_CMD_PATH}:/bin/rbd:ro \
         --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
@@ -74,6 +158,42 @@ function rbd_env_detector(){
         --volume=/lib/modules:/lib/modules:ro"
 
   echo "${RBD_OPTIONS}"
+}
+
+function rbd_env_detector(){
+  local RBD_CMD_PATH
+  local RBD_KO_PATH
+  local MODPROBE_CMD_PATH
+  local DOCKER_CMD_PATH
+  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
+  local DEFAULT_RBD_CMD_HOST_PATH="/opt/bin"
+  local RBD_CMD_CONTAINER_PATH
+
+  [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
+    && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
+    && RBD_KO_PATH="$(get_filepath_from_volumes "rbd.ko" "${VOLUMES}")" \
+    && MODPROBE_CMD_PATH="$(get_filepath_from_volumes "modprobe" "${VOLUMES}" "true")" \
+    && DOCKER_CMD_PATH="$(get_filepath_from_volumes "docker" "$(echo "${VOLUMES}" | grep "/bin")" "true")" \
+    || { echo "RBD mounting is not available on this host." 1>&2 && return 1; }
+
+    if ! RBD_CMD_PATH="$(get_filepath_from_volumes "rbd" "${VOLUMES}" "true")"; then
+      # If the existing rbd command is not found, touch the empty executable file to the default rbd command host path
+      # and mount into k8s components then let other container to replace it.
+      if RBD_CMD_CONTAINER_PATH="$(get_container_dirpath_from_host_volumes "${DEFAULT_RBD_CMD_HOST_PATH}" "${VOLUMES}")/rbd"; then
+        touch "${RBD_CMD_CONTAINER_PATH}" 2>/dev/null \
+          || { echo "Could not write \"${DEFAULT_RBD_CMD_HOST_PATH}\", RBD mounting is not available on this host."; return 1; }
+        chmod +x "${RBD_CMD_CONTAINER_PATH}"
+        echo "Need somebody to copy RBD command to the host path: \"${DEFAULT_RBD_CMD_HOST_PATH}/rbd\" who needs to use RBD service." 1>&2
+        RBD_CMD_PATH="${DEFAULT_RBD_CMD_HOST_PATH}/rbd"
+      else
+        echo "Could not find any writable volume mount from the host path: \"${DEFAULT_RBD_CMD_HOST_PATH}\", RBD mounting is not available on this host." 1>&2
+        return 1
+      fi
+    fi
+
+  echo "RBD mounting is available on this host." 1>&2
+  echo "${RBD_CMD_PATH}" "${RBD_KO_PATH}" "${MODPROBE_CMD_PATH}" "${DOCKER_CMD_PATH}"
+
   return 0
 }
 
@@ -327,7 +447,8 @@ function main(){
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
 
   # Erase old k8s emptyDir
-  for EMPTY_DIRS in $(find "/var/lib/kubelet/pods" -type d -name 'kubernetes.io~empty-dir'); do rm -rf "${EMPTY_DIRS}"; done
+  [[ -d "/var/lib/kubelet/pods" ]] \
+    && for EMPTY_DIRS in $(find "/var/lib/kubelet/pods" -type d -name 'kubernetes.io~empty-dir'); do rm -rf "${EMPTY_DIRS}"; done
 
   # Reset node labels and exit
   if [[ "${RESET_LABELS}" == "true" ]]; then
@@ -441,7 +562,11 @@ function main(){
     docker rm k8sup-kubelet 1>/dev/null || true
   done
 
-  local RBD_OPTIONS="$(rbd_env_detector)"
+  local RBD_PATHS
+  if RBD_PATHS=($(rbd_env_detector)); then
+    local RBD_OPTIONS_KUBELET="$(make_rbd_docker_option "${RBD_PATHS[@]}")"
+    update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
+  fi
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   # Remove old/duplicate iptables rules
@@ -476,7 +601,7 @@ function main(){
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
       ${KUBEDNS_OPTION} \
-      ${RBD_OPTIONS} \
+      ${RBD_OPTIONS_KUBELET} \
       --net=host \
       --privileged=true \
       --pid=host \
