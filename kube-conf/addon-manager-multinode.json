@@ -56,6 +56,11 @@
             "name": "addons-ntpserver",
             "mountPath": "/etc/kubernetes/addons/multinode/ntp-server",
             "readOnly": false
+          },
+          {
+            "name": "service-addons",
+            "mountPath": "/etc/kubernetes/addons/multinode/service-addons.yaml",
+            "readOnly": false
           }
         ]
       }
@@ -81,6 +86,12 @@
         "name": "addons-ntpserver",
         "hostPath": {
           "path": "/etc/kubernetes/addons/multinode/ntp-server"
+        }
+      },
+      {
+        "name": "service-addons",
+        "hostPath": {
+          "path": "/etc/kubernetes/addons/multinode/service-addons.yaml"
         }
       }
     ]

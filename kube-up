@@ -481,6 +481,7 @@ function main(){
   cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml "${KUBELET_VARLIB}/kubeconfig"
   cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
+  cp -f /go/service-addons.sh "${KUBE_ETC}/"
   cp -rf /go/heapster-1.2.0/deploy/kube-config/influxdb "${KUBE_ADDONS_CONF_PATH}/heapster"
 
   local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
@@ -501,6 +502,7 @@ function main(){
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
+  sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
 
   echo "Cleaning up kube-proxy old iptables rules..." 1>&2
   docker run \
