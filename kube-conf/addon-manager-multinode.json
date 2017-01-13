@@ -49,7 +49,7 @@
           },
           {
             "name": "addons-heapster",
-            "mountPath": "/etc/kubernetes/addons/multinode/heapster",
+            "mountPath": "/etc/kubernetes/addons/multinode/heapster-influxdb",
             "readOnly": false
           },
           {
@@ -79,7 +79,7 @@
       {
         "name": "addons-heapster",
         "hostPath": {
-          "path": "/etc/kubernetes/addons/multinode/heapster"
+          "path": "/etc/kubernetes/addons/multinode/heapster-influxdb"
         }
       },
       {

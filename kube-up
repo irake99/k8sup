@@ -482,7 +482,6 @@ function main(){
   cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
   cp -f /go/service-addons.sh "${KUBE_ETC}/"
-  cp -rf /go/heapster-1.2.0/deploy/kube-config/influxdb "${KUBE_ADDONS_CONF_PATH}/heapster"
 
   local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
   local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
@@ -492,17 +491,21 @@ function main(){
   sed -i "s|NTPSERVER_REGISTRY|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
   sed -i "s|K8SUP_NTPSERVER_VERSION|latest|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
 
-  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_CONF_PATH}"/*.json
-  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
+  [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local KUBERNETES_REGISTRY="kubernetes" || local KUBERNETES_REGISTRY="${REGISTRY}"
+  sed -i "s|\bREGISTRY\b|${REGISTRY}|g" "${KUBE_CONF_PATH}"/*.json
+  sed -i "s|\bREGISTRY\b|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
+  sed -i "s|\bREGISTRY\b|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH}/heapster-influxdb"/*.yaml
+  sed -i "s|KUBERNETES_REGISTRY|${KUBERNETES_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH}/heapster-influxdb"/*.yaml
   sed -i "s|ARCH|${ARCH}|g" "${KUBE_CONF_PATH}"/*.json
   sed -i "s|ARCH|${ARCH}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
-  sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_CONF_PATH}"/*.json
-  sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
+  sed -i "s|\bVERSION\b|v${K8S_VERSION}|g" "${KUBE_CONF_PATH}"/*.json
+  sed -i "s|\bVERSION\b|v${K8S_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
   sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
   sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
-  sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
+  sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_ADDONS_CONF_PATH}"/*.yaml
+  sed -i "s|^  labels:|  labels:\n    kubernetes.io/cluster-service: 'true'|g" "${KUBE_ADDONS_CONF_PATH}/heapster-influxdb"/*-controller.yaml
 
   echo "Cleaning up kube-proxy old iptables rules..." 1>&2
   docker run \
