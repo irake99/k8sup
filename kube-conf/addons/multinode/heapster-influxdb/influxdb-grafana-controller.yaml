@@ -3,6 +3,7 @@ kind: ReplicationController
 metadata:
   labels:
     name: influxGrafana
+    kubernetes.io/cluster-service: 'true'
   name: influxdb-grafana
   namespace: kube-system
 spec:
@@ -13,6 +14,7 @@ spec:
     metadata:
       labels:
         name: influxGrafana
+        kubernetes.io/cluster-service: 'true'
     spec:
       containers:
       - name: influxdb

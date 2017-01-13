@@ -514,8 +514,6 @@ function main(){
     | xargs -0 sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml\"\,|g"
   find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 \
     | xargs -0 sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g"
-  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 \
-    | xargs -0 sed -i "s|^  labels:|  labels:\n    kubernetes.io/cluster-service: 'true'|g"
 
   echo "Cleaning up kube-proxy old iptables rules..." 1>&2
   docker run \

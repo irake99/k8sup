@@ -5,6 +5,7 @@ metadata:
     k8s-app: heapster
     name: heapster
     version: v6
+    kubernetes.io/cluster-service: 'true'
   name: heapster
   namespace: kube-system
 spec:
@@ -17,11 +18,11 @@ spec:
       labels:
         k8s-app: heapster
         version: v6
+        kubernetes.io/cluster-service: 'true'
     spec:
       containers:
       - name: heapster
         image: KUBERNETES_REGISTRY/heapster:canary
-        imagePullPolicy: Always
         command:
         - /heapster
         - --source=kubernetes:https://kubernetes.default
