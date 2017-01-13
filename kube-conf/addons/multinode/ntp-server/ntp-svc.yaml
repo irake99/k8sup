@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ntp-server
+  labels:
+    name: ntp-server
+    kubernetes.io/cluster-service: "true"
+spec:
+  type: ClusterIP
+  clusterIP: K8SUP_NTPSERVER_CLUSTER_IP
+  ports:
+  - port: 123
+    protocol: UDP
+    targetPort: 123
+  selector:
+    name: ntp-server

@@ -30,7 +30,7 @@
         "name": "kube-addon-manager-data",
         "image": "REGISTRY/hyperkube-ARCH:VERSION",
         "command": [
-          "/update-addons.sh",
+          "/copy-addons.sh",
           "multinode"
         ],
         "securityContext": {
@@ -53,8 +53,9 @@
             "readOnly": false
           },
           {
-            "name": "update-addons",
-            "mountPath": "/update-addons.sh"
+            "name": "addons-ntpserver",
+            "mountPath": "/etc/kubernetes/addons/multinode/ntp-server",
+            "readOnly": false
           }
         ]
       }
@@ -77,9 +78,9 @@
         }
       },
       {
-        "name": "update-addons",
+        "name": "addons-ntpserver",
         "hostPath": {
-          "path": "/etc/kubernetes/update-addons.sh"
+          "path": "/etc/kubernetes/addons/multinode/ntp-server"
         }
       }
     ]

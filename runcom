@@ -1,0 +1,78 @@
+# run commands
+
+function docker(){
+  local DEBUG && [[ "$-" == *x* ]] && DEBUG="true" && set +x
+
+  local ARGS=""
+  for ARG in "$@"; do
+    if [[ -n "$(echo "${ARG}" | grep '{.*}' | jq . 2>/dev/null)" ]]; then
+      ARGS="${ARGS} \"$(echo ${ARG} | jq -c . | sed "s/\"/\\\\\"/g")\""
+    elif [[ "$(echo "${ARG}" | wc -l)" -gt "1" ]]; then
+      ARGS="${ARGS} \"$(echo "${ARG}" | sed "s/\"/\\\\\"/g")\""
+    else
+      ARGS="${ARGS} ${ARG}"
+    fi
+  done
+  [[ "${DEBUG}" == "true" ]] && set -x
+
+  bash -c "LD_LIBRARY_PATH=/lib:/host/lib $(which docker) ${ARGS}"
+}
+
+# usage: cni_svc_route_maintainer "10.0.0.0/24" &
+function cni_svc_route_maintainer(){
+  local CLUSTER_NET="$1"
+  local CLUSTER_IP="$(echo "${CLUSTER_NET}" | cut -d '/' -f 1)"
+  [[ -z "${CLUSTER_IP}" ]] && return 1
+
+  while true; do
+    if [[ -n "$(ip route | grep -w 'cni0')" ]]; then
+      if [[ -n "$(ip route | grep -w 'flannel.1' | grep -w "${CLUSTER_IP}")" ]]; then
+        ip route del "${CLUSTER_NET}" dev flannel.1 &>/dev/null
+      fi
+      if [[ -z "$(ip route | grep -w 'cni0' | grep -w "${CLUSTER_IP}")" ]]; then
+        ip route add "${CLUSTER_NET}" dev cni0 &>/dev/null
+      fi
+    else
+      if [[ -z "$(ip route | grep -w 'flannel.1' | grep -w "${CLUSTER_IP}")" ]]; then
+        ip route add "${CLUSTER_NET}" dev flannel.1 &>/dev/null
+      fi
+    fi
+    sleep 3;
+  done
+}
+
+# Convert CIDR to submask format. e.g. 23 => 255.255.254.0
+function cidr2mask(){
+   # Number of args to shift, 255..255, first non-255 byte, zeroes
+   set -- $(( 5 - ($1 / 8) )) 255 255 255 255 $(( (255 << (8 - ($1 % 8))) & 255 )) 0 0 0
+   [ $1 -gt 1 ] && shift $1 || shift
+   echo ${1-0}.${2-0}.${3-0}.${4-0}
+}
+
+# Convert IP address from decimal to heximal. e.g. 192.168.1.200 => 0xC0A801C8
+function addr2hex(){
+  local IPADDR="$1"
+  echo "0x$(printf '%02X' ${IPADDR//./ } ; echo)"
+}
+
+# Convert IP/Mask to SubnetID/Mask. e.g. 192.168.1.200/24 => 192.168.1.0/24
+function get_subnet_id_and_mask(){
+  local ADDR_AND_MASK="$1"
+  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  echo "${ADDR_AND_MASK}" | grep -o "${IPMASK_PATTERN}" &>/dev/null || { echo "Wrong Address/Mask pattern, exiting..." 1>&2; exit 1; }
+
+  local ADDR="$(echo "${ADDR_AND_MASK}" | cut -d '/' -f 1)"
+  local MASK="$(echo "${ADDR_AND_MASK}" | cut -d '/' -f 2)"
+
+  local HEX_ADDR=$(addr2hex "${ADDR}")
+  local HEX_MASK=$(addr2hex $(cidr2mask "${MASK}"))
+  local HEX_NETWORK=$(printf '%02X' $((${HEX_ADDR} & ${HEX_MASK})))
+
+  local NETWORK=$(printf '%d.' 0x${HEX_NETWORK:0:2} 0x${HEX_NETWORK:2:2} 0x${HEX_NETWORK:4:2} 0x${HEX_NETWORK:6:2})
+  SUBNET_ID="${NETWORK:0:-1}"
+  echo "${SUBNET_ID}/${MASK}"
+}
+
+export -f docker
+export -f cidr2mask addr2hex get_subnet_id_and_mask
+export -f cni_svc_route_maintainer
