@@ -197,6 +197,16 @@ function rbd_env_detector(){
   return 0
 }
 
+function make_resolv_conf(){
+  local KUBE_ETC="$1"
+  local KUBEDNS_CLUSTER_IP="$2"
+  local RESOLV_CONF_FILE_PATH="${KUBE_ETC}/resolv.conf"
+
+  echo "search kube-system.svc.cluster.local svc.cluster.local cluster.local" > "${RESOLV_CONF_FILE_PATH}"
+  echo "nameserver ${KUBEDNS_CLUSTER_IP}" >> "${RESOLV_CONF_FILE_PATH}"
+  echo "options ndots:5" >> "${RESOLV_CONF_FILE_PATH}"
+}
+
 function ntp_updater(){
   local K8SUP_NTPSERVER_CLUSTER_IP="$1"
   local TIME_GAP="$2"
@@ -568,6 +578,9 @@ function main(){
     docker rm k8sup-kubelet 1>/dev/null || true
   done
 
+  # Make kubelet and controller-manager can directly use service domain names from kube-DNS
+  make_resolv_conf "${KUBE_ETC}" "${KUBEDNS_CLUSTER_IP}"
+
   local RBD_PATHS
   if RBD_PATHS=($(rbd_env_detector)); then
     local RBD_OPTIONS_KUBELET="$(make_rbd_docker_option "${RBD_PATHS[@]}")"
@@ -603,6 +616,7 @@ function main(){
       --volume=/dev:/dev:rw \
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
+      --volume=${KUBE_ETC}/resolv.conf:/etc/resolv.conf \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
