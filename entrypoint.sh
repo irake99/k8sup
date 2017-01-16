@@ -165,6 +165,15 @@ function etcd_follower(){
         fi
     done
     if [[ "${PROXY}" == "off" ]]; then
+      # Check if etcd name is duplicate in cluster
+      if echo "${MEMBERS}" | jq -r '.members[].name' | grep -w "${ETCD_NAME}"; then
+        echo "Found duplicate etcd name, exiting..." 1>&2
+        # Unlock and release the privilege for joining etcd cluster
+        until curl -sf "${LOCKER_URL}?prevValue=${IPADDR}" -XDELETE &>/dev/null; do
+            sleep 1
+        done
+        return 1
+      fi
       # Run etcd member add
       curl -s "http://${ETCD_NODE}:${CLIENT_PORT}/v2/members" -XPOST \
         -H "Content-Type: application/json" -d "{\"peerURLs\":[\"http://${IPADDR}:${PEER_PORT}\"]}" 1>&2
@@ -388,7 +397,7 @@ function rejoin_etcd(){
   DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
   ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                     | grep -w "clusterID=${CLUSTER_ID}" \
-                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
+                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
 
   # Get an existed etcd member
   for NODE in ${ETCD_NODE_LIST}; do
@@ -615,7 +624,7 @@ function main(){
   bash -c 'docker rm k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
   bash -c 'ip link delete cni0' &>/dev/null || true
 
-  local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
+  local NODE_NAME="$(hostname)"
   local ETCD_CLIENT_PORT="2379"
   local ROLE
   echo "Starting k8sup..." 1>&2
@@ -632,10 +641,19 @@ function main(){
         DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')" || true
         echo "${DISCOVERY_RESULTS}"
 
+        # Check if the hostname is duplicate then exit
+        if [[ "$(echo "${DISCOVERY_RESULTS}" \
+                 | sed -n "s/.*NodeName=\([[:alnum:]_-]*\).*/\1/p" \
+                 | grep -w "${NODE_NAME}" \
+                 | wc -l)" -gt "1" ]]; then
+          echo "Hostname is duplicate, please rename the hostname and try again, exiting..." 1>&2
+          exit 1
+        fi
+
         # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
         local EXISTED_ETCD_NODE_LIST=""
         local EXISTED_ETCD_NODE=""
-        local CLUSTER_ID_AMOUNT="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)"
+        local CLUSTER_ID_AMOUNT="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p" | uniq | wc -l)"
 
         if [[ "${PROXY}" == "on" ]] \
            && [[ "${CLUSTER_ID_AMOUNT}" -eq "0" ]]; then
@@ -655,10 +673,10 @@ function main(){
             fi
           elif [[ "${CLUSTER_ID_AMOUNT}" -eq "1" ]]; then
             # I don't have clusterID and found some nodes have the same clusterID (Some nodes may have no clusterID).
-            CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq)"
+            CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p" | uniq)"
             EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                                       | grep -w "clusterID=${CLUSTER_ID}" \
-                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
+                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
             EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
             echo "Target etcd member: ${EXISTED_ETCD_NODE} in the existed cluster, try to join it..." 1>&2
           fi
@@ -668,7 +686,7 @@ function main(){
             EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                                       | grep -w "etcdStarted=true" \
                                       | grep -w "clusterID=${CLUSTER_ID}" \
-                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
+                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
             EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
             echo "Target etcd member: ${EXISTED_ETCD_NODE} in the existed cluster, try to join it..." 1>&2
           elif [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "etcdStarted=false" | grep -w "clusterID=${CLUSTER_ID}")" ]]; then
@@ -682,7 +700,7 @@ function main(){
         if [[ -z "${EXISTED_ETCD_NODE}" ]]; then
           local CREATOR_NODE="$(echo "${DISCOVERY_RESULTS}" \
                                     | grep 'etcdStarted=false' \
-                                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*UnixNanoTime=\([[:alnum:]]*\).*/\1:\2 \3/p" \
+                                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*UnixNanoTime=\([[:digit:]]*\).*/\1:\2 \3/p" \
                                     | sort -k 2,2 \
                                     | head -n 1 \
                                     | awk '{print $1}')"
