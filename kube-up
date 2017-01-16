@@ -660,7 +660,14 @@ function main(){
 
   # Set routing table to make host can access cni services using cluster IP
   cni_svc_route_maintainer "10.0.0.0/24" &
-  ntp_updater "${K8SUP_NTPSERVER_CLUSTER_IP}" "300" &
+
+  # If NTP client is not found then start a NTP client
+  if ps aux | grep -v grep | grep -wE "systemd-timesyncd|ntpd" &>/dev/null; then
+    echo "Warning! Found a running NTP client on this node. k8sup will not synchronize system time with other nodes in this cluster." 1>&2
+    echo "Please make sure that the NTP server list and other time settings on all cluster nodes are synchronized!" 1>&2
+  else
+    ntp_updater "${K8SUP_NTPSERVER_CLUSTER_IP}" "300" &
+  fi
 
   echo "kubelet started!" 1>&2
 }
