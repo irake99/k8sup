@@ -197,6 +197,16 @@ function rbd_env_detector(){
   return 0
 }
 
+function make_resolv_conf(){
+  local KUBE_ETC="$1"
+  local KUBEDNS_CLUSTER_IP="$2"
+  local RESOLV_CONF_FILE_PATH="${KUBE_ETC}/resolv.conf"
+
+  echo "search kube-system.svc.cluster.local svc.cluster.local cluster.local" > "${RESOLV_CONF_FILE_PATH}"
+  echo "nameserver ${KUBEDNS_CLUSTER_IP}" >> "${RESOLV_CONF_FILE_PATH}"
+  echo "options ndots:5" >> "${RESOLV_CONF_FILE_PATH}"
+}
+
 function ntp_updater(){
   local K8SUP_NTPSERVER_CLUSTER_IP="$1"
   local TIME_GAP="$2"
@@ -481,26 +491,29 @@ function main(){
   cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml "${KUBELET_VARLIB}/kubeconfig"
   cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
-  cp -rf /go/heapster-1.2.0/deploy/kube-config/influxdb "${KUBE_ADDONS_CONF_PATH}/heapster"
+  cp -f /go/service-addons.sh "${KUBE_ETC}/"
 
+  local K8SUP_NTPSERVER_VERSION="0.1"
   local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
   local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
   [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local NTPSERVER_REGISTRY="wcen" || local NTPSERVER_REGISTRY="${REGISTRY}"
-  sed -i "s|K8SUP_SUBNET_ID|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
-  sed -i "s|K8SUP_NTPSERVER_CLUSTER_IP|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
-  sed -i "s|NTPSERVER_REGISTRY|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
-  sed -i "s|K8SUP_NTPSERVER_VERSION|latest|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|\bK8SUP_SUBNET_ID\b|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|\bK8SUP_NTPSERVER_CLUSTER_IP\b|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|\bNTPSERVER_REGISTRY\b|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|\bK8SUP_NTPSERVER_VERSION\b|${K8SUP_NTPSERVER_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
 
-  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_CONF_PATH}"/*.json
-  sed -i "s|REGISTRY|${REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
-  sed -i "s|ARCH|${ARCH}|g" "${KUBE_CONF_PATH}"/*.json
-  sed -i "s|ARCH|${ARCH}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
-  sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_CONF_PATH}"/*.json
-  sed -i "s|VERSION|v${K8S_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/*.yaml
-  sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml\"\,|g" "${KUBE_CONF_PATH}/master-multi.json"
-  sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g" "${KUBE_CONF_PATH}/master-multi.json"
-  sed -i "s|DOMAIN_NAME|${DOMAIN_NAME}|g" "${KUBE_CONF_PATH}/master-multi.json"
-  sed -i "s|ADDON_MGR_VER|${ADDON_MGR_VER}|g" "${KUBE_CONF_PATH}/addon-manager-multinode.json"
+  # Replace strings in all json and yaml files in sub-directories
+  [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local KUBERNETES_REGISTRY="kubernetes" || local KUBERNETES_REGISTRY="${REGISTRY}"
+  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bREGISTRY\b|${REGISTRY}|g"
+  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bKUBERNETES_REGISTRY\b|${KUBERNETES_REGISTRY}|g"
+  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bARCH\b|${ARCH}|g"
+  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bVERSION\b|v${K8S_VERSION}|g"
+  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bDOMAIN_NAME\b|${DOMAIN_NAME}|g"
+  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bADDON_MGR_VER\b|${ADDON_MGR_VER}|g"
+  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 \
+    | xargs -0 sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml\"\,|g"
+  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 \
+    | xargs -0 sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g"
 
   echo "Cleaning up kube-proxy old iptables rules..." 1>&2
   docker run \
@@ -562,6 +575,9 @@ function main(){
     docker rm k8sup-kubelet 1>/dev/null || true
   done
 
+  # Make kubelet and controller-manager can directly use service domain names from kube-DNS
+  make_resolv_conf "${KUBE_ETC}" "${KUBEDNS_CLUSTER_IP}"
+
   local RBD_PATHS
   if RBD_PATHS=($(rbd_env_detector)); then
     local RBD_OPTIONS_KUBELET="$(make_rbd_docker_option "${RBD_PATHS[@]}")"
@@ -597,6 +613,7 @@ function main(){
       --volume=/dev:/dev:rw \
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
+      --volume=${KUBE_ETC}/resolv.conf:/etc/resolv.conf \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
