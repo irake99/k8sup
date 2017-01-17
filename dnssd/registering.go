@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -14,16 +15,12 @@ import (
 )
 
 func main() {
-	//	fmt.Println(time.Now().String())
-	//	fmt.Println(time.Now().UnixNano())
-	//	fmt.Println(strconv.FormatInt(time.Now().UnixNano(), 10))
-	//	os.Exit(0)
-
+	rand.Seed(time.Now().UnixNano())
 	if len(os.Args) != 7 {
 		fmt.Printf("Usage: registering {Hostname} {IP/Mask} {Port} {etcd_cluster_ID} {etcd_proxy} {etcd_started}\n")
 		return
 	}
-	Instance := os.Args[1]
+	NodeName := os.Args[1]
 	IPMask := os.Args[2]
 	Port, _ := strconv.Atoi(os.Args[3])
 	clusterID := os.Args[4]
@@ -39,11 +36,13 @@ func main() {
 	SRVtext = append(SRVtext, "etcdProxy="+etcdProxy)
 	SRVtext = append(SRVtext, "etcdStarted="+etcdStarted)
 	SRVtext = append(SRVtext, "NetworkID="+Network.String())
-	SRVtext = append(SRVtext, "InstanceName="+Instance)
+	SRVtext = append(SRVtext, "NodeName="+NodeName)
 	SRVtext = append(SRVtext, "UnixNanoTime="+strconv.FormatInt(time.Now().UnixNano(), 10))
-	fmt.Printf("Registering: %s %s:%d %s\n", Instance, IPAddr, Port, clusterID)
+	fmt.Printf("Registering: %s %s:%d %s\n", NodeName, IPAddr, Port, clusterID)
+	Instance := fmt.Sprintf("%016X", rand.Int63())
+	Instance = NodeName + "-" + Instance
 	// Run registration (blocking call)
-	s, err := bonjour.RegisterProxy(Instance, "_etcd._tcp", "", Port, Instance, IPAddr.String(), SRVtext, nil)
+	s, err := bonjour.RegisterProxy(Instance, "_etcd._tcp", "", Port, NodeName, IPAddr.String(), SRVtext, nil)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
