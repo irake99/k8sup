@@ -480,6 +480,9 @@ function main(){
     exit 0
   fi
 
+  # Make message output level to 5 (--v=5) for all k8s components if debug mode is enabled
+  [[ "$-" == *x* ]] && local K8S_DEBUG_LEVEL="5" || local K8S_DEBUG_LEVEL="2"
+
   echo "Copy manifests-multi to /etc/kubernetes"
 
   mkdir -p mkdir -p "${KUBE_CONF_PATH}"
@@ -501,6 +504,7 @@ function main(){
   sed -i "s|\bK8SUP_NTPSERVER_CLUSTER_IP\b|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
   sed -i "s|\bNTPSERVER_REGISTRY\b|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
   sed -i "s|\bK8SUP_NTPSERVER_VERSION\b|${K8SUP_NTPSERVER_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  sed -i "s|\"--v=[0-9]\"|\"--v=${K8S_DEBUG_LEVEL}\"|g" "${KUBE_CONF_PATH}"/master-multi.json "${KUBE_ADDONS_CONF_PATH}"/kube-proxy.yaml
 
   # Replace strings in all json and yaml files in sub-directories
   [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local KUBERNETES_REGISTRY="kubernetes" || local KUBERNETES_REGISTRY="${REGISTRY}"
@@ -629,7 +633,7 @@ function main(){
           --allow-privileged=true \
           --require-kubeconfig=true \
           --kubeconfig=${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
-          --v=2 \
+          --v="${K8S_DEBUG_LEVEL}" \
           --address=0.0.0.0 \
           --enable-server \
           --hostname-override="${IPADDR}" \
