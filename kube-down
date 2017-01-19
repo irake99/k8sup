@@ -107,6 +107,50 @@ function find_an_apiserver(){
   echo "${APISERVER}"
 }
 
+# Drain node in preparation for maintenance.
+function drain(){
+  local IPADDR="$1"
+  local KUBELET_VARLIB="$2"
+  [[ -z "$3" ]] && local APISERVER="https://10.0.0.1:443" || local APISERVER="$3"
+
+  curl -k -s "${APISERVER}" &>/dev/null || { echo "Cound not connect API server, exiting..."; return 1; }
+
+  echo -ne "Waiting for master pod started..." 1>&2
+  until docker run \
+        --net=host \
+        --rm=true \
+        --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
+        "${HYPERKUBE_IMAGE}" \
+        /hyperkube kubectl -s "${APISERVER}" \
+          --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+          get pod --namespace=kube-system 2>/dev/null \
+            | grep -w "k8s-master-${IPADDR}" \
+            | grep -w "Running" &>/dev/null; do
+    echo -ne "." 1>&2
+    sleep 1
+  done
+  echo -ne "\n" 1>&2
+
+  echo "Trying to evict pods..." 1>&2
+  exec 5>&1
+  local MSG
+  until \
+      MSG="$(docker run \
+        --net=host \
+        --rm=true \
+        --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
+        "${HYPERKUBE_IMAGE}" \
+        /hyperkube kubectl -s "${APISERVER}" \
+          --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+          drain "${IPADDR}" --force --ignore-daemonsets --delete-local-data 2>&1 \
+            | grep -v "misconfigured" \
+            | tee >(cat - >&5); echo "0" | grep -w "${PIPESTATUS[0]}" &>/dev/null)"; do
+    [[ "$(echo "${MSG}" | grep "nodes .* not found")" ]] && return 1
+    echo "Try again..." 1>&2
+    sleep 1
+  done
+}
+
 function stop_k8s(){
   local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
   local IPADDR="$1"
@@ -116,6 +160,7 @@ function stop_k8s(){
   local APIHOST="$(echo "$5" | grep -o "${IPPORT_PATTERN}")"
   local REMOTE_K8S_IPADDR="$6"
   local EXIT="$7"
+  local DRAIN="$8"
   local CONTAINER_IDS=""
   local APISERVER=""
 
@@ -134,23 +179,11 @@ function stop_k8s(){
     return 1
   fi
 
-  if [[ "${EXIT}" == "true" ]]; then
-    # Drain node in preparation for maintenance.
-    local MSG
-    until \
-        MSG="(docker run \
-          --net=host \
-          --rm=true \
-          --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
-          "${HYPERKUBE_IMAGE}" \
-          /hyperkube kubectl -s "${APISERVER}" \
-            --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
-            drain "${IPADDR}" --force --ignore-daemonsets --delete-local-data 2>&1)"; do
-      [[ "$(echo "${MSG}" | grep "nodes .* not found")" ]] && return 1
-      echo "Try again..." 1>&2
-      sleep 1
-    done
+  if [[ "${EXIT}" == "true" ]] || [[ "${DRAIN}" == "true" ]]; then
+    drain "${IPADDR}" "${KUBELET_VARLIB}" "${APISERVER}" || return 1
+  fi
 
+  if [[ "${EXIT}" == "true" ]]; then
     # Exit k8s cluster
     docker run \
       --net=host \
@@ -231,6 +264,8 @@ Options:
     --exit-local-etcd-only               Exit the local etcd member from cluster
     --exit-remote-etcd=REMOTE_IPADDR     Exit the remote etcd member from cluster
     --exit-remote-k8s=REMOTE_IPADDR      Exit the remote k8s node from cluster
+    --drain                              Mark node unschedulable and evict all service pods
+    --drain-only                         Drain but not to stop k8s and etcd
     --debug                              Enable debug mode
 -h, --help                               This help text
 "
@@ -241,7 +276,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="rfh"
-  local LONGOPTS="remove,stop-k8s-only,force,exit-local-etcd-only,exit-remote-etcd:,exit-remote-k8s:,debug,help"
+  local LONGOPTS="remove,stop-k8s-only,force,exit-local-etcd-only,exit-remote-etcd:,exit-remote-k8s:,drain,drain-only,debug,help"
   local PARSED_OPTIONS=""
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
 
@@ -278,6 +313,14 @@ function get_options(){
              --debug)
               set -x
               export SHELLOPTS
+              shift
+              ;;
+             --drain)
+              export EX_DRAIN="true"
+              shift
+              ;;
+             --drain-only)
+              export EX_DRAIN_ONLY="true"
               shift
               ;;
           -h|--help)
@@ -326,6 +369,8 @@ function main(){
   local EXIT_LOCAL_ETCD_ONLY="${EX_EXIT_LOCAL_ETCD_ONLY}"
   local REMOTE_ETCD_IPADDR="${EX_REMOTE_ETCD_IPADDR}"
   local REMOTE_K8S_IPADDR="${EX_REMOTE_K8S_IPADDR}"
+  local DRAIN="${EX_DRAIN}"
+  local DRAIN_ONLY="${EX_DRAIN_ONLY}"
   local FORCE="${EX_FORCE}"
   local KUBELET_VARLIB="/var/lib/kubelet"
   local APISERVER
@@ -344,6 +389,10 @@ function main(){
     exit_etcd "${REMOTE_IPADDR}" "${ETCD_CLIENT_PORT}" "${REMOTE_ETCD_IPADDR}"
     exit 0
   fi
+  if [[ "${DRAIN_ONLY}" == "true" ]]; then
+    drain "${IPADDR}" "${KUBELET_VARLIB}" || exit 1
+    exit 0
+  fi
   if [[ "${FORCE}" == "true" ]]; then
     echo "Trying to kill k8s containers..." 1>&2
     docker stop $(docker ps -a | grep -E "k8sup-kubelet" | awk '{print $1}') 1>/dev/null || true
@@ -355,7 +404,7 @@ function main(){
     # Default removing
     echo "Stopping k8s containers........." 1>&2
     APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")"
-    stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE}" "${APISERVER}" "${REMOTE_K8S_IPADDR}" "${EXIT}" || true
+    stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE}" "${APISERVER}" "${REMOTE_K8S_IPADDR}" "${EXIT}" "${DRAIN}" || true
     ENDPOINT_AMOUNT="$(get_endpoint_amount "${ETCD_CLIENT_PORT}")" || exit 1
     if [[ "${ENDPOINT_AMOUNT}" -gt "1" ]]; then
       # Try to find another apiserver for removing this node from endpoints
@@ -373,8 +422,8 @@ function main(){
   echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup..." 1>&2
   docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
   docker rm -v $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
-
-  docker rm -f -v $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
+  docker rm -f k8sup
+  echo "Done" 1>&2
 }
 
 main "$@"
