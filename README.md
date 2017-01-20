@@ -2,23 +2,34 @@
 
 Using One Docker container to bootstrap a HA Kubernetes cluster with auto service discovery.
 
-Default behavior: If only one cluster is discovered, auto join it. If more than one cluster are discovered, start a new cluster.
+Default behavior:
+1. If only one cluster is discovered, join it automatically.
+2. If more than one cluster are discovered, start a new cluster.
 
-You still can join a specified cluster or force to start a new cluster.
+You can specify the same cluster ID to multiple nodes that it will make them become the same cluster. Conversely, You can also specify a different cluster ID to start node(s) as another cluster.
 
-<pre>
+```
 Options:
 -n, --network=NETINFO        SubnetID/Mask or Host IP address or NIC name
                              e. g. "192.168.11.0/24" or "192.168.11.1"
                              or "eth0" (Required option)
 -c, --cluster=CLUSTER_ID     Join a specified cluster
-    --new                    Force to start a new cluster
+-v, --version=VERSION        Specify k8s version (Default: 1.5.1)
+    --max-etcd-members=NUM   Maximum etcd member size (Default: 3)
+    --restore                Try to restore etcd data and start a new cluster
+    --restart                Restart etcd and k8s services
+    --rejoin-etcd            Re-join the same etcd cluster
+    --start-kube-svcs-only   Try to start kubernetes services (Assume etcd and flannel are ready)
+    --start-etcd-only        Start etcd and flannel but don't start kubernetes services
     --worker                 Force to run as k8s worker and etcd proxy
+    --debug                  Enable debug mode
+-r, --registry=REGISTRY      Registry of docker image
+                             (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -h, --help                   This help text
-</pre>
+```
 
 Run k8s:
-<pre>
+```
 $ sudo docker run -d \
     --privileged \
     --net=host \
@@ -36,21 +47,24 @@ $ sudo docker run -d \
     --name=k8sup \
     cdxvirt/k8sup:latest \
     --network={your-subnet-id/mask}
-</pre>
+```
 
 Stop k8s:
-<pre>
+```
 $ sudo docker exec k8sup /go/kube-down
-</pre>
+```
 
 Show k8sup log and Cluster ID:
-<pre>
+```
 $ sudo docker logs k8sup
-</pre>
+```
 
 If you want to delete etcd data:
-<pre>
+```
 $ sudo rm -rf /var/lib/etcd/*
-</pre>
+```
 
-NOTE: If you want to use Ceph RBD mounting with k8sup, make sure that the rbd, modprobe command binary files and the rbd.ko kernel object file are mounted to the k8sup container as volume.
+NOTE:
+1. If you want to use Ceph RBD mapping with k8sup, make sure that the 'rbd.ko' kernel object file, the 'modprobe' command file, and either the 'rbd' command file or the host path '/opt/bin' are mounted to the k8sup container as volumes.
+
+2. k8sup uses a NTP server as a k8s service and try to run NTP clients on all cluster nodes to synchronize system time of whole cluster. If a node is running other NTP client already, k8sup will not synchronize system time for this node, so you need to ensure all cluster nodes have the same system time by yourself.
