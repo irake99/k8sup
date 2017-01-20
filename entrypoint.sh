@@ -439,6 +439,7 @@ Options:
     --restart                Restart etcd and k8s services
     --rejoin-etcd            Re-join the same etcd cluster
     --start-kube-svcs-only   Try to start kubernetes services (Assume etcd and flannel are ready)
+    --start-etcd-only        Start etcd and flannel but don't start kubernetes services
     --worker                 Force to run as k8s worker and etcd proxy
     --debug                  Enable debug mode
 -r, --registry=REGISTRY      Registry of docker image
@@ -452,7 +453,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:v:r:h"
-  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,registry:,help"
+  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -497,6 +498,10 @@ function get_options(){
               export EX_START_KUBE_SVCS_ONLY="true"
               shift
               ;;
+             --start-etcd-only)
+              export EX_START_ETCD_ONLY="true"
+              shift
+              ;;
              --debug)
               set -x
               export SHELLOPTS
@@ -535,6 +540,7 @@ function get_options(){
   if [[ -z "${EX_NETWORK}" ]] \
     && [[ -z "${EX_REJOIN_ETCD}" ]] \
     && [[ -z "${EX_START_KUBE_SVCS_ONLY}" ]] \
+    && [[ -z "${EX_START_ETCD_ONLY}" ]] \
     && [[ -z "${EX_RESTART}" ]]; then
       echo "--network (-n) is required, exiting..." 1>&2
       exit 1
@@ -583,6 +589,7 @@ function main(){
   # Set a config file
   local CONFIG_FILE="/root/.bashrc"
   local REJOIN_ETCD="${EX_REJOIN_ETCD}" && unset EX_REJOIN_ETCD
+  local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_KUBE_SVCS_ONLY
 
   local PROXY="${EX_PROXY}" && unset EX_PROXY
   # Just re-join etcd cluster only
@@ -770,11 +777,16 @@ function main(){
   echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
   echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
+  echo "export EX_START_ETCD_ONLY=${START_ETCD_ONLY}" >> "${CONFIG_FILE}"
   echo "export EX_HYPERKUBE_IMAGE=${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" >> "${CONFIG_FILE}"
 
-  kube_up "${CONFIG_FILE}"
+  if [[ "${START_ETCD_ONLY}" != "true" ]]; then
+    kube_up "${CONFIG_FILE}"
+    echo "Kubernetes started, hold..." 1>&2
+  else
+    echo "etcd started, hold..." 1>&2
+  fi
 
-  echo "Kubernetes started, hold..." 1>&2
   tail -f /dev/null
 }
 
