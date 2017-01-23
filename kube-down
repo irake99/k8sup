@@ -197,6 +197,14 @@ function stop_k8s(){
     local EXCLUDE_POD_CMD="| grep -v 'k8s_POD\.' | grep -v -E '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}'"
   fi
 
+  # Waiting for rbd unmapped
+  ls "/dev" | grep -w "rbd[0-9]*" && echo -ne "Waiting for rbd unmapped..." 1>&2
+  until ! ls "/dev" | grep -w "rbd[0-9]*"; do
+    echo -ne "." 1>&2
+    sleep 1
+  done
+  echo -ne "\n" 1>&2
+
   # Only for exit local k8s service
   if [[ -z "${REMOTE_K8S_IPADDR}" ]]; then
     # Remove k8s system pods conf
