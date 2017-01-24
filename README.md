@@ -12,7 +12,7 @@ You can specify the same cluster ID to multiple nodes that it will make them bec
 Options:
 -n, --network=NETINFO        SubnetID/Mask or Host IP address or NIC name
                              e. g. "192.168.11.0/24" or "192.168.11.1"
-                             or "eth0" (Required option)
+                             or "eth0"
 -c, --cluster=CLUSTER_ID     Join a specified cluster
 -v, --version=VERSION        Specify k8s version (Default: 1.5.1)
     --max-etcd-members=NUM   Maximum etcd member size (Default: 3)
