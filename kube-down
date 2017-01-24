@@ -324,6 +324,7 @@ function main(){
   local EXIT="${EX_EXIT}"
   local STOP_K8S_ONLY="${EX_STOP_K8S_ONLY}"
   local EXIT_LOCAL_ETCD_ONLY="${EX_EXIT_LOCAL_ETCD_ONLY}"
+  local START_ETCD_ONLY="${EX_START_ETCD_ONLY}"
   local REMOTE_ETCD_IPADDR="${EX_REMOTE_ETCD_IPADDR}"
   local REMOTE_K8S_IPADDR="${EX_REMOTE_K8S_IPADDR}"
   local FORCE="${EX_FORCE}"
@@ -353,14 +354,16 @@ function main(){
     fi
   else
     # Default removing
-    echo "Stopping k8s containers........." 1>&2
-    APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")"
-    stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE}" "${APISERVER}" "${REMOTE_K8S_IPADDR}" "${EXIT}" || true
-    ENDPOINT_AMOUNT="$(get_endpoint_amount "${ETCD_CLIENT_PORT}")" || exit 1
-    if [[ "${ENDPOINT_AMOUNT}" -gt "1" ]]; then
-      # Try to find another apiserver for removing this node from endpoints
-      APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")" \
-       && remove_node_from_endpoints "${HYPERKUBE_IMAGE}" "${APISERVER}" "${KUBELET_VARLIB}" "${REMOTE_K8S_IPADDR}" || true
+    if [[ "${START_ETCD_ONLY}" != "true" ]]; then
+      echo "Stopping k8s containers........." 1>&2
+      APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")"
+      stop_k8s "${IPADDR}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE}" "${APISERVER}" "${REMOTE_K8S_IPADDR}" "${EXIT}" || true
+      ENDPOINT_AMOUNT="$(get_endpoint_amount "${ETCD_CLIENT_PORT}")" || exit 1
+      if [[ "${ENDPOINT_AMOUNT}" -gt "1" ]]; then
+        # Try to find another apiserver for removing this node from endpoints
+        APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")" \
+         && remove_node_from_endpoints "${HYPERKUBE_IMAGE}" "${APISERVER}" "${KUBELET_VARLIB}" "${REMOTE_K8S_IPADDR}" || true
+      fi
     fi
     if [[ "${STOP_K8S_ONLY}" == "true" ]] || [[ -n "${REMOTE_K8S_IPADDR}" ]]; then
       exit 0
@@ -374,7 +377,8 @@ function main(){
   docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
   docker rm -v $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
 
-  docker rm -f -v $(docker ps -a | grep "k8sup" | awk '{print $1}') 1>/dev/null
+  docker rm -f -v k8sup 1>/dev/null
+  echo "Done" 1>&2
 }
 
 main "$@"

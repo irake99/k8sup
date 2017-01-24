@@ -165,6 +165,15 @@ function etcd_follower(){
         fi
     done
     if [[ "${PROXY}" == "off" ]]; then
+      # Check if etcd name is duplicate in cluster
+      if echo "${MEMBERS}" | jq -r '.members[].name' | grep -w "${ETCD_NAME}"; then
+        echo "Found duplicate etcd name, exiting..." 1>&2
+        # Unlock and release the privilege for joining etcd cluster
+        until curl -sf "${LOCKER_URL}?prevValue=${IPADDR}" -XDELETE &>/dev/null; do
+            sleep 1
+        done
+        return 1
+      fi
       # Run etcd member add
       curl -s "http://${ETCD_NODE}:${CLIENT_PORT}/v2/members" -XPOST \
         -H "Content-Type: application/json" -d "{\"peerURLs\":[\"http://${IPADDR}:${PEER_PORT}\"]}" 1>&2
@@ -388,7 +397,7 @@ function rejoin_etcd(){
   DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
   ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                     | grep -w "clusterID=${CLUSTER_ID}" \
-                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
+                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
 
   # Get an existed etcd member
   for NODE in ${ETCD_NODE_LIST}; do
@@ -430,6 +439,7 @@ Options:
     --restart                Restart etcd and k8s services
     --rejoin-etcd            Re-join the same etcd cluster
     --start-kube-svcs-only   Try to start kubernetes services (Assume etcd and flannel are ready)
+    --start-etcd-only        Start etcd and flannel but don't start kubernetes services
     --worker                 Force to run as k8s worker and etcd proxy
     --debug                  Enable debug mode
 -r, --registry=REGISTRY      Registry of docker image
@@ -443,7 +453,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:v:r:h"
-  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,registry:,help"
+  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -488,6 +498,10 @@ function get_options(){
               export EX_START_KUBE_SVCS_ONLY="true"
               shift
               ;;
+             --start-etcd-only)
+              export EX_START_ETCD_ONLY="true"
+              shift
+              ;;
              --debug)
               set -x
               export SHELLOPTS
@@ -526,6 +540,7 @@ function get_options(){
   if [[ -z "${EX_NETWORK}" ]] \
     && [[ -z "${EX_REJOIN_ETCD}" ]] \
     && [[ -z "${EX_START_KUBE_SVCS_ONLY}" ]] \
+    && [[ -z "${EX_START_ETCD_ONLY}" ]] \
     && [[ -z "${EX_RESTART}" ]]; then
       echo "--network (-n) is required, exiting..." 1>&2
       exit 1
@@ -574,6 +589,7 @@ function main(){
   # Set a config file
   local CONFIG_FILE="/root/.bashrc"
   local REJOIN_ETCD="${EX_REJOIN_ETCD}" && unset EX_REJOIN_ETCD
+  local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_KUBE_SVCS_ONLY
 
   local PROXY="${EX_PROXY}" && unset EX_PROXY
   # Just re-join etcd cluster only
@@ -615,7 +631,7 @@ function main(){
   bash -c 'docker rm k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
   bash -c 'ip link delete cni0' &>/dev/null || true
 
-  local NODE_NAME="node-$(uuidgen -r | cut -c1-6)"
+  local NODE_NAME="$(hostname)"
   local ETCD_CLIENT_PORT="2379"
   local ROLE
   echo "Starting k8sup..." 1>&2
@@ -632,10 +648,19 @@ function main(){
         DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')" || true
         echo "${DISCOVERY_RESULTS}"
 
+        # Check if the hostname is duplicate then exit
+        if [[ "$(echo "${DISCOVERY_RESULTS}" \
+                 | sed -n "s/.*NodeName=\([[:alnum:]_-]*\).*/\1/p" \
+                 | grep -w "${NODE_NAME}" \
+                 | wc -l)" -gt "1" ]]; then
+          echo "Hostname is duplicate, please rename the hostname and try again, exiting..." 1>&2
+          exit 1
+        fi
+
         # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
         local EXISTED_ETCD_NODE_LIST=""
         local EXISTED_ETCD_NODE=""
-        local CLUSTER_ID_AMOUNT="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq | wc -l)"
+        local CLUSTER_ID_AMOUNT="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p" | uniq | wc -l)"
 
         if [[ "${PROXY}" == "on" ]] \
            && [[ "${CLUSTER_ID_AMOUNT}" -eq "0" ]]; then
@@ -655,10 +680,10 @@ function main(){
             fi
           elif [[ "${CLUSTER_ID_AMOUNT}" -eq "1" ]]; then
             # I don't have clusterID and found some nodes have the same clusterID (Some nodes may have no clusterID).
-            CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]]*\).*/\1/p" | uniq)"
+            CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p" | uniq)"
             EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                                       | grep -w "clusterID=${CLUSTER_ID}" \
-                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
+                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
             EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
             echo "Target etcd member: ${EXISTED_ETCD_NODE} in the existed cluster, try to join it..." 1>&2
           fi
@@ -668,7 +693,7 @@ function main(){
             EXISTED_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                                       | grep -w "etcdStarted=true" \
                                       | grep -w "clusterID=${CLUSTER_ID}" \
-                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*/\1:\2/p")"
+                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
             EXISTED_ETCD_NODE="$(echo "${EXISTED_ETCD_NODE_LIST}" | head -n 1)"
             echo "Target etcd member: ${EXISTED_ETCD_NODE} in the existed cluster, try to join it..." 1>&2
           elif [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "etcdStarted=false" | grep -w "clusterID=${CLUSTER_ID}")" ]]; then
@@ -682,7 +707,7 @@ function main(){
         if [[ -z "${EXISTED_ETCD_NODE}" ]]; then
           local CREATOR_NODE="$(echo "${DISCOVERY_RESULTS}" \
                                     | grep 'etcdStarted=false' \
-                                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:alnum:]]*\).*UnixNanoTime=\([[:alnum:]]*\).*/\1:\2 \3/p" \
+                                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*UnixNanoTime=\([[:digit:]]*\).*/\1:\2 \3/p" \
                                     | sort -k 2,2 \
                                     | head -n 1 \
                                     | awk '{print $1}')"
@@ -752,11 +777,16 @@ function main(){
   echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
   echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
+  echo "export EX_START_ETCD_ONLY=${START_ETCD_ONLY}" >> "${CONFIG_FILE}"
   echo "export EX_HYPERKUBE_IMAGE=${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" >> "${CONFIG_FILE}"
 
-  kube_up "${CONFIG_FILE}"
+  if [[ "${START_ETCD_ONLY}" != "true" ]]; then
+    kube_up "${CONFIG_FILE}"
+    echo "Kubernetes started, hold..." 1>&2
+  else
+    echo "etcd started, hold..." 1>&2
+  fi
 
-  echo "Kubernetes started, hold..." 1>&2
   tail -f /dev/null
 }
 
