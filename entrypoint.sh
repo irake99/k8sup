@@ -463,7 +463,7 @@ function rejoin_etcd(){
   local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
-  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
+  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" "true" &
 }
 
 function show_usage(){
@@ -473,7 +473,7 @@ Options:
                              e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                              or \"eth0\"
 -c, --cluster=CLUSTER_ID     Join a specified cluster
--v, --version=VERSION        Specify k8s version (Default: 1.5.1)
+-v, --version=VERSION        Specify k8s version (Default: 1.5.2)
     --max-etcd-members=NUM   Maximum etcd member size (Default: 3)
     --new                    Force to start a new cluster
     --restore                Try to restore etcd data and start a new cluster
@@ -593,7 +593,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.5.1"
+    export EX_K8S_VERSION="1.5.2"
   fi
 
   if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
@@ -611,12 +611,10 @@ function main(){
 
   local COREOS_REGISTRY="${EX_COREOS_REGISTRY}"
   local K8S_REGISTRY="${EX_K8S_REGISTRY}"
-  export ENV_ETCD_VERSION="3.0.15"
+  export ENV_ETCD_VERSION="3.0.17"
   export ENV_FLANNELD_VERSION="0.6.2"
-#  export ENV_K8S_VERSION="1.5.1"
   export ENV_ETCD_IMAGE="${COREOS_REGISTRY}/etcd:v${ENV_ETCD_VERSION}"
   export ENV_FLANNELD_IMAGE="${COREOS_REGISTRY}/flannel:v${ENV_FLANNELD_VERSION}"
-#  export ENV_HYPERKUBE_IMAGE="gcr.io/google_containers/hyperkube-amd64:v${ENV_K8S_VERSION}"
 
   # Set a config file
   local CONFIG_FILE="/root/.bashrc"
@@ -674,7 +672,7 @@ function main(){
       "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" && ROLE="follower" || exit 1
   else
     if [[ "${NEW_CLUSTER}" != "true" ]]; then
-      /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "false" &
+      /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "false" "true" &
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
       while
@@ -793,7 +791,7 @@ function main(){
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
+  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" "true" &
 
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"
