@@ -463,7 +463,7 @@ function rejoin_etcd(){
   local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
-  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
+  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" "true" &
 }
 
 function show_usage(){
@@ -674,7 +674,7 @@ function main(){
       "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" && ROLE="follower" || exit 1
   else
     if [[ "${NEW_CLUSTER}" != "true" ]]; then
-      /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "false" &
+      /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "false" "true" &
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
       while
@@ -793,7 +793,7 @@ function main(){
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
+  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" "true" &
 
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"
