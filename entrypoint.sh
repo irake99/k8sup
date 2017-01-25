@@ -328,6 +328,47 @@ function get_ipaddr_and_mask_from_netinfo(){
   echo "${IP_AND_MASK}"
 }
 
+function get_network_by_cluster_id(){
+  local CLUSTER_ID="$1"
+  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  local NETWORK
+  local NetworkID
+  local DISCOVERY_RESULTS
+
+  if [[ -n "${CLUSTER_ID}" ]]; then
+    DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "clusterID=${CLUSTER_ID}" | grep -w 'etcdProxy=off')" || true
+  else
+    DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w 'etcdProxy=off')" || true
+    CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p"| uniq)"
+    if [[ "$(echo "${CLUSTER_ID}" | wc -l)" -gt "1" ]]; then
+      echo "More than 1 cluster are found, please specify '--network' or '--cluster', exiting..." 1>&2
+      return 1
+    fi
+  fi
+  NetworkID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*NetworkID=\(${IPMASK_PATTERN}\).*/\1/p" | uniq)"
+  if [[ "$(echo "${NetworkID}" | wc -l)" -gt "1" ]]; then
+    echo "Same cluster ID: ${CLUSTER_ID} in different network, please specify '--network', exiting..." 1>&2
+    return 1
+  fi
+  local HOST_NET_LIST="$(ip addr show | grep -o "${IPMASK_PATTERN}")"
+  local HOST_NET=""
+  local NET=""
+  for NET in ${HOST_NET_LIST}; do
+    HOST_NET="$(get_subnet_id_and_mask "${NET}")"
+    if [[ "${NetworkID}" == "${HOST_NET}" ]]; then
+      NETWORK="${NetworkID}"
+      break
+    fi
+  done
+  if [[ "${NETWORK}" != "${NetworkID}" ]]; then
+    echo "This node does not have ${NETWORK} network, exiting..." 1>&2
+    return 1
+  fi
+
+  echo "${NETWORK}"
+  return 0
+}
+
 function kube_up(){
   local CONFIG_FILE="$1"
   source "${CONFIG_FILE}" || exit 1
@@ -430,7 +471,7 @@ function show_usage(){
 Options:
 -n, --network=NETINFO        SubnetID/Mask or Host IP address or NIC name
                              e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
-                             or \"eth0\" (Required option)
+                             or \"eth0\"
 -c, --cluster=CLUSTER_ID     Join a specified cluster
 -v, --version=VERSION        Specify k8s version (Default: 1.5.1)
     --max-etcd-members=NUM   Maximum etcd member size (Default: 3)
@@ -537,15 +578,6 @@ function get_options(){
     export EX_PROXY="off"
   fi
 
-  if [[ -z "${EX_NETWORK}" ]] \
-    && [[ -z "${EX_REJOIN_ETCD}" ]] \
-    && [[ -z "${EX_START_KUBE_SVCS_ONLY}" ]] \
-    && [[ -z "${EX_START_ETCD_ONLY}" ]] \
-    && [[ -z "${EX_RESTART}" ]]; then
-      echo "--network (-n) is required, exiting..." 1>&2
-      exit 1
-  fi
-
   if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
     echo "Error! '--new' can not use specified cluster ID, exiting..." 1>&2
     exit 1
@@ -612,10 +644,12 @@ function main(){
     exit "$?"
   fi
 
-  local IP_AND_MASK=""
-  IP_AND_MASK="$(get_ipaddr_and_mask_from_netinfo "${EX_NETWORK}")" && unset EX_NETWORK || exit 1
-  local IPADDR="$(echo "${IP_AND_MASK}" | cut -d '/' -f 1)"
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
+  local NETWORK="${EX_NETWORK}" && unset EX_NETWORK
+  [[ -z "${NETWORK}" ]] && { NETWORK="$(get_network_by_cluster_id "${CLUSTER_ID}")" || exit 1; }
+  local IP_AND_MASK=""
+  IP_AND_MASK="$(get_ipaddr_and_mask_from_netinfo "${NETWORK}")" || exit 1
+  local IPADDR="$(echo "${IP_AND_MASK}" | cut -d '/' -f 1)"
   local NEW_CLUSTER="${EX_NEW_CLUSTER}" && unset EX_NEW_CLUSTER
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
@@ -624,7 +658,6 @@ function main(){
   local K8S_PORT="6443"
   local K8S_INSECURE_PORT="8080"
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
-  local DISCOVERY_RESULTS
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
 
   bash -c 'docker stop k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
