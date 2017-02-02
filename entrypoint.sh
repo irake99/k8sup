@@ -1,8 +1,21 @@
 #!/bin/bash
 set -e
 source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting...' >&2 && exit 1 ; }
-
+trap 'cleanup $?' EXIT
 #---
+
+function cleanup(){
+  local RC="$1"
+  if [[ "${RC}" -ne 0 ]]; then
+    local LOGNAME="k8sup-$(date +"%Y%m%d%H%M%S-%N")"
+    mkdir -p "/etc/kubernetes/logs"
+    docker logs k8sup &>"/etc/kubernetes/logs/${LOGNAME}.log"
+    docker inspect k8sup &>"/etc/kubernetes/logs/${LOGNAME}.json"
+    docker rm -f k8sup
+  else
+    docker stop k8sup
+  fi
+}
 
 function get_alive_etcd_member_size(){
   local MEMBER_LIST="$1"
