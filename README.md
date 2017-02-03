@@ -1,6 +1,6 @@
 # k8sup
 
-Using One Docker container to bootstrap a HA Kubernetes cluster with auto service discovery.
+Using One Docker container to bootstrap a HA Kubernetes cluster with auto cluster discovery.
 
 Default behavior:
 1. If only one cluster is discovered, join it automatically.
