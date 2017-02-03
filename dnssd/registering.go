@@ -37,8 +37,8 @@ func getInterfaceByIPNet(Net *net.IPNet) (*net.Interface, error) {
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
-	if len(os.Args) != 8 {
-		fmt.Printf("Usage: registering {Hostname} {IP/Mask} {Port} {etcd_cluster_ID} {etcd_proxy} {etcd_started} {all_interfaces}\n")
+	if len(os.Args) != 7 {
+		fmt.Printf("Usage: registering {Hostname} {IP/Mask} {Port} {etcd_cluster_ID} {etcd_proxy} {etcd_started}\n")
 		return
 	}
 	NodeName := os.Args[1]
@@ -47,18 +47,12 @@ func main() {
 	clusterID := os.Args[4]
 	etcdProxy := os.Args[5]
 	etcdStarted := os.Args[6]
-	AllIfaces := os.Args[7]
 	IPAddr, Network, err := net.ParseCIDR(IPMask)
 
-	// Registering for all interfaces or specific interface
-	var iface *net.Interface
-	if AllIfaces == "true" {
-		iface = nil
-	} else {
-		iface, err = getInterfaceByIPNet(Network)
-		if err != nil {
-			panic(err)
-		}
+	// Find the specific interface by IPNet for registering
+	iface, err := getInterfaceByIPNet(Network)
+	if err != nil {
+		panic(err)
 	}
 
 	var SRVtext []string

@@ -1,8 +1,21 @@
 #!/bin/bash
 set -e
 source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting...' >&2 && exit 1 ; }
-
+trap 'cleanup $?' EXIT
 #---
+
+function cleanup(){
+  local RC="$1"
+  if [[ "${RC}" -ne 0 ]]; then
+    local LOGNAME="k8sup-$(date +"%Y%m%d%H%M%S-%N")"
+    mkdir -p "/etc/kubernetes/logs"
+    docker logs k8sup &>"/etc/kubernetes/logs/${LOGNAME}.log"
+    docker inspect k8sup &>"/etc/kubernetes/logs/${LOGNAME}.json"
+    docker rm -f k8sup
+  else
+    docker stop k8sup
+  fi
+}
 
 function get_alive_etcd_member_size(){
   local MEMBER_LIST="$1"
@@ -341,12 +354,14 @@ function get_network_by_cluster_id(){
     DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w 'etcdProxy=off')" || true
     CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p"| uniq)"
     if [[ "$(echo "${CLUSTER_ID}" | wc -l)" -gt "1" ]]; then
+      echo "${DISCOVERY_RESULTS}" 1>&2
       echo "More than 1 cluster are found, please specify '--network' or '--cluster', exiting..." 1>&2
       return 1
     fi
   fi
   NetworkID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*NetworkID=\(${IPMASK_PATTERN}\).*/\1/p" | uniq)"
   if [[ "$(echo "${NetworkID}" | wc -l)" -gt "1" ]]; then
+    echo "${DISCOVERY_RESULTS}" 1>&2
     echo "Same cluster ID: ${CLUSTER_ID} in different network, please specify '--network', exiting..." 1>&2
     return 1
   fi
@@ -463,7 +478,7 @@ function rejoin_etcd(){
   local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
-  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" "true" &
+  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
 }
 
 function show_usage(){
@@ -672,7 +687,7 @@ function main(){
       "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" && ROLE="follower" || exit 1
   else
     if [[ "${NEW_CLUSTER}" != "true" ]]; then
-      /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "false" "true" &
+      /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "false" &
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
       while
@@ -791,7 +806,7 @@ function main(){
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" "true" &
+  /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
 
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"
