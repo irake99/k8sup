@@ -142,6 +142,34 @@ function update_master_multi_rbd_mount(){
   echo "${NEW_MASTER_MULTI_JSON}" > "${MASTER_MULTI_JSON_FILE_PATH}"
 }
 
+function update_master_multi_keystone(){
+  local MASTER_MULTI_JSON_FILE_PATH="$1"
+  local NEW_MASTER_MULTI_VOLUME_MOUNTS
+  local NEW_MASTER_MULTI_VOLUMES
+  local NEW_MASTER_MULTI_JSON
+  [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
+
+  NEW_MASTER_MULTI_VOLUME_MOUNTS="$(echo '[]' \
+                   | jq ". |= .+ [{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/srv/keystone\"}]" \
+                   | jq ". |= .+ [{\"name\":\"resolv-conf\",\"mountPath\":\"/etc/resolv.conf\"}]")"
+  NEW_MASTER_MULTI_KEYSTONE_CONTAINERS="$(echo '[]' \
+                   | jq ". |= .+ [{\"name\":\"keystone-tls\"}]" \
+                   | jq ".[0] |= .+ {\"image\":\"wcen/keystone:k8sup-ldap\"}" \
+                   | jq ".[0] |= .+ {\"args\":[\"generate_key_files_to_k8s\"]}" \
+                   | jq ".[0] |= .+ {\"volumeMounts\":[{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/etc/keystone/ssl/k8s\"}]}")"
+  NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
+               | jq ". |= .+ [{\"name\":\"keystone-tls-certs\",\"emptyDir\":{}}]")"
+  NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
+    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-url=https://keystone.default.svc.cluster.local:35357/v2.0\"]" \
+    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-ca-file=/srv/keystone/ca.pem\"]" \
+    | jq ".spec.containers[1].volumeMounts |= .+ ${NEW_MASTER_MULTI_VOLUME_MOUNTS}" \
+    | jq ".spec.containers |= .+ ${NEW_MASTER_MULTI_KEYSTONE_CONTAINERS}" \
+    | jq ".spec.volumes |= .+ ${NEW_MASTER_MULTI_VOLUMES}")"
+  [[ -z "${NEW_MASTER_MULTI_JSON}" ]] || [[ "${NEW_MASTER_MULTI_JSON}" == "null" ]] && return 1
+
+  echo "${NEW_MASTER_MULTI_JSON}" > "${MASTER_MULTI_JSON_FILE_PATH}"
+}
+
 function make_rbd_docker_option(){
   local ARGS=("$@")
   local RBD_CMD_PATH="${ARGS[0]}"
@@ -587,6 +615,8 @@ function main(){
     local RBD_OPTIONS_KUBELET="$(make_rbd_docker_option "${RBD_PATHS[@]}")"
     update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
   fi
+
+  update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json"
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   # Remove old/duplicate iptables rules
