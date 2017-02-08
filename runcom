@@ -17,6 +17,8 @@ function docker(){
   [[ "${DEBUG}" == "true" ]] && set -x
 
   bash -c "LD_LIBRARY_PATH=/lib:/host/lib $(which docker) ${ARGS}"
+
+  return "$?"
 }
 
 # usage: cni_svc_route_maintainer "10.0.0.0/24" &
