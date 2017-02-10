@@ -393,6 +393,7 @@ function kube_up(){
   local REGISTRY="${EX_REGISTRY}" && unset EX_REGISTRY
   local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
+  local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
 
   bash -c 'docker stop k8sup-certs k8sup-kubelet' &>/dev/null || true
   bash -c 'docker rm k8sup-certs k8sup-kubelet' &>/dev/null || true
@@ -408,7 +409,10 @@ function kube_up(){
   if [[ "${FORCED_WORKER}" == "on" ]]; then
     local FORCED_WORKER_OPT="--forced-worker"
   fi
-  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT}
+  if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
+    local ENABLE_KEYSTONE_OPT="--enable-keystone"
+  fi
+  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT}
 }
 
 function rejoin_etcd(){
@@ -499,6 +503,7 @@ Options:
     --worker                 Force to run as k8s worker and etcd proxy
     --debug                  Enable debug mode
 -r, --registry=REGISTRY      Registry of docker image
+    --enable-keystone        Enable Keystone service (Default: disabled)
                              (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -h, --help                   This help text
 "
@@ -509,7 +514,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:v:r:h"
-  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,help"
+  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -571,6 +576,10 @@ function get_options(){
               export EX_COREOS_REGISTRY="$2"
               export EX_K8S_REGISTRY="$2"
               shift 2
+              ;;
+             --enable-keystone)
+              export EX_ENABLE_KEYSTONE="true"
+              shift
               ;;
           -h|--help)
               show_usage
@@ -667,6 +676,7 @@ function main(){
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
+  local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local ETCD_PATH="k8sup/cluster"
   local K8S_PORT="6443"
   local K8S_INSECURE_PORT="8080"
@@ -824,6 +834,7 @@ function main(){
   echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
   echo "export EX_START_ETCD_ONLY=${START_ETCD_ONLY}" >> "${CONFIG_FILE}"
+  echo "export EX_ENABLE_KEYSTONE=${ENABLE_KEYSTONE}" >> "${CONFIG_FILE}"
   echo "export EX_HYPERKUBE_IMAGE=${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" >> "${CONFIG_FILE}"
 
   if [[ "${START_ETCD_ONLY}" != "true" ]]; then

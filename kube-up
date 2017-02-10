@@ -144,9 +144,11 @@ function update_master_multi_rbd_mount(){
 
 function update_master_multi_keystone(){
   local MASTER_MULTI_JSON_FILE_PATH="$1"
+  local KEYSTONE_REGISTRY="$2"
   local NEW_MASTER_MULTI_VOLUME_MOUNTS
   local NEW_MASTER_MULTI_VOLUMES
   local NEW_MASTER_MULTI_JSON
+  local KEYSTONE_IMAGE_NAME="${KEYSTONE_REGISTRY}/keystone:k8sup-ldap-0.1"
   [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
 
   NEW_MASTER_MULTI_VOLUME_MOUNTS="$(echo '[]' \
@@ -154,8 +156,8 @@ function update_master_multi_keystone(){
                    | jq ". |= .+ [{\"name\":\"resolv-conf\",\"mountPath\":\"/etc/resolv.conf\"}]")"
   NEW_MASTER_MULTI_KEYSTONE_CONTAINERS="$(echo '[]' \
                    | jq ". |= .+ [{\"name\":\"keystone-tls\"}]" \
-                   | jq ".[0] |= .+ {\"image\":\"wcen/keystone:k8sup-ldap\"}" \
-                   | jq ".[0] |= .+ {\"args\":[\"generate_key_files_to_k8s\"]}" \
+                   | jq ".[0] |= .+ {\"image\":\"${KEYSTONE_IMAGE_NAME}\"}" \
+                   | jq ".[0] |= .+ {\"args\":[\"generate_key_files_to_k8s_and_hold\"]}" \
                    | jq ".[0] |= .+ {\"volumeMounts\":[{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/etc/keystone/ssl/k8s\"}]}")"
   NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
                | jq ". |= .+ [{\"name\":\"keystone-tls-certs\",\"emptyDir\":{}}]")"
@@ -315,6 +317,7 @@ Options:
 -r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
     --forced-worker           Run as k8s worker persistently
     --reset-labels            Reset node labels
+    --enable-keystone         Enable Keystone service (Default: disabled)
 -h, --help                    This help text
 "
 
@@ -324,7 +327,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:r:h"
-  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,registry:,forced-worker,reset-labels,help"
+  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,registry:,forced-worker,reset-labels,enable-keystone,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -364,6 +367,10 @@ function get_options(){
               ;;
              --reset-labels)
               export EX_RESET_LABELS="true"
+              shift
+              ;;
+             --enable-keystone)
+              export EX_ENABLE_KEYSTONE="true"
               shift
               ;;
           -h|--help)
@@ -460,13 +467,15 @@ function main(){
   local APISERVER_PORT="${EX_APISERVER_PORT}" && unset EX_APISERVER_PORT
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local RESET_LABELS="${EX_RESET_LABELS}" && unset EX_RESET_LABELS
+  local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local ETCD_PROXY=""
   local APISERVER=""
   local APISERVERS=""
   local APISERVER_COUNT=5
-  local KUBE_CONF_PATH="/etc/kubernetes/manifests-multi"
-  local KUBE_ADDONS_CONF_PATH="/etc/kubernetes/addons/multinode"
   local KUBE_ETC="/etc/kubernetes"
+  local KUBE_CONF_PATH="${KUBE_ETC}/manifests-multi"
+  local KUBE_ADDONS_CONF_PATH="${KUBE_ETC}/addons/multinode"
+  local SERVICE_ADDONS_PATH="${KUBE_ETC}/service-addons"
   local KUBELET_VARLIB="/var/lib/kubelet"
   local IP_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local MASTER_PUB_DN="kubernetes-public.default.svc.cluster.local"
@@ -616,7 +625,20 @@ function main(){
     update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
   fi
 
-  update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json"
+  if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
+    echo "Trying to start keystone service..."
+    [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local KEYSTONE_REGISTRY="wcen" || local KEYSTONE_REGISTRY="${REGISTRY}"
+    local KEYSTONE_VERSION="k8sup-ldap-0.1"
+    mkdir -p "${SERVICE_ADDONS_PATH}"
+    cp -f "/go/optional-svcs/keystone/keystone-rc.yaml" "${SERVICE_ADDONS_PATH}"
+    cp -f "/go/optional-svcs/keystone/keystone-svc.yaml" "${SERVICE_ADDONS_PATH}"
+    sed -i "s|\bKEYSTONE_REGISTRY\b|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\bKEYSTONE_VERSION\b|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_REGISTRY}"
+  else
+    rm -f "${SERVICE_ADDONS_PATH}/keystone-rc.yaml"
+    rm -f "${SERVICE_ADDONS_PATH}/keystone-svc.yaml"
+  fi
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   # Remove old/duplicate iptables rules
