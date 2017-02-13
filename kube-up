@@ -144,12 +144,11 @@ function update_master_multi_rbd_mount(){
 
 function update_master_multi_keystone(){
   local MASTER_MULTI_JSON_FILE_PATH="$1"
-  local KEYSTONE_REGISTRY="$2"
+  local KEYSTONE_IMAGE_NAME="$2"
   local KEYSTONE_KEYGEN_ARGUMENT="$3"
   local NEW_MASTER_MULTI_VOLUME_MOUNTS
   local NEW_MASTER_MULTI_VOLUMES
   local NEW_MASTER_MULTI_JSON
-  local KEYSTONE_IMAGE_NAME="${KEYSTONE_REGISTRY}/keystone:0.1"
   [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
 
   NEW_MASTER_MULTI_VOLUME_MOUNTS="$(echo '[]' \
@@ -247,8 +246,9 @@ function keystone_operation(){
   if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
     echo "Trying to start keystone service..."
     [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && KEYSTONE_REGISTRY="wcen" || KEYSTONE_REGISTRY="${REGISTRY}"
-    local KEYSTONE_VERSION="k8sup-ldap-0.1"
+    local KEYSTONE_VERSION="0.1"
     local KEYSTONE_KEYGEN_ARGUMENT
+    local KEYSTONE_IMAGE_NAME="${KEYSTONE_REGISTRY}/keystone:${KEYSTONE_VERSION}"
     mkdir -p "${SERVICE_ADDONS_PATH}"
     cp -f "/go/optional-svcs/keystone/keystone-rc.yaml" "${SERVICE_ADDONS_PATH}"
     cp -f "/go/optional-svcs/keystone/keystone-svc.yaml" "${SERVICE_ADDONS_PATH}"
@@ -259,7 +259,7 @@ function keystone_operation(){
     else
       KEYSTONE_KEYGEN_ARGUMENT="download_keys"
     fi
-    update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_REGISTRY}" "${KEYSTONE_KEYGEN_ARGUMENT}"
+    update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_ARGUMENT}"
   else
     rm -f "${SERVICE_ADDONS_PATH}/keystone-rc.yaml"
     rm -f "${SERVICE_ADDONS_PATH}/keystone-svc.yaml"
