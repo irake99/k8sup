@@ -394,6 +394,7 @@ function kube_up(){
   local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
+  local ROLE="${EX_ROLE}" && unset EX_ROLE
 
   bash -c 'docker stop k8sup-certs k8sup-kubelet' &>/dev/null || true
   bash -c 'docker rm k8sup-certs k8sup-kubelet' &>/dev/null || true
@@ -412,7 +413,10 @@ function kube_up(){
   if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
     local ENABLE_KEYSTONE_OPT="--enable-keystone"
   fi
-  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT}
+  if [[ "${ROLE}" == "creator" ]]; then
+    local CREATOR_OPT="--creator"
+  fi
+  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT}
 }
 
 function rejoin_etcd(){
@@ -823,6 +827,7 @@ function main(){
 
   # Write configure to file
   echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
+  echo "export EX_ROLE=${ROLE}" >> "${CONFIG_FILE}"
   echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_FORCED_WORKER=${PROXY}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"

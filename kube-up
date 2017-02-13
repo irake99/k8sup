@@ -145,10 +145,11 @@ function update_master_multi_rbd_mount(){
 function update_master_multi_keystone(){
   local MASTER_MULTI_JSON_FILE_PATH="$1"
   local KEYSTONE_REGISTRY="$2"
+  local KEYSTONE_KEYGEN_ARGUMENT="$3"
   local NEW_MASTER_MULTI_VOLUME_MOUNTS
   local NEW_MASTER_MULTI_VOLUMES
   local NEW_MASTER_MULTI_JSON
-  local KEYSTONE_IMAGE_NAME="${KEYSTONE_REGISTRY}/keystone:k8sup-ldap-0.1"
+  local KEYSTONE_IMAGE_NAME="${KEYSTONE_REGISTRY}/keystone:0.1"
   [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
 
   NEW_MASTER_MULTI_VOLUME_MOUNTS="$(echo '[]' \
@@ -157,8 +158,9 @@ function update_master_multi_keystone(){
   NEW_MASTER_MULTI_KEYSTONE_CONTAINERS="$(echo '[]' \
                    | jq ". |= .+ [{\"name\":\"keystone-tls\"}]" \
                    | jq ".[0] |= .+ {\"image\":\"${KEYSTONE_IMAGE_NAME}\"}" \
-                   | jq ".[0] |= .+ {\"args\":[\"generate_key_files_to_k8s_and_hold\"]}" \
-                   | jq ".[0] |= .+ {\"volumeMounts\":[{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/etc/keystone/ssl/k8s\"}]}")"
+                   | jq ".[0] |= .+ {\"args\":[\"${KEYSTONE_KEYGEN_ARGUMENT}\"]}" \
+                   | jq ".[0] |= .+ {\"volumeMounts\":[{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/etc/keystone/ssl/k8s\"}]}" \
+                   | jq ".[0].volumeMounts |= .+ [{\"name\":\"data\",\"mountPath\":\"/srv/kubernetes\"}]")"
   NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
                | jq ". |= .+ [{\"name\":\"keystone-tls-certs\",\"emptyDir\":{}}]")"
   NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
@@ -223,6 +225,45 @@ function rbd_env_detector(){
 
   echo "RBD mounting is available on this host." 1>&2
   echo "${RBD_CMD_PATH}" "${RBD_KO_PATH}" "${MODPROBE_CMD_PATH}" "${DOCKER_CMD_PATH}"
+
+  return 0
+}
+
+function keystone_operation(){
+  local ENABLE_KEYSTONE="$1"
+  local ETCD_CLIENT_PORT="$2"
+  local REGISTRY="$3"
+  local SERVICE_ADDONS_PATH="$4"
+  local KUBE_CONF_PATH="$5"
+  local CREATOR="$6"
+  local KEYSTONE_REGISTRY
+
+  # Try to set etcd key to notify every one that the keystone service is enabled or disabled
+  curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/keystone_enabled?prevExist=false" \
+   -XPUT -d value="${ENABLE_KEYSTONE}" &>/dev/null
+  ENABLE_KEYSTONE="$(curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/keystone_enabled" | jq -r '.node.value')"
+  [[ -z "${ENABLE_KEYSTONE}" ]] && { echo "etcd error, exiting..." 1>&2; return 1; }
+
+  if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
+    echo "Trying to start keystone service..."
+    [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && KEYSTONE_REGISTRY="wcen" || KEYSTONE_REGISTRY="${REGISTRY}"
+    local KEYSTONE_VERSION="k8sup-ldap-0.1"
+    local KEYSTONE_KEYGEN_ARGUMENT
+    mkdir -p "${SERVICE_ADDONS_PATH}"
+    cp -f "/go/optional-svcs/keystone/keystone-rc.yaml" "${SERVICE_ADDONS_PATH}"
+    cp -f "/go/optional-svcs/keystone/keystone-svc.yaml" "${SERVICE_ADDONS_PATH}"
+    sed -i "s|\bKEYSTONE_REGISTRY\b|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\bKEYSTONE_VERSION\b|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    if [[ "${CREATOR}" == "true" ]]; then
+      KEYSTONE_KEYGEN_ARGUMENT="generate_keys"
+    else
+      KEYSTONE_KEYGEN_ARGUMENT="download_keys"
+    fi
+    update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_REGISTRY}" "${KEYSTONE_KEYGEN_ARGUMENT}"
+  else
+    rm -f "${SERVICE_ADDONS_PATH}/keystone-rc.yaml"
+    rm -f "${SERVICE_ADDONS_PATH}/keystone-svc.yaml"
+  fi
 
   return 0
 }
@@ -315,6 +356,7 @@ Options:
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
 -v, --version=VERSION         Specify k8s version (Default: 1.5.2)
 -r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
+    --creator                 Mark as the first node
     --forced-worker           Run as k8s worker persistently
     --reset-labels            Reset node labels
     --enable-keystone         Enable Keystone service (Default: disabled)
@@ -327,7 +369,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:r:h"
-  local LONGOPTS="ip:,apiserver-port:,etcd-port:,worker,version:,registry:,forced-worker,reset-labels,enable-keystone,help"
+  local LONGOPTS="ip:,apiserver-port:,etcd-port:,creator,worker,version:,registry:,forced-worker,reset-labels,enable-keystone,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -347,6 +389,10 @@ function get_options(){
           -a|--etcd-port)
               export EX_ETCD_CLIENT_PORT="$2"
               shift 2
+              ;;
+             --creator)
+              export EX_CREATOR="true"
+              shift
               ;;
           -p|--worker)
               export EX_WORKER="true"
@@ -405,8 +451,21 @@ function get_options(){
     export EX_ETCD_CLIENT_PORT="2379"
   fi
 
+  if [[ "${EX_WORKER}" == "true" ]] && [[ "${EX_CREATOR}" == "true" ]]; then
+    echo "The role only can be either a creator or a worker, exiting..." 1>&2
+    exit 1
+  fi
+
   if [[ "${EX_WORKER}" != "true" ]]; then
     export EX_WORKER="false"
+  fi
+
+  if [[ "${EX_CREATOR}" != "true" ]]; then
+    export EX_CREATOR="false"
+  fi
+
+  if [[ "${EX_ENABLE_KEYSTONE}" != "true" ]]; then
+    export EX_ENABLE_KEYSTONE="false"
   fi
 
   if [[ "${EX_FORCED_WORKER}" != "true" ]]; then
@@ -441,6 +500,7 @@ function get_API_Servers(){
                    --key ${CERTS_DIR}/kubecfg.key \
                    --cacert ${CERTS_DIR}/ca.crt"
 
+  # Wait for any apiserver started
   until [[ -n "${KUBE_NODE_LIST}" ]]; do
     KUBE_NODE_LIST="$(curl -m 2 -sf "127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/services/endpoints/default/kubernetes" \
                        | jq -r '.node.value' \
@@ -468,6 +528,7 @@ function main(){
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local RESET_LABELS="${EX_RESET_LABELS}" && unset EX_RESET_LABELS
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
+  local CREATOR="${EX_CREATOR}" && unset EX_CREATOR
   local ETCD_PROXY=""
   local APISERVER=""
   local APISERVERS=""
@@ -588,11 +649,17 @@ function main(){
     WORKER="true"
   fi
 
-  if [[ "${WORKER}" == "false" ]]; then
+  if [[ "${CREATOR}" == "false" ]]; then
+    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" || exit 1
+    APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
+    APIHOST="${APISERVER:8}"
+  else
     APISERVERS="https://127.0.0.1:6443"
     APISERVER="${APISERVERS}"
     APIHOST="127.0.0.1:6443"
+  fi
 
+  if [[ "${WORKER}" == "false" ]]; then
     # Remove old certs for master services
     if [[ -d "${KUBELET_VARLIB}/pods" ]]; then
       CERT_DIRS="$(dirname "$(find "${KUBELET_VARLIB}/pods/" -type f -name server.cert)")"
@@ -603,10 +670,6 @@ function main(){
       fi
     fi
   else
-    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" || exit 1
-    APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
-    APIHOST="${APISERVER:8}"
-
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
   fi
@@ -625,20 +688,7 @@ function main(){
     update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
   fi
 
-  if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
-    echo "Trying to start keystone service..."
-    [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local KEYSTONE_REGISTRY="wcen" || local KEYSTONE_REGISTRY="${REGISTRY}"
-    local KEYSTONE_VERSION="k8sup-ldap-0.1"
-    mkdir -p "${SERVICE_ADDONS_PATH}"
-    cp -f "/go/optional-svcs/keystone/keystone-rc.yaml" "${SERVICE_ADDONS_PATH}"
-    cp -f "/go/optional-svcs/keystone/keystone-svc.yaml" "${SERVICE_ADDONS_PATH}"
-    sed -i "s|\bKEYSTONE_REGISTRY\b|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\bKEYSTONE_VERSION\b|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_REGISTRY}"
-  else
-    rm -f "${SERVICE_ADDONS_PATH}/keystone-rc.yaml"
-    rm -f "${SERVICE_ADDONS_PATH}/keystone-svc.yaml"
-  fi
+  keystone_operation "${ENABLE_KEYSTONE}" "${ETCD_CLIENT_PORT}" "${REGISTRY}" "${SERVICE_ADDONS_PATH}" "${KUBE_CONF_PATH}" "${CREATOR}" || exit 1
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   # Remove old/duplicate iptables rules
