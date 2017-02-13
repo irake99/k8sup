@@ -177,6 +177,13 @@ function etcd_follower(){
           PROXY="on"
         fi
     done
+    # Check if cluster is full
+    MEMBERS="$(curl -sf --retry 10 http://${ETCD_NODE}:${CLIENT_PORT}/v2/members)"
+    local ETCD_EXISTING_MEMBER_SIZE="$(get_alive_etcd_member_size "${MEMBERS}")"
+    if [ "${ETCD_EXISTING_MEMBER_SIZE}" -ge "${MAX_ETCD_MEMBER_SIZE}" ]; then
+      # If cluster is not full, proxy mode off. If cluster is full, proxy mode on
+      PROXY="on"
+    fi
     if [[ "${PROXY}" == "off" ]]; then
       # Check if etcd name is duplicate in cluster
       if echo "${MEMBERS}" | jq -r '.members[].name' | grep -w "${ETCD_NAME}"; then
