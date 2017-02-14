@@ -109,6 +109,7 @@ function etcd_follower(){
   local PEER_PORT="2380"
   local ETCD_PATH="k8sup/cluster"
   local MIN_ETCD_MEMBER_SIZE="1"
+  local MAX_ETCD_MEMBER_SIZE="null"
   local ETCD_EXISTING_MEMBER_SIZE
   local NODE
 
@@ -125,9 +126,13 @@ function etcd_follower(){
     sleep 1
   done
 
-  # Prevent the cap of etcd member size less then 3
-  local MAX_ETCD_MEMBER_SIZE="$(curl -s --retry 10 "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" 2>/dev/null \
-                                | jq -r '.node.value')"
+  # Prevent the cap of etcd member size less then 1
+  echo "Getting 'MAX_ETCD_MEMBER_SIZE' form etcd..." 1>&2
+  until [[ "${MAX_ETCD_MEMBER_SIZE}" != "null" ]]; do
+    MAX_ETCD_MEMBER_SIZE="$(curl -s --retry 10 "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" 2>/dev/null \
+                            | jq -r '.node.value')"
+    sleep 1
+  done
   if [[ "${MAX_ETCD_MEMBER_SIZE}" -lt "${MIN_ETCD_MEMBER_SIZE}" ]]; then
     MAX_ETCD_MEMBER_SIZE="${MIN_ETCD_MEMBER_SIZE}"
     curl -s "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/k8sup/cluster/max_etcd_member_size" \
