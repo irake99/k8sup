@@ -270,6 +270,22 @@ function wait_etcd_cluster_healthy(){
 
 }
 
+function get_newer_kernel_ver(){
+  local VER1="$(echo "$1" | grep -o "[0-9]*\.[0-9]*\.[0-9]*")"
+  local VER2="$(echo "$2" | grep -o "[0-9]*\.[0-9]*\.[0-9]*")"
+
+  [[ -z "${VER1}" ]] || [[ -z "${VER2}" ]] && { echo "Format error, exiting..." 1>&2; return 1; }
+  [[ "${VER1}" == "${VER2}" ]] && { echo "${VER1}"; return 0; }
+
+  local ARR1=( $(echo "${VER1}" | tr '.' ' ') )
+  local ARR2=( $(echo "${VER2}" | tr '.' ' ') )
+
+  for ((i=0; i<3; i++)); do
+    [ "${ARR1[i]:-0}" -gt "${ARR2[i]:-0}" ] && { echo "${VER1}"; return 0; }
+    [ "${ARR1[i]:-0}" -lt "${ARR2[i]:-0}" ] && { echo "${VER2}"; return 0; }
+  done
+}
+
 function flanneld(){
   local IPADDR="$1"
   local ETCD_CLIENT_PORT="$2"
@@ -277,10 +293,10 @@ function flanneld(){
 
   if [[ "${ROLE}" == "creator" ]]; then
     echo "Setting flannel parameters to etcd"
-    local MIN_KERNEL_VER="3.9"
+    local MIN_KERNEL_VER="3.9.0"
     local KERNEL_VER="$(uname -r)"
 
-    if [[ "$(echo -e "${MIN_KERNEL_VER}\n${KERNEL_VER}" | sort -V | head -n 1)" == "${MIN_KERNEL_VER}" ]]; then
+    if [[ "$(get_newer_kernel_ver "${MIN_KERNEL_VER}" "${KERNEL_VER}")" != "${MIN_KERNEL_VER}" ]]; then
       local KENNEL_VER_MEETS="true"
     fi
 
@@ -497,7 +513,7 @@ function rejoin_etcd(){
   etcd_follower "${IPADDR}" "${NODE_NAME}" "${ETCD_NODE_LIST}" "${PROXY}"
 
   # DNS-SD
-  local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
+  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/go/dnssd/registering' | grep -v grep | awk '{print $1}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
   /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
@@ -844,7 +860,7 @@ function main(){
   wait_etcd_cluster_healthy "${ETCD_CLIENT_PORT}"
 
   # DNS-SD
-  local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
+  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/go/dnssd/registering' | grep -v grep | awk '{print $1}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
