@@ -6,14 +6,16 @@ trap 'cleanup $?' EXIT
 
 function cleanup(){
   local RC="$1"
-  if [[ "${RC}" -ne 0 ]]; then
+  if [[ "${RC}" -eq "1" ]]; then
     local LOGNAME="k8sup-$(date +"%Y%m%d%H%M%S-%N")"
     mkdir -p "/etc/kubernetes/logs"
     docker logs k8sup &>"/etc/kubernetes/logs/${LOGNAME}.log"
     docker inspect k8sup &>"/etc/kubernetes/logs/${LOGNAME}.json"
     docker rm -f k8sup
-  else
+  elif [[ "${RC}" -eq "0" ]]; then
     docker stop k8sup
+  elif [[ "${RC}" -eq "3" ]]; then
+    true
   fi
 }
 
@@ -644,8 +646,9 @@ function get_options(){
 function main(){
   get_options "$@"
 
-  local COREOS_REGISTRY="${EX_COREOS_REGISTRY}"
-  local K8S_REGISTRY="${EX_K8S_REGISTRY}"
+  local COREOS_REGISTRY="${EX_COREOS_REGISTRY}" && unset EX_COREOS_REGISTRY
+  local K8S_REGISTRY="${EX_K8S_REGISTRY}" && unset EX_K8S_REGISTRY
+  local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   export ENV_ETCD_VERSION="3.0.17"
   export ENV_FLANNELD_VERSION="0.6.2"
   export ENV_ETCD_IMAGE="${COREOS_REGISTRY}/etcd:v${ENV_ETCD_VERSION}"
@@ -671,10 +674,24 @@ function main(){
 
   local RESTART="${EX_RESTART}" && unset EX_RESTART
   if [[ "${RESTART}" == "true" ]]; then
+    local RC
+    echo "Detecting and getting hyperkube image..."
+    if ! docker images | grep -o "${K8S_REGISTRY}/hyperkube-amd64\s*v${K8S_VERSION}" &>/dev/null \
+      && ! docker pull "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" &>/dev/null; then
+        echo "No such hyperkube image: \"${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}\", either wrong k8s version or wrong k8s registry. Exiting..." 1>&2
+        exit 2
+    fi
+    sed -i "s|EX_K8S_VERSION=.*|EX_K8S_VERSION=${K8S_VERSION}|g" "${CONFIG_FILE}"
+    sed -i "s|EX_REGISTRY=.*|EX_REGISTRY=${K8S_REGISTRY}|g" "${CONFIG_FILE}"
     /go/kube-down --stop-k8s-only
     rejoin_etcd "${CONFIG_FILE}" "${PROXY}" || true
-    kube_up "${CONFIG_FILE}"
-    exit "$?"
+    kube_up "${CONFIG_FILE}" || RC="$?"
+    if [[ -n "${RC}" ]] && [[ "${RC}" -ne "1" ]]; then
+      exit "${RC}"
+    elif [[ "${RC}" -eq "1" ]]; then
+      exit 2
+    fi
+    exit 3
   fi
 
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
@@ -686,7 +703,6 @@ function main(){
   local NEW_CLUSTER="${EX_NEW_CLUSTER}" && unset EX_NEW_CLUSTER
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
-  local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local ETCD_PATH="k8sup/cluster"
   local K8S_PORT="6443"
@@ -847,7 +863,7 @@ function main(){
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
   echo "export EX_START_ETCD_ONLY=${START_ETCD_ONLY}" >> "${CONFIG_FILE}"
   echo "export EX_ENABLE_KEYSTONE=${ENABLE_KEYSTONE}" >> "${CONFIG_FILE}"
-  echo "export EX_HYPERKUBE_IMAGE=${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" >> "${CONFIG_FILE}"
+  echo "export EX_HYPERKUBE_IMAGE=\${EX_REGISTRY}/hyperkube-amd64:v\${EX_K8S_VERSION}" >> "${CONFIG_FILE}"
 
   if [[ "${START_ETCD_ONLY}" != "true" ]]; then
     kube_up "${CONFIG_FILE}"

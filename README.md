@@ -60,6 +60,12 @@ Show k8sup log and Cluster ID:
 $ sudo docker logs k8sup
 ```
 
+If you want to change k8s version in the runtime. (experimental)
+e.g.
+```
+$ sudo docker exec k8sup /go/entrypoint.sh --restart --version=1.5.2
+```
+
 If you want to delete etcd data:
 ```
 $ sudo rm -rf /var/lib/etcd/*
