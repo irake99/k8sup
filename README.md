@@ -24,6 +24,7 @@ Options:
     --worker                 Force to run as k8s worker and etcd proxy
     --debug                  Enable debug mode
 -r, --registry=REGISTRY      Registry of docker image
+    --enable-keystone        Enable Keystone service (Default: disabled)
                              (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -h, --help                   This help text
 ```

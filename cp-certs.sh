@@ -183,8 +183,10 @@ function download_kube_certs(){
 }
 
 function main(){
-  apt-get update 1>/dev/null
-  apt-get install -y curl 1>/dev/null
+  if ! which curl &>/dev/null; then
+    apt-get update 1>/dev/null
+    apt-get install -y curl 1>/dev/null
+  fi
   local DOMAIN_NAME="$1"
   local DONT_HOLD="$2"
   local ETCD_PATH="k8sup/cluster/k8s_certs"
