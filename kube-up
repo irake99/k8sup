@@ -670,6 +670,7 @@ function main(){
     fi
   else
     APIHOST="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" | cut -d ',' -f 1)"
+    APIHOST="${APIHOST:8}"
     [[ -z "${APIHOST}" ]] && { echo "No such API servers, exiting..." 1>&2; exit 1; }
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
