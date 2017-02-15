@@ -30,6 +30,7 @@ Options:
 
 Run k8s:
 ```
+$ docker pull cdxvirt/k8sup:latest
 $ sudo docker run -d \
     --privileged \
     --net=host \
@@ -68,6 +69,13 @@ $ sudo docker exec k8sup /go/entrypoint.sh --restart --version=1.5.2
 If you want to delete etcd data:
 ```
 $ sudo rm -rf /var/lib/etcd/*
+```
+
+To access the dashboard:
+```
+Browse https://<your-master-node-ip>:6443/ui
+user:     admin
+password: admin
 ```
 
 NOTE:
