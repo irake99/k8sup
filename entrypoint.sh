@@ -271,8 +271,8 @@ function wait_etcd_cluster_healthy(){
 }
 
 function get_newer_kernel_ver(){
-  local VER1="$(echo "$1" | grep -o "[0-9]*\.[0-9]*\.[0-9]*")"
-  local VER2="$(echo "$2" | grep -o "[0-9]*\.[0-9]*\.[0-9]*")"
+  local VER1="$(echo "$1" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")"
+  local VER2="$(echo "$2" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")"
 
   [[ -z "${VER1}" ]] || [[ -z "${VER2}" ]] && { echo "Format error, exiting..." 1>&2; return 1; }
   [[ "${VER1}" == "${VER2}" ]] && { echo "${VER1}"; return 0; }
@@ -369,6 +369,39 @@ function get_ipaddr_and_mask_from_netinfo(){
   fi
 
   echo "${IP_AND_MASK}"
+}
+
+function check_k8s_new_version_changeable(){
+  local K8S_CURR_VER="$(echo "$1" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")"
+  local K8S_NEW_VER="$(echo "$2" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")"
+  local K8S_REGISTRY="$3"
+
+  [[ -z "${K8S_CURR_VER}" ]] || [[ -z "${K8S_NEW_VER}" ]] && { echo "Format error, exiting..." 1>&2; return 1; }
+  [[ "${K8S_CURR_VER}" == "${K8S_NEW_VER}" ]] && return 0
+
+  local K8S_CURR_VER_MAJOR="$(echo "${K8S_CURR_VER}" | cut -d '.' -f 1)"
+  local K8S_NEW_VER_MAJOR="$(echo "${K8S_NEW_VER}" | cut -d '.' -f 1)"
+  local K8S_CURR_VER_MINOR="$(echo "${K8S_CURR_VER}" | cut -d '.' -f 2)"
+  local K8S_NEW_VER_MINOR="$(echo "${K8S_NEW_VER}" | cut -d '.' -f 2)"
+  local DIFF_OF_VER_MINOR="$(echo $((K8S_NEW_VER_MINOR - K8S_CURR_VER_MINOR)) | tr -d '-')"
+
+  if [[ "${K8S_CURR_VER_MAJOR}" -gt "${K8S_NEW_VER_MAJOR}" ]]; then
+    echo "('v${K8S_CURR_VER}' -> 'v${K8S_NEW_VER}') The new major version number must be the same or higher of current version number, exiting..." 1>&2
+    return 1
+  fi
+  if [[ "${K8S_CURR_VER_MAJOR}" == "${K8S_NEW_VER_MAJOR}" ]] && [[ "${DIFF_OF_VER_MINOR}" -gt "2" ]]; then
+    echo "('v${K8S_CURR_VER}' -> 'v${K8S_NEW_VER}') The same major version change should not be more than two minor releases at a time, exiting..." 1>&2
+    return 1
+  fi
+
+  echo "Detecting and getting hyperkube image..."
+  if ! docker images | grep -o "${K8S_REGISTRY}/hyperkube-amd64\s*v${K8S_NEW_VER}" &>/dev/null \
+    && ! docker pull "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_NEW_VER}" &>/dev/null; then
+      echo "No such hyperkube image: \"${K8S_REGISTRY}/hyperkube-amd64:v${K8S_NEW_VER}\", either wrong k8s version or wrong k8s registry. Exiting..." 1>&2
+      return 1
+  fi
+
+  return 0
 }
 
 function get_network_by_cluster_id(){
@@ -695,12 +728,8 @@ function main(){
   local RESTART="${EX_RESTART}" && unset EX_RESTART
   if [[ "${RESTART}" == "true" ]]; then
     local RC
-    echo "Detecting and getting hyperkube image..."
-    if ! docker images | grep -o "${K8S_REGISTRY}/hyperkube-amd64\s*v${K8S_VERSION}" &>/dev/null \
-      && ! docker pull "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" &>/dev/null; then
-        echo "No such hyperkube image: \"${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}\", either wrong k8s version or wrong k8s registry. Exiting..." 1>&2
-        exit 2
-    fi
+    local K8S_CURR_VER="$(sed -n "s|EX_K8S_VERSION=\(.*\)$|\1|p" "${CONFIG_FILE}")"
+    check_k8s_new_version_changeable "${K8S_CURR_VER}" "${K8S_VERSION}" "${K8S_REGISTRY}" || exit 2
     sed -i "s|EX_K8S_VERSION=.*|EX_K8S_VERSION=${K8S_VERSION}|g" "${CONFIG_FILE}"
     sed -i "s|EX_REGISTRY=.*|EX_REGISTRY=${K8S_REGISTRY}|g" "${CONFIG_FILE}"
     /go/kube-down --stop-k8s-only
