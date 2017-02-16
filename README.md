@@ -24,13 +24,13 @@ Options:
     --worker                 Force to run as k8s worker and etcd proxy
     --debug                  Enable debug mode
 -r, --registry=REGISTRY      Registry of docker image
-    --enable-keystone        Enable Keystone service (Default: disabled)
                              (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -h, --help                   This help text
 ```
 
 Run k8s:
 ```
+$ docker pull cdxvirt/k8sup:latest
 $ sudo docker run -d \
     --privileged \
     --net=host \
@@ -60,9 +60,22 @@ Show k8sup log and Cluster ID:
 $ sudo docker logs k8sup
 ```
 
+If you want to change k8s version in the runtime. (experimental)
+e.g.
+```
+$ sudo docker exec k8sup /go/entrypoint.sh --restart --version=1.5.2
+```
+
 If you want to delete etcd data:
 ```
 $ sudo rm -rf /var/lib/etcd/*
+```
+
+To access the dashboard:
+```
+Browse https://<your-master-node-ip>:6443/ui
+user:     admin
+password: admin
 ```
 
 NOTE:

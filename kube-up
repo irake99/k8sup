@@ -337,12 +337,18 @@ function update_node_role_label(){
   done
 }
 
+function get_default_iface_ipaddr(){
+  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  local GW_IFACE="$(ip route | grep default | awk '{print $5}')"
+  local GW_IPADDR="$(ip addr show dev "${GW_IFACE}" | grep -o "${IPMASK_PATTERN}" | cut -d '/' -f 1)"
+
+  echo "${GW_IPADDR}"
+}
+
 function mark_default_iface_ipaddr(){
   local IPADDR="$1"
   local ETCD_CLIENT_PORT="$2"
-  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
-  local GW_IFACE="$(ip route | grep default | awk '{print $5}')"
-  local GW_IPADDR=$(ip addr show dev "${GW_IFACE}" | grep -o "${IPMASK_PATTERN}" | cut -d '/' -f 1)
+  local GW_IPADDR="$(get_default_iface_ipaddr)"
 
   curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/default-iface-ipaddr/${IPADDR}" -XPUT -d value="${GW_IPADDR}" 1>/dev/null
 }
@@ -516,7 +522,7 @@ function get_API_Servers(){
   done
 
   APISERVERS="$(echo "${APISERVERS}" | cut -c 2-)"
-  [[ -n "${APISERVERS}" ]] && echo "${APISERVERS}" || { echo "No such API servers, exiting..." 1>&2; return 1; }
+  [[ -n "${APISERVERS}" ]] && echo "${APISERVERS}" || return 1
 }
 
 function main(){
@@ -530,6 +536,7 @@ function main(){
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local CREATOR="${EX_CREATOR}" && unset EX_CREATOR
   local ETCD_PROXY=""
+  local APIHOST=""
   local APISERVER=""
   local APISERVERS=""
   local APISERVER_COUNT=5
@@ -560,7 +567,8 @@ function main(){
 
   # Reset node labels and exit
   if [[ "${RESET_LABELS}" == "true" ]]; then
-    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" || exit 1
+    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" \
+                  || { echo "No such API servers, exiting..." 1>&2; exit 1; }
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
 
     local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
@@ -649,17 +657,8 @@ function main(){
     WORKER="true"
   fi
 
-  if [[ "${CREATOR}" == "false" ]]; then
-    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" || exit 1
-    APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
-    APIHOST="${APISERVER:8}"
-  else
-    APISERVERS="https://127.0.0.1:6443"
-    APISERVER="${APISERVERS}"
-    APIHOST="127.0.0.1:6443"
-  fi
-
   if [[ "${WORKER}" == "false" ]]; then
+    APIHOST="127.0.0.1:6443"
     # Remove old certs for master services
     if [[ -d "${KUBELET_VARLIB}/pods" ]]; then
       CERT_DIRS="$(dirname "$(find "${KUBELET_VARLIB}/pods/" -type f -name server.cert)")"
@@ -670,6 +669,9 @@ function main(){
       fi
     fi
   else
+    APIHOST="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" | cut -d ',' -f 1)"
+    APIHOST="${APIHOST:8}"
+    [[ -z "${APIHOST}" ]] && { echo "No such API servers, exiting..." 1>&2; exit 1; }
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
     echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
   fi

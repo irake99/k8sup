@@ -6,14 +6,16 @@ trap 'cleanup $?' EXIT
 
 function cleanup(){
   local RC="$1"
-  if [[ "${RC}" -ne 0 ]]; then
+  if [[ "${RC}" -eq "1" ]]; then
     local LOGNAME="k8sup-$(date +"%Y%m%d%H%M%S-%N")"
     mkdir -p "/etc/kubernetes/logs"
     docker logs k8sup &>"/etc/kubernetes/logs/${LOGNAME}.log"
     docker inspect k8sup &>"/etc/kubernetes/logs/${LOGNAME}.json"
     docker rm -f k8sup
-  else
+  elif [[ "${RC}" -eq "0" ]]; then
     docker stop k8sup
+  elif [[ "${RC}" -eq "3" ]]; then
+    true
   fi
 }
 
@@ -107,6 +109,7 @@ function etcd_follower(){
   local PEER_PORT="2380"
   local ETCD_PATH="k8sup/cluster"
   local MIN_ETCD_MEMBER_SIZE="1"
+  local MAX_ETCD_MEMBER_SIZE="null"
   local ETCD_EXISTING_MEMBER_SIZE
   local NODE
 
@@ -123,9 +126,13 @@ function etcd_follower(){
     sleep 1
   done
 
-  # Prevent the cap of etcd member size less then 3
-  local MAX_ETCD_MEMBER_SIZE="$(curl -s --retry 10 "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" 2>/dev/null \
-                                | jq -r '.node.value')"
+  # Prevent the cap of etcd member size less then 1
+  echo "Getting 'MAX_ETCD_MEMBER_SIZE' form etcd..." 1>&2
+  until [[ "${MAX_ETCD_MEMBER_SIZE}" != "null" ]]; do
+    MAX_ETCD_MEMBER_SIZE="$(curl -s --retry 10 "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/${ETCD_PATH}/max_etcd_member_size" 2>/dev/null \
+                            | jq -r '.node.value')"
+    sleep 1
+  done
   if [[ "${MAX_ETCD_MEMBER_SIZE}" -lt "${MIN_ETCD_MEMBER_SIZE}" ]]; then
     MAX_ETCD_MEMBER_SIZE="${MIN_ETCD_MEMBER_SIZE}"
     curl -s "${ETCD_NODE}:${CLIENT_PORT}/v2/keys/k8sup/cluster/max_etcd_member_size" \
@@ -263,6 +270,22 @@ function wait_etcd_cluster_healthy(){
 
 }
 
+function get_newer_kernel_ver(){
+  local VER1="$(echo "$1" | grep -o "[0-9]*\.[0-9]*\.[0-9]*")"
+  local VER2="$(echo "$2" | grep -o "[0-9]*\.[0-9]*\.[0-9]*")"
+
+  [[ -z "${VER1}" ]] || [[ -z "${VER2}" ]] && { echo "Format error, exiting..." 1>&2; return 1; }
+  [[ "${VER1}" == "${VER2}" ]] && { echo "${VER1}"; return 0; }
+
+  local ARR1=( $(echo "${VER1}" | tr '.' ' ') )
+  local ARR2=( $(echo "${VER2}" | tr '.' ' ') )
+
+  for ((i=0; i<3; i++)); do
+    [ "${ARR1[i]:-0}" -gt "${ARR2[i]:-0}" ] && { echo "${VER1}"; return 0; }
+    [ "${ARR1[i]:-0}" -lt "${ARR2[i]:-0}" ] && { echo "${VER2}"; return 0; }
+  done
+}
+
 function flanneld(){
   local IPADDR="$1"
   local ETCD_CLIENT_PORT="$2"
@@ -270,10 +293,10 @@ function flanneld(){
 
   if [[ "${ROLE}" == "creator" ]]; then
     echo "Setting flannel parameters to etcd"
-    local MIN_KERNEL_VER="3.9"
+    local MIN_KERNEL_VER="3.9.0"
     local KERNEL_VER="$(uname -r)"
 
-    if [[ "$(echo -e "${MIN_KERNEL_VER}\n${KERNEL_VER}" | sort -V | head -n 1)" == "${MIN_KERNEL_VER}" ]]; then
+    if [[ "$(get_newer_kernel_ver "${MIN_KERNEL_VER}" "${KERNEL_VER}")" != "${MIN_KERNEL_VER}" ]]; then
       local KENNEL_VER_MEETS="true"
     fi
 
@@ -490,7 +513,7 @@ function rejoin_etcd(){
   etcd_follower "${IPADDR}" "${NODE_NAME}" "${ETCD_NODE_LIST}" "${PROXY}"
 
   # DNS-SD
-  local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
+  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/go/dnssd/registering' | grep -v grep | awk '{print $1}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
   /go/dnssd/registering "${NODE_NAME}" "${IP_AND_MASK}" "${ETCD_CLIENT_PORT}" "${CLUSTER_ID}" "${PROXY}" "true" &
@@ -514,7 +537,6 @@ Options:
     --worker                 Force to run as k8s worker and etcd proxy
     --debug                  Enable debug mode
 -r, --registry=REGISTRY      Registry of docker image
-    --enable-keystone        Enable Keystone service (Default: disabled)
                              (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -h, --help                   This help text
 "
@@ -644,8 +666,9 @@ function get_options(){
 function main(){
   get_options "$@"
 
-  local COREOS_REGISTRY="${EX_COREOS_REGISTRY}"
-  local K8S_REGISTRY="${EX_K8S_REGISTRY}"
+  local COREOS_REGISTRY="${EX_COREOS_REGISTRY}" && unset EX_COREOS_REGISTRY
+  local K8S_REGISTRY="${EX_K8S_REGISTRY}" && unset EX_K8S_REGISTRY
+  local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   export ENV_ETCD_VERSION="3.0.17"
   export ENV_FLANNELD_VERSION="0.6.2"
   export ENV_ETCD_IMAGE="${COREOS_REGISTRY}/etcd:v${ENV_ETCD_VERSION}"
@@ -671,10 +694,24 @@ function main(){
 
   local RESTART="${EX_RESTART}" && unset EX_RESTART
   if [[ "${RESTART}" == "true" ]]; then
+    local RC
+    echo "Detecting and getting hyperkube image..."
+    if ! docker images | grep -o "${K8S_REGISTRY}/hyperkube-amd64\s*v${K8S_VERSION}" &>/dev/null \
+      && ! docker pull "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" &>/dev/null; then
+        echo "No such hyperkube image: \"${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}\", either wrong k8s version or wrong k8s registry. Exiting..." 1>&2
+        exit 2
+    fi
+    sed -i "s|EX_K8S_VERSION=.*|EX_K8S_VERSION=${K8S_VERSION}|g" "${CONFIG_FILE}"
+    sed -i "s|EX_REGISTRY=.*|EX_REGISTRY=${K8S_REGISTRY}|g" "${CONFIG_FILE}"
     /go/kube-down --stop-k8s-only
     rejoin_etcd "${CONFIG_FILE}" "${PROXY}" || true
-    kube_up "${CONFIG_FILE}"
-    exit "$?"
+    kube_up "${CONFIG_FILE}" || RC="$?"
+    if [[ -n "${RC}" ]] && [[ "${RC}" -ne "1" ]]; then
+      exit "${RC}"
+    elif [[ "${RC}" -eq "1" ]]; then
+      exit 2
+    fi
+    exit 3
   fi
 
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
@@ -686,7 +723,6 @@ function main(){
   local NEW_CLUSTER="${EX_NEW_CLUSTER}" && unset EX_NEW_CLUSTER
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
-  local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local ETCD_PATH="k8sup/cluster"
   local K8S_PORT="6443"
@@ -823,7 +859,7 @@ function main(){
   wait_etcd_cluster_healthy "${ETCD_CLIENT_PORT}"
 
   # DNS-SD
-  local OLD_MDNS_PID="$(ps aux | grep '/go/dnssd/registering' | grep -v grep | awk '{print $2}')"
+  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/go/dnssd/registering' | grep -v grep | awk '{print $1}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
@@ -847,7 +883,7 @@ function main(){
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
   echo "export EX_START_ETCD_ONLY=${START_ETCD_ONLY}" >> "${CONFIG_FILE}"
   echo "export EX_ENABLE_KEYSTONE=${ENABLE_KEYSTONE}" >> "${CONFIG_FILE}"
-  echo "export EX_HYPERKUBE_IMAGE=${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" >> "${CONFIG_FILE}"
+  echo "export EX_HYPERKUBE_IMAGE=\${EX_REGISTRY}/hyperkube-amd64:v\${EX_K8S_VERSION}" >> "${CONFIG_FILE}"
 
   if [[ "${START_ETCD_ONLY}" != "true" ]]; then
     kube_up "${CONFIG_FILE}"
