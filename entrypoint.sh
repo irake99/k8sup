@@ -412,7 +412,7 @@ function get_network_by_cluster_id(){
   local DISCOVERY_RESULTS
 
   if [[ -n "${CLUSTER_ID}" ]]; then
-    DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "clusterID=${CLUSTER_ID}" | grep -w 'etcdProxy=off')" || true
+    DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep "\<clusterID=${CLUSTER_ID}\>[^-]" | grep -w 'etcdProxy=off')" || true
   else
     DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w 'etcdProxy=off')" || true
     CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p"| uniq)"
@@ -523,7 +523,7 @@ function rejoin_etcd(){
 
   DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
   ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
-                    | grep -w "clusterID=${CLUSTER_ID}" \
+                    | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
                     | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
 
   # Get an existing etcd member
@@ -814,23 +814,23 @@ function main(){
             # I don't have clusterID and found some nodes have the same clusterID (Some nodes may have no clusterID).
             CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p" | uniq)"
             EXISTING_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
-                                      | grep -w "clusterID=${CLUSTER_ID}" \
+                                      | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
                                       | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
             EXISTING_ETCD_NODE="$(echo "${EXISTING_ETCD_NODE_LIST}" | head -n 1)"
             echo "Target etcd member: ${EXISTING_ETCD_NODE} in the existing cluster, try to join it..." 1>&2
           fi
         else
-          if [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "etcdStarted=true" | grep -w "clusterID=${CLUSTER_ID}")" ]]; then
+          if [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "etcdStarted=true" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")" ]]; then
             # I have clusterID and an existing cluster has the same clusterID.
             EXISTING_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                                       | grep -w "etcdStarted=true" \
-                                      | grep -w "clusterID=${CLUSTER_ID}" \
+                                      | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
                                       | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
             EXISTING_ETCD_NODE="$(echo "${EXISTING_ETCD_NODE_LIST}" | head -n 1)"
             echo "Target etcd member: ${EXISTING_ETCD_NODE} in the existing cluster, try to join it..." 1>&2
-          elif [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "etcdStarted=false" | grep -w "clusterID=${CLUSTER_ID}")" ]]; then
+          elif [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "etcdStarted=false" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")" ]]; then
             # I have clusterID and other nodes have the same, but all not started yet.
-            DISCOVERY_RESULTS="$(echo "${DISCOVERY_RESULTS}" | grep -w "clusterID=${CLUSTER_ID}")"
+            DISCOVERY_RESULTS="$(echo "${DISCOVERY_RESULTS}" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")"
           elif [[ "${PROXY}" == "on" ]]; then
             echo "No such any existing clusterID that you specified for this worker, re-discovering..." 1>&2
             continue
