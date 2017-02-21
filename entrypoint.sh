@@ -6,16 +6,18 @@ trap 'cleanup $?' EXIT
 
 function cleanup(){
   local RC="$1"
-  if [[ "${RC}" -eq "1" ]]; then
+  if [[ ! -f "/.started" ]] && [[ "${RC}" -eq "1" ]]; then
     local LOGNAME="k8sup-$(date +"%Y%m%d%H%M%S-%N")"
     mkdir -p "/etc/kubernetes/logs"
     docker logs k8sup &>"/etc/kubernetes/logs/${LOGNAME}.log"
     docker inspect k8sup &>"/etc/kubernetes/logs/${LOGNAME}.json"
     docker rm -f k8sup
+  elif [[ "${RC}" -eq "1" ]]; then
+    false
+  elif [[ "${RC}" -eq "2" ]]; then
+    true
   elif [[ "${RC}" -eq "0" ]]; then
     docker stop k8sup
-  elif [[ "${RC}" -eq "3" ]]; then
-    true
   fi
 }
 
@@ -371,6 +373,16 @@ function get_ipaddr_and_mask_from_netinfo(){
   echo "${IP_AND_MASK}"
 }
 
+function check_is_image_available(){
+  local IMAGE_NAME="$1"
+  local SVC_NAME="$2"
+  if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -o "${IMAGE_NAME}" &>/dev/null \
+    && ! docker pull "${IMAGE_NAME}" &>/dev/null; then
+      echo "No such hyperkube image: \"${IMAGE_NAME}\", either wrong ${SVC_NAME} version or wrong ${SVC_NAME} registry. Exiting..." 1>&2
+      return 1
+  fi
+}
+
 function check_k8s_new_version_changeable(){
   local K8S_CURR_VER="$(echo "$1" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")"
   local K8S_NEW_VER="$(echo "$2" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")"
@@ -395,11 +407,7 @@ function check_k8s_new_version_changeable(){
   fi
 
   echo "Detecting and getting hyperkube image..."
-  if ! docker images | grep -o "${K8S_REGISTRY}/hyperkube-amd64\s*v${K8S_NEW_VER}" &>/dev/null \
-    && ! docker pull "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_NEW_VER}" &>/dev/null; then
-      echo "No such hyperkube image: \"${K8S_REGISTRY}/hyperkube-amd64:v${K8S_NEW_VER}\", either wrong k8s version or wrong k8s registry. Exiting..." 1>&2
-      return 1
-  fi
+  check_is_image_available "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_NEW_VER}" "k8s" || return 1
 
   return 0
 }
@@ -482,6 +490,17 @@ function kube_up(){
   /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT}
 }
 
+function restart_flannel(){
+  local CONFIG_FILE="$1"
+  source "${CONFIG_FILE}" || exit 1
+
+  local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
+
+  docker stop k8sup-flannel && docker rm k8sup-flannel || docker rm -f k8sup-flannel
+  flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "follower"
+}
+
 function rejoin_etcd(){
   local CONFIG_FILE="$1"
   local PROXY="$2"
@@ -518,7 +537,10 @@ function rejoin_etcd(){
     test "${MEMBER_ID}" && curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members/${MEMBER_ID}" -XDELETE
     rm -rf "/var/lib/etcd/"*
   elif [[ "${ETCD_MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
-    return 1
+    docker stop k8sup-etcd && docker rm k8sup-etcd || docker rm -f k8sup-etcd
+    etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "null" \
+      "${ETCD_CLIENT_PORT}" "false" "false" || return 1
+    return 0
   fi
 
   DISCOVERY_RESULTS="$(/go/dnssd/browsing | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
@@ -555,23 +577,25 @@ function rejoin_etcd(){
 function show_usage(){
   local USAGE="Usage: ${0##*/} [options...]
 Options:
--n, --network=NETINFO        SubnetID/Mask or Host IP address or NIC name
-                             e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
-                             or \"eth0\"
--c, --cluster=CLUSTER_ID     Join a specified cluster
--v, --version=VERSION        Specify k8s version (Default: 1.5.2)
-    --max-etcd-members=NUM   Maximum etcd member size (Default: 3)
-    --new                    Force to start a new cluster
-    --restore                Try to restore etcd data and start a new cluster
-    --restart                Restart etcd and k8s services
-    --rejoin-etcd            Re-join the same etcd cluster
-    --start-kube-svcs-only   Try to start kubernetes services (Assume etcd and flannel are ready)
-    --start-etcd-only        Start etcd and flannel but don't start kubernetes services
-    --worker                 Force to run as k8s worker and etcd proxy
-    --debug                  Enable debug mode
--r, --registry=REGISTRY      Registry of docker image
-                             (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
--h, --help                   This help text
+-n, --network=NETINFO          SubnetID/Mask or Host IP address or NIC name
+                               e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
+                               or \"eth0\"
+-c, --cluster=CLUSTER_ID       Join a specified cluster
+-v, --k8s-version=VERSION      Specify k8s version (Default: 1.5.2)
+    --flannel-version=VERSION  Specify flannel version (Default: 0.6.2)
+    --etcd-version=VERSION     Specify etcd version (Default: 3.0.17)
+    --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
+    --new                      Force to start a new cluster
+    --restore                  Try to restore etcd data and start a new cluster
+    --restart                  Restart etcd and k8s services
+    --rejoin-etcd              Re-join the same etcd cluster
+    --start-kube-svcs-only     Try to start kubernetes services (Assume etcd and flannel are ready)
+    --start-etcd-only          Start etcd and flannel but don't start kubernetes services
+    --worker                   Force to run as k8s worker and etcd proxy
+    --debug                    Enable debug mode
+-r, --registry=REGISTRY        Registry of docker image
+                               (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
+-h, --help                     This help text
 "
 
   echo "${USAGE}"
@@ -580,7 +604,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:v:r:h"
-  local LONGOPTS="network:,cluster:,version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,help"
+  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -597,8 +621,16 @@ function get_options(){
               export EX_CLUSTER_ID="$2"
               shift 2
               ;;
-          -v|--version)
+          -v|--k8s-version)
               export EX_K8S_VERSION="$2"
+              shift 2
+              ;;
+             --flannel-version)
+              export EX_FLANNEL_VERSION="$2"
+              shift 2
+              ;;
+             --etcd-version)
+              export EX_ETCD_VERSION="$2"
               shift 2
               ;;
              --max-etcd-members)
@@ -685,6 +717,12 @@ function get_options(){
   if [[ -z "${EX_K8S_VERSION}" ]]; then
     export EX_K8S_VERSION="1.5.2"
   fi
+  if [[ -z "${EX_FLANNEL_VERSION}" ]]; then
+    export EX_FLANNEL_VERSION="0.6.2"
+  fi
+  if [[ -z "${EX_ETCD_VERSION}" ]]; then
+    export EX_ETCD_VERSION="3.0.17"
+  fi
 
   if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
     export EX_MAX_ETCD_MEMBER_SIZE="3"
@@ -702,11 +740,10 @@ function main(){
   local COREOS_REGISTRY="${EX_COREOS_REGISTRY}" && unset EX_COREOS_REGISTRY
   local K8S_REGISTRY="${EX_K8S_REGISTRY}" && unset EX_K8S_REGISTRY
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
-  export ENV_ETCD_VERSION="3.0.17"
-  export ENV_FLANNELD_VERSION="0.6.2"
+  export ENV_ETCD_VERSION="${EX_ETCD_VERSION}" && unset EX_ETCD_VERSION
+  export ENV_FLANNELD_VERSION="${EX_FLANNEL_VERSION}" && unset EX_FLANNEL_VERSION
   export ENV_ETCD_IMAGE="${COREOS_REGISTRY}/etcd:v${ENV_ETCD_VERSION}"
   export ENV_FLANNELD_IMAGE="${COREOS_REGISTRY}/flannel:v${ENV_FLANNELD_VERSION}"
-
   # Set a config file
   local CONFIG_FILE="/root/.bashrc"
   local REJOIN_ETCD="${EX_REJOIN_ETCD}" && unset EX_REJOIN_ETCD
@@ -727,21 +764,27 @@ function main(){
 
   local RESTART="${EX_RESTART}" && unset EX_RESTART
   if [[ "${RESTART}" == "true" ]]; then
-    local RC
+    echo "Checking images..."
+    check_is_image_available "${ENV_ETCD_IMAGE}" "etcd" || exit 1
+    check_is_image_available "${ENV_FLANNELD_IMAGE}" "flannel" || exit 1
+
     local K8S_CURR_VER="$(sed -n "s|EX_K8S_VERSION=\(.*\)$|\1|p" "${CONFIG_FILE}")"
-    check_k8s_new_version_changeable "${K8S_CURR_VER}" "${K8S_VERSION}" "${K8S_REGISTRY}" || exit 2
+    check_k8s_new_version_changeable "${K8S_CURR_VER}" "${K8S_VERSION}" "${K8S_REGISTRY}" || exit 1
     sed -i "s|EX_K8S_VERSION=.*|EX_K8S_VERSION=${K8S_VERSION}|g" "${CONFIG_FILE}"
+    sed -i "s|EX_ETCD_VERSION=.*|EX_ETCD_VERSION=${ENV_ETCD_VERSION}|g" "${CONFIG_FILE}"
+    sed -i "s|EX_FLANNELD_VERSION=.*|EX_FLANNELD_VERSION=${ENV_FLANNELD_VERSION}|g" "${CONFIG_FILE}"
     sed -i "s|EX_REGISTRY=.*|EX_REGISTRY=${K8S_REGISTRY}|g" "${CONFIG_FILE}"
-    /go/kube-down --stop-k8s-only
-    rejoin_etcd "${CONFIG_FILE}" "${PROXY}" || true
-    kube_up "${CONFIG_FILE}" || RC="$?"
-    if [[ -n "${RC}" ]] && [[ "${RC}" -ne "1" ]]; then
-      exit "${RC}"
-    elif [[ "${RC}" -eq "1" ]]; then
-      exit 2
-    fi
-    exit 3
+
+    /go/kube-down --stop-k8s-only || exit 1
+    rejoin_etcd "${CONFIG_FILE}" "${PROXY}" || exit 1
+    restart_flannel "${CONFIG_FILE}" || exit 1
+    kube_up "${CONFIG_FILE}" || exit 1
+    exit 2
   fi
+
+  echo "Checking images..."
+  check_is_image_available "${ENV_ETCD_IMAGE}" "etcd" || exit 1
+  check_is_image_available "${ENV_FLANNELD_IMAGE}" "flannel" || exit 1
 
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
   local NETWORK="${EX_NETWORK}" && unset EX_NETWORK
@@ -902,6 +945,8 @@ function main(){
   echo "export EX_ROLE=${ROLE}" >> "${CONFIG_FILE}"
   echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_FORCED_WORKER=${PROXY}" >> "${CONFIG_FILE}"
+  echo "export EX_ETCD_VERSION=${ENV_ETCD_VERSION}" >> "${CONFIG_FILE}"
+  echo "export EX_FLANNELD_VERSION=${ENV_FLANNELD_VERSION}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_INSECURE_PORT=${K8S_INSECURE_PORT}" >> "${CONFIG_FILE}"
@@ -921,6 +966,7 @@ function main(){
     echo "etcd started, hold..." 1>&2
   fi
 
+  touch "/.started"
   tail -f /dev/null
 }
 

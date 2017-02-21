@@ -10,22 +10,24 @@ You can specify the same cluster ID to multiple nodes that it will make them bec
 
 ```
 Options:
--n, --network=NETINFO        SubnetID/Mask or Host IP address or NIC name
-                             e. g. "192.168.11.0/24" or "192.168.11.1"
-                             or "eth0"
--c, --cluster=CLUSTER_ID     Join a specified cluster
--v, --version=VERSION        Specify k8s version (Default: 1.5.2)
-    --max-etcd-members=NUM   Maximum etcd member size (Default: 3)
-    --restore                Try to restore etcd data and start a new cluster
-    --restart                Restart etcd and k8s services
-    --rejoin-etcd            Re-join the same etcd cluster
-    --start-kube-svcs-only   Try to start kubernetes services (Assume etcd and flannel are ready)
-    --start-etcd-only        Start etcd and flannel but don't start kubernetes services
-    --worker                 Force to run as k8s worker and etcd proxy
-    --debug                  Enable debug mode
--r, --registry=REGISTRY      Registry of docker image
-                             (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
--h, --help                   This help text
+-n, --network=NETINFO          SubnetID/Mask or Host IP address or NIC name
+                               e. g. "192.168.11.0/24" or "192.168.11.1"
+                               or "eth0"
+-c, --cluster=CLUSTER_ID       Join a specified cluster
+-v, --k8s-version=VERSION      Specify k8s version (Default: 1.5.2)(experimental)
+    --flannel-version=VERSION  Specify flannel version (Default: 0.6.2)(experimental)
+    --etcd-version=VERSION     Specify etcd version (Default: 3.0.17)(experimental)
+    --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
+    --restore                  Try to restore etcd data and start a new cluster
+    --restart                  Restart etcd and k8s services
+    --rejoin-etcd              Re-join the same etcd cluster
+    --start-kube-svcs-only     Try to start kubernetes services (Assume etcd and flannel are ready)
+    --start-etcd-only          Start etcd and flannel but don't start kubernetes services
+    --worker                   Force to run as k8s worker and etcd proxy
+    --debug                    Enable debug mode
+-r, --registry=REGISTRY        Registry of docker image
+                               (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
+-h, --help                     This help text
 ```
 
 Run k8s:
@@ -63,7 +65,7 @@ $ sudo docker logs k8sup
 If you want to change k8s version in the runtime. (experimental)
 e.g.
 ```
-$ sudo docker exec k8sup /go/entrypoint.sh --restart --version=1.5.2
+$ sudo docker exec k8sup /go/entrypoint.sh --restart --k8s-version=1.5.2
 ```
 
 If you want to delete etcd data:
