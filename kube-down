@@ -138,7 +138,7 @@ function stop_k8s(){
     # Drain node in preparation for maintenance.
     local MSG
     until \
-        MSG="(docker run \
+        MSG="$(docker run \
           --net=host \
           --rm=true \
           --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
@@ -348,7 +348,12 @@ function main(){
   if [[ "${FORCE}" == "true" ]]; then
     echo "Trying to kill k8s containers..." 1>&2
     docker stop $(docker ps -a | grep -E "k8sup-kubelet" | awk '{print $1}') 1>/dev/null || true
-    docker rm -f -v $(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}') 1>/dev/null || true
+    docker rm -f -v $(docker ps -a \
+      | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_.*_[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}_[[:alnum:]]{8}" \
+      | awk '{print $1}') 1>/dev/null || true
+    docker rm -f -v $(docker ps -a \
+      | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system_[[:alnum:]]{32}_[[:alnum:]]{8}" \
+      | awk '{print $1}') 1>/dev/null || true
     if [[ "${EXIT}" == "true" ]]; then
       exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${REMOTE_ETCD_IPADDR}"
     fi

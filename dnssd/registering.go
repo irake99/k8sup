@@ -14,6 +14,27 @@ import (
 	"github.com/oleksandr/bonjour"
 )
 
+func getInterfaceByIPNet(Net *net.IPNet) (*net.Interface, error) {
+	ift, err := net.Interfaces()
+	if err != nil {
+		panic(err)
+	}
+	for _, iface := range ift {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			panic(err)
+		}
+		for _, addr := range addrs {
+			IPaddr, _, _ := net.ParseCIDR(addr.String())
+			if Net.Contains(IPaddr) {
+				return &iface, nil
+			}
+		}
+	}
+	err = fmt.Errorf("No such interface by the given network: %s", Net.String())
+	return nil, err
+}
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	if len(os.Args) != 7 {
@@ -27,6 +48,13 @@ func main() {
 	etcdProxy := os.Args[5]
 	etcdStarted := os.Args[6]
 	IPAddr, Network, err := net.ParseCIDR(IPMask)
+
+	// Find the specific interface by IPNet for registering
+	iface, err := getInterfaceByIPNet(Network)
+	if err != nil {
+		panic(err)
+	}
+
 	var SRVtext []string
 	if clusterID != "" {
 		SRVtext = append(SRVtext, "clusterID="+clusterID)
@@ -42,7 +70,7 @@ func main() {
 	Instance := fmt.Sprintf("%016X", rand.Int63())
 	Instance = NodeName + "-" + Instance
 	// Run registration (blocking call)
-	s, err := bonjour.RegisterProxy(Instance, "_etcd._tcp", "", Port, NodeName, IPAddr.String(), SRVtext, nil)
+	s, err := bonjour.RegisterProxy(Instance, "_etcd._tcp", "", Port, NodeName, IPAddr.String(), SRVtext, iface)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}

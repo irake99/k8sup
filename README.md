@@ -12,9 +12,9 @@ You can specify the same cluster ID to multiple nodes that it will make them bec
 Options:
 -n, --network=NETINFO        SubnetID/Mask or Host IP address or NIC name
                              e. g. "192.168.11.0/24" or "192.168.11.1"
-                             or "eth0" (Required option)
+                             or "eth0"
 -c, --cluster=CLUSTER_ID     Join a specified cluster
--v, --version=VERSION        Specify k8s version (Default: 1.5.1)
+-v, --version=VERSION        Specify k8s version (Default: 1.5.2)
     --max-etcd-members=NUM   Maximum etcd member size (Default: 3)
     --restore                Try to restore etcd data and start a new cluster
     --restart                Restart etcd and k8s services
@@ -30,6 +30,7 @@ Options:
 
 Run k8s:
 ```
+$ docker pull cdxvirt/k8sup:latest
 $ sudo docker run -d \
     --privileged \
     --net=host \
@@ -59,9 +60,22 @@ Show k8sup log and Cluster ID:
 $ sudo docker logs k8sup
 ```
 
+If you want to change k8s version in the runtime. (experimental)
+e.g.
+```
+$ sudo docker exec k8sup /go/entrypoint.sh --restart --version=1.5.2
+```
+
 If you want to delete etcd data:
 ```
 $ sudo rm -rf /var/lib/etcd/*
+```
+
+To access the dashboard:
+```
+Browse https://<your-master-node-ip>:6443/ui
+user:     admin
+password: admin
 ```
 
 NOTE:
