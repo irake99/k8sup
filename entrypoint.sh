@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting...' >&2 && exit 1 ; }
+trap 'rm -f /.started' SIGINT SIGKILL SIGTERM
 trap 'cleanup $?' EXIT
 #---
 
@@ -581,9 +582,6 @@ Options:
                                e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                                or \"eth0\"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
--v, --k8s-version=VERSION      Specify k8s version (Default: 1.5.2)
-    --flannel-version=VERSION  Specify flannel version (Default: 0.6.2)
-    --etcd-version=VERSION     Specify etcd version (Default: 3.0.17)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
@@ -595,7 +593,19 @@ Options:
     --debug                    Enable debug mode
 -r, --registry=REGISTRY        Registry of docker image
                                (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
+-v, --version                  Show k8sup version
 -h, --help                     This help text
+"
+
+  echo "${USAGE}"
+}
+
+function shwo_debug_usage(){
+  local USAGE="Usage: ${0##*/} [options...]
+Options:
+    --k8s-version=VERSION      Specify k8s version (Default: 1.5.2)
+    --etcd-version=VERSION     Specify etcd version (Default: 3.0.17)
+    --flannel-version=VERSION  Specify flannel version (Default: 0.6.2)
 "
 
   echo "${USAGE}"
@@ -603,9 +613,10 @@ Options:
 
 function get_options(){
   local PROGNAME="${0##*/}"
-  local SHORTOPTS="n:c:v:r:h"
-  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,help"
+  local SHORTOPTS="n:c:r:vh"
+  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
   local PARSED_OPTIONS=""
+  local K8SUP_VERSION="0.9.0"
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
   eval set -- "${PARSED_OPTIONS}"
@@ -621,7 +632,7 @@ function get_options(){
               export EX_CLUSTER_ID="$2"
               shift 2
               ;;
-          -v|--k8s-version)
+             --k8s-version)
               export EX_K8S_VERSION="$2"
               shift 2
               ;;
@@ -679,9 +690,14 @@ function get_options(){
               export EX_ENABLE_KEYSTONE="true"
               shift
               ;;
+          -v|--version)
+              echo "k8sup v${K8SUP_VERSION}"
+              exit 1
+              shift
+              ;;
           -h|--help)
               show_usage
-              exit 0
+              exit 1
               shift
               ;;
           --)
@@ -712,6 +728,13 @@ function get_options(){
   if [[ "${EX_PROXY}" == "on" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
     echo "Error! Either run as proxy or start a new/restored etcd cluster, exiting..." 1>&2
     exit 1
+  fi
+
+  if [[ -n "${EX_RESTART}" ]]; then
+    [[ -n "${EX_K8S_VERSION}" ]] \
+    || [[ -n "${EX_FLANNEL_VERSION}" ]] \
+    || [[ -n "${EX_ETCD_VERSION}" ]] \
+    && { echo "Can not change version when k8sup running, exiting..." 1>&2; exit 1; }
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
@@ -764,17 +787,6 @@ function main(){
 
   local RESTART="${EX_RESTART}" && unset EX_RESTART
   if [[ "${RESTART}" == "true" ]]; then
-    echo "Checking images..."
-    check_is_image_available "${ENV_ETCD_IMAGE}" "etcd" || exit 1
-    check_is_image_available "${ENV_FLANNELD_IMAGE}" "flannel" || exit 1
-
-    local K8S_CURR_VER="$(sed -n "s|EX_K8S_VERSION=\(.*\)$|\1|p" "${CONFIG_FILE}")"
-    check_k8s_new_version_changeable "${K8S_CURR_VER}" "${K8S_VERSION}" "${K8S_REGISTRY}" || exit 1
-    sed -i "s|EX_K8S_VERSION=.*|EX_K8S_VERSION=${K8S_VERSION}|g" "${CONFIG_FILE}"
-    sed -i "s|EX_ETCD_VERSION=.*|EX_ETCD_VERSION=${ENV_ETCD_VERSION}|g" "${CONFIG_FILE}"
-    sed -i "s|EX_FLANNELD_VERSION=.*|EX_FLANNELD_VERSION=${ENV_FLANNELD_VERSION}|g" "${CONFIG_FILE}"
-    sed -i "s|EX_REGISTRY=.*|EX_REGISTRY=${K8S_REGISTRY}|g" "${CONFIG_FILE}"
-
     /go/kube-down --stop-k8s-only || exit 1
     rejoin_etcd "${CONFIG_FILE}" "${PROXY}" || exit 1
     restart_flannel "${CONFIG_FILE}" || exit 1

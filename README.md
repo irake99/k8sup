@@ -14,9 +14,6 @@ Options:
                                e. g. "192.168.11.0/24" or "192.168.11.1"
                                or "eth0"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
--v, --k8s-version=VERSION      Specify k8s version (Default: 1.5.2)(experimental)
-    --flannel-version=VERSION  Specify flannel version (Default: 0.6.2)(experimental)
-    --etcd-version=VERSION     Specify etcd version (Default: 3.0.17)(experimental)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
@@ -27,6 +24,7 @@ Options:
     --debug                    Enable debug mode
 -r, --registry=REGISTRY        Registry of docker image
                                (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
+-v, --version                  Show k8sup version                               
 -h, --help                     This help text
 ```
 
@@ -60,12 +58,6 @@ $ sudo docker exec k8sup /go/kube-down
 Show k8sup log and Cluster ID:
 ```
 $ sudo docker logs k8sup
-```
-
-If you want to change k8s version in the runtime. (experimental)
-e.g.
-```
-$ sudo docker exec k8sup /go/entrypoint.sh --restart --k8s-version=1.5.2
 ```
 
 If you want to delete etcd data:
