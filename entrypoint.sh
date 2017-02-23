@@ -15,10 +15,8 @@ function cleanup(){
     docker rm -f k8sup
   elif [[ "${RC}" -eq "1" ]]; then
     false
-  elif [[ "${RC}" -eq "2" ]]; then
-    true
   elif [[ "${RC}" -eq "0" ]]; then
-    docker stop k8sup
+    true
   fi
 }
 
@@ -692,12 +690,12 @@ function get_options(){
               ;;
           -v|--version)
               echo "k8sup v${K8SUP_VERSION}"
-              exit 1
+              exit 0
               shift
               ;;
           -h|--help)
               show_usage
-              exit 1
+              exit 0
               shift
               ;;
           --)
@@ -770,7 +768,7 @@ function main(){
   # Set a config file
   local CONFIG_FILE="/root/.bashrc"
   local REJOIN_ETCD="${EX_REJOIN_ETCD}" && unset EX_REJOIN_ETCD
-  local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_KUBE_SVCS_ONLY
+  local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_ETCD_ONLY
 
   local PROXY="${EX_PROXY}" && unset EX_PROXY
   # Just re-join etcd cluster only
@@ -781,6 +779,7 @@ function main(){
 
   local START_KUBE_SVCS_ONLY="${EX_START_KUBE_SVCS_ONLY}" && unset EX_START_KUBE_SVCS_ONLY
   if [[ "${START_KUBE_SVCS_ONLY}" == "true" ]]; then
+    docker ps | grep k8sup-kubelet &>/dev/null && { echo "K8S is running, exiting..." 1>&2; exit 1; }
     kube_up "${CONFIG_FILE}"
     exit "$?"
   fi
@@ -791,7 +790,7 @@ function main(){
     rejoin_etcd "${CONFIG_FILE}" "${PROXY}" || exit 1
     restart_flannel "${CONFIG_FILE}" || exit 1
     kube_up "${CONFIG_FILE}" || exit 1
-    exit 2
+    exit 0
   fi
 
   echo "Checking images..."

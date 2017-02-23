@@ -170,11 +170,13 @@ function stop_k8s(){
     echo '{}' | tee /etc/kubernetes/manifests-multi/master-multi.json &>/dev/null
     echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager-multinode.json &>/dev/null
 
+    # Stop kubelet, kube-addon-manager
     docker stop k8sup-kubelet 1>/dev/null || true
     CONTAINER_IDS="$(docker ps | grep -E "k8s_.*(k8s-proxy).*_kube-system" | awk '{print $1}')"
     [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
     CONTAINER_IDS="$(docker ps ${EXCLUDE_POD_CMD} | grep -E "k8s_.*(kube-addon-manager-|setup).*_kube-system" | awk '{print $1}')"
     [[ -n "${CONTAINER_IDS}" ]] && docker kill ${CONTAINER_IDS} 1>/dev/null || true
+    # Stop other k8s component services
     CONTAINER_IDS="$(docker ps ${EXCLUDE_POD_CMD} | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}')"
     [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
     CONTAINER_IDS="$(docker ps -a ${EXCLUDE_POD_CMD} | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}')"
@@ -379,8 +381,9 @@ function main(){
   fi
 
   echo "Stopping k8sup-kubelet, k8sup-etcd, k8sup-flanneld, and k8sup..." 1>&2
-  docker stop $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
-  docker rm -v $(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}') 1>/dev/null || true
+  CONTAINER_IDS="$(docker ps -a | grep -E "k8s-proxy|k8sup-kubelet|k8sup-flannel|k8sup-etcd|k8sup-certs" | awk '{print $1}')"
+  [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
+  [[ -n "${CONTAINER_IDS}" ]] && docker rm -v ${CONTAINER_IDS} 1>/dev/null || true
 
   docker rm -f -v k8sup 1>/dev/null
   echo "Done" 1>&2
