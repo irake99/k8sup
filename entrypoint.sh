@@ -799,7 +799,12 @@ function main(){
 
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
   local NETWORK="${EX_NETWORK}" && unset EX_NETWORK
-  [[ -z "${NETWORK}" ]] && { NETWORK="$(get_network_by_cluster_id "${CLUSTER_ID}")" || exit 1; }
+  if [[ -z "${NETWORK}" ]]; then
+    NETWORK="$(sed -n "s|.* EX_NETWORK=\(.*\)$|\1|p" "${CONFIG_FILE}")"
+    if [[ -z "${NETWORK}" ]]; then
+      NETWORK="$(get_network_by_cluster_id "${CLUSTER_ID}")" || exit 1
+    fi
+  fi
   local IP_AND_MASK=""
   IP_AND_MASK="$(get_ipaddr_and_mask_from_netinfo "${NETWORK}")" || exit 1
   local IPADDR="$(echo "${IP_AND_MASK}" | cut -d '/' -f 1)"
@@ -954,6 +959,7 @@ function main(){
   # Write configure to file
   if ! grep "EX_IPADDR" "${CONFIG_FILE}" &>/dev/null; then
     echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
+    echo "export EX_NETWORK=${NETWORK}" >> "${CONFIG_FILE}"
     echo "export EX_ROLE=${ROLE}" >> "${CONFIG_FILE}"
     echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
     echo "export EX_FORCED_WORKER=${PROXY}" >> "${CONFIG_FILE}"
