@@ -2,7 +2,7 @@
 
 KUBECTL=${KUBECTL_BIN:-/usr/local/bin/kubectl}
 
-ADDON_CHECK_INTERVAL_SEC=${TEST_ADDON_CHECK_INTERVAL_SEC:-30}
+ADDON_CHECK_INTERVAL_SEC=${TEST_ADDON_CHECK_INTERVAL_SEC:-60}
 ADDON_PATH=${ADDON_PATH:-/etc/kubernetes/addons}
 
 # Remember that you can't log from functions that print some output (because
