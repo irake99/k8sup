@@ -2,7 +2,7 @@
 
 KUBECTL=${KUBECTL_BIN:-/usr/local/bin/kubectl}
 
-ADDON_CHECK_INTERVAL_SEC=${TEST_ADDON_CHECK_INTERVAL_SEC:-60}
+ADDON_CHECK_INTERVAL_SEC=${TEST_ADDON_CHECK_INTERVAL_SEC:-30}
 ADDON_PATH=${ADDON_PATH:-/etc/kubernetes/addons}
 
 # Remember that you can't log from functions that print some output (because
@@ -71,30 +71,38 @@ EOF
   ${KUBECTL} --namespace ${namespace} apply --prune=true --prune-whitelist=${prune_whitelist} -l cdxvirt/cluster-service=true -f ${path}
 }
 
-function before_and_now_status_compare() {
+function union() {
   local OLDIFS
-  local before_filename=$1
-  local now_filename=$2
-  local tmp_string
-  local before_array now_array union_array
+  local file1=$1
+  local file2=$2
+  local union_array
 
-  test -s /tmp/${now_filename} || touch /tmp/${now_filename}
-  test -s /tmp/${before_filename} || touch /tmp/${before_filename}
+  test -s ${file1} || touch ${file1}
+  test -s ${file2} || touch ${file2}
 
-  tmp_string=$(cat /tmp/${now_filename} | sort | uniq)
   OLDIFS="$IFS"
-  IFS=" "
-  echo $tmp_string > /tmp/${now_filename}
-
   IFS=$'\n'
-  before_array=($(</tmp/${before_filename}))
-  now_array=($(</tmp/${now_filename}))
 
-  union_array=($(for R in "${before_array[@]}" "${now_array[@]}" ; do echo "$R"; done | sort -du))
+  union_array=($(sort ${file1} ${file2} | uniq))
   echo "${union_array[*]}"
   IFS="$OLDIFS"
+}
 
-  mv /tmp/${now_filename} /tmp/${before_filename}
+function except() {
+  local OLDIFS
+  local file1=$1
+  local file2=$2
+  local except_array
+
+  test -s ${file1} || touch ${file1}
+  test -s ${file2} || touch ${file2}
+
+  OLDIFS="$IFS"
+  IFS=$'\n'
+
+  except_array=($(grep -F -f ${file1} ${file2} -v))
+  echo "${except_array[*]}"
+  IFS="$OLDIFS"
 }
 
 function update_addons() {
@@ -143,9 +151,8 @@ function update_addons() {
         echo "---" >> ${ADDON_PATH}/.${file_namespace}.${kind}
         echo "$file_namespace, $prune_resource" >> /tmp/.service_addons_now_status
       elif [[ ${not_prune_resource} != "" ]]; then
-        cat ${path} >> ${ADDON_PATH}/.${file_namespace}.${kind}.run_one_time
-        echo "---" >> ${ADDON_PATH}/.${file_namespace}.${kind}.run_one_time
-        echo "$file_namespace, $not_prune_resource" >> /tmp/.service_addons_now_status.run_one_time
+        meta_name=$(cat ${path} | sed 's/"//g; s/ //g;' | sed -n 's/name://p')
+        echo "$file_namespace, $not_prune_resource, $meta_name, $path" >> /tmp/.service_addons_now_status.run_one_time
       fi
     done
   done
@@ -153,14 +160,18 @@ function update_addons() {
   echo "=====CHECK=====BEFORE=====AND======NOW====="
   OLDIFS="$IFS"
   IFS=$'\n'
-  union_array=($(before_and_now_status_compare .service_addons_before_status .service_addons_now_status))
-  union_run_one_time_array=($(before_and_now_status_compare .service_addons_before_status.run_one_time .service_addons_now_status.run_one_time))
+  union_array=($(union /tmp/.service_addons_before_status /tmp/.service_addons_now_status))
+  mv /tmp/.service_addons_now_status /tmp/.service_addons_before_status
+
+  create_array=($(except /tmp/.service_addons_before_status.run_one_time /tmp/.service_addons_now_status.run_one_time))
+  delete_array=($(except /tmp/.service_addons_now_status.run_one_time /tmp/.service_addons_before_status.run_one_time))
+  mv /tmp/.service_addons_now_status.run_one_time /tmp/.service_addons_before_status.run_one_time
   IFS="$OLDIFS"
 
   echo "=====RUN=====KUBECTL=====COMMAND====="
   for unit in "${union_array[@]}"; do
-    namespace=$(echo ${unit} | sed 's/,.*//g')
-    resource=$(echo ${unit} | sed 's/.*, //g')
+    namespace=$(echo ${unit} | awk -F", " '{print$1}')
+    resource=$(echo ${unit} | awk -F", " '{print$2}')
     kind=$(echo ${resource} | sed 's/.*\///g')
     path="${ADDON_PATH}/.${namespace}.${kind}"
 
@@ -173,13 +184,24 @@ function update_addons() {
   done
 
   # Run with kubectl create/delete
-  for unit in "${union_run_one_time_array[@]}"; do
-    namespace=$(echo ${unit} | sed 's/,.*//g')
-    resource=$(echo ${unit} | sed 's/.*, //g')
+  for unit in "${create_array[@]}"; do
+    namespace=$(echo ${unit} | awk -F", " '{print$1}')
+    resource=$(echo ${unit} | awk -F", " '{print$2}')
+    meta_name=$(echo ${unit} | awk -F", " '{print$3}')
+    path=$(echo ${unit} | awk -F", " '{print$4}')
     kind=$(echo ${resource} | sed 's/.*\///g')
-    path="${ADDON_PATH}/.${namespace}.${kind}.run_one_time"
 
-    ${KUBECTL} --namespace ${namespace} create -f ${path} >/dev/null 2>&1
+    ${KUBECTL} --namespace ${namespace} create -f ${path}
+  done
+
+  for unit in "${delete_array[@]}"; do
+    namespace=$(echo ${unit} | awk -F", " '{print$1}')
+    resource=$(echo ${unit} | awk -F", " '{print$2}')
+    meta_name=$(echo ${unit} | awk -F", " '{print$3}')
+    path=$(echo ${unit} | awk -F", " '{print$4}')
+    kind=$(echo ${resource} | sed 's/.*\///g')
+
+    ${KUBECTL} --namespace ${namespace} delete ${kind} ${meta_name}
   done
 
   if [[ $? -eq 0 ]]; then
