@@ -38,7 +38,7 @@ function log() {
   esac
 }
 
-function containsElement() {
+function contains_element() {
   local e
   for e in "${@:2}"; do [[ $e == *"$1"* ]] && echo "$e"; done
 }
@@ -106,10 +106,10 @@ function except() {
 }
 
 function update_addons() {
-  echo "=====CLEAR=====HIDDEN=====FILE====="
+  log DBG "== Clear ${ADDON_PATH} hidden files =="
   find ${ADDON_PATH} -type f -name ".*" | xargs --no-run-if-empty rm
 
-  echo "=====FIND=====OUT=====FILES=====WITH=====LABEL====="
+  log DBG "== Find out files with labels =="
   local files_with_label=$(find ${ADDON_PATH} -type f -name "*.yaml" ! -type l | xargs --no-run-if-empty grep -l 'cdxvirt/cluster-service: .true.')
   local files_with_label_array=(${files_with_label// / });
   local path filename namespace union_array
@@ -144,8 +144,8 @@ function update_addons() {
 
     # Find out file kind in prune_resource and write it into /tmp/.service_addons_now_status
     for kind in "${file_kind_array[@]}"; do
-      prune_resource=$(containsElement $kind "${prune_resource_array[@]}")
-      not_prune_resource=$(containsElement $kind "${not_prune_resource_array[@]}")
+      prune_resource=$(contains_element $kind "${prune_resource_array[@]}")
+      not_prune_resource=$(contains_element $kind "${not_prune_resource_array[@]}")
       if [[ ${prune_resource} != "" ]]; then
         cat ${path} >> ${ADDON_PATH}/.${file_namespace}.${kind}
         echo "---" >> ${ADDON_PATH}/.${file_namespace}.${kind}
@@ -157,7 +157,7 @@ function update_addons() {
     done
   done
 
-  echo "=====CHECK=====BEFORE=====AND======NOW====="
+  log DBG "== Check before and now yaml status =="
   OLDIFS="$IFS"
   IFS=$'\n'
   union_array=($(union /tmp/.service_addons_before_status /tmp/.service_addons_now_status))
@@ -168,7 +168,7 @@ function update_addons() {
   mv /tmp/.service_addons_now_status.run_one_time /tmp/.service_addons_before_status.run_one_time
   IFS="$OLDIFS"
 
-  echo "=====RUN=====KUBECTL=====COMMAND====="
+  log DBG "== Run command kubectl apply/create/delte =="
   for unit in "${union_array[@]}"; do
     namespace=$(echo ${unit} | awk -F", " '{print$1}')
     resource=$(echo ${unit} | awk -F", " '{print$2}')
@@ -205,11 +205,11 @@ function update_addons() {
   done
 
   if [[ $? -eq 0 ]]; then
-    log INFO "== Kubernetes addon update completed successfully at $(date -Is) =="
+    log INFO "== Service addons update completed successfully at $(date -Is) =="
   fi
 }
 
-log INFO "== Kubernetes addon manager started at $(date -Is) with ADDON_CHECK_INTERVAL_SEC=${ADDON_CHECK_INTERVAL_SEC} =="
+log INFO "== Service addons started at $(date -Is) with ADDON_CHECK_INTERVAL_SEC=${ADDON_CHECK_INTERVAL_SEC} =="
 
 # Start the apply loop.
 # Check if the configuration has changed recently - in case the user
