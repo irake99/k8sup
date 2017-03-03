@@ -580,6 +580,7 @@ Options:
                                e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                                or \"eth0\"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
+    --k8s-version=VERSION      Specify k8s version (Default: 1.5.2)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
@@ -601,8 +602,7 @@ Options:
 function shwo_debug_usage(){
   local USAGE="Usage: ${0##*/} [options...]
 Options:
-    --k8s-version=VERSION      Specify k8s version (Default: 1.5.2)
-    --etcd-version=VERSION     Specify etcd version (Default: 3.0.17)
+    --etcd-version=VERSION     Specify etcd version (Default: 3.0.14)
     --flannel-version=VERSION  Specify flannel version (Default: 0.6.2)
 "
 
@@ -742,7 +742,7 @@ function get_options(){
     export EX_FLANNEL_VERSION="0.6.2"
   fi
   if [[ -z "${EX_ETCD_VERSION}" ]]; then
-    export EX_ETCD_VERSION="3.0.17"
+    export EX_ETCD_VERSION="3.0.14"
   fi
 
   if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
