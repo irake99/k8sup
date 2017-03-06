@@ -8,7 +8,6 @@ RUN apt-get -y install net-tools jq iptables bc module-init-tools uuid-runtime n
 
 COPY cni-conf /go/cni-conf
 COPY kube-conf /go/kube-conf
-COPY optional-svcs /go/optional-svcs
 COPY dnssd /go/dnssd
 COPY flannel-conf /go/flannel-conf
 

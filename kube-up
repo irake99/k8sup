@@ -145,7 +145,8 @@ function update_master_multi_rbd_mount(){
 function update_master_multi_keystone(){
   local MASTER_MULTI_JSON_FILE_PATH="$1"
   local KEYSTONE_IMAGE_NAME="$2"
-  local KEYSTONE_KEYGEN_ARGUMENT="$3"
+  local KEYSTONE_KEYGEN_MODE="$3"
+  local ETCD_PATH_KEYSTONE_KEYS="$4"
   local NEW_MASTER_MULTI_VOLUME_MOUNTS
   local NEW_MASTER_MULTI_VOLUMES
   local NEW_MASTER_MULTI_JSON
@@ -157,7 +158,7 @@ function update_master_multi_keystone(){
   NEW_MASTER_MULTI_KEYSTONE_CONTAINERS="$(echo '[]' \
                    | jq ". |= .+ [{\"name\":\"keystone-tls\"}]" \
                    | jq ".[0] |= .+ {\"image\":\"${KEYSTONE_IMAGE_NAME}\"}" \
-                   | jq ".[0] |= .+ {\"args\":[\"${KEYSTONE_KEYGEN_ARGUMENT}\"]}" \
+                   | jq ".[0] |= .+ {\"args\":[\"${KEYSTONE_KEYGEN_MODE}\",\"${ETCD_PATH_KEYSTONE_KEYS}\"]}" \
                    | jq ".[0] |= .+ {\"volumeMounts\":[{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/etc/keystone/ssl/k8s\"}]}" \
                    | jq ".[0].volumeMounts |= .+ [{\"name\":\"data\",\"mountPath\":\"/srv/kubernetes\"}]")"
   NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
@@ -228,14 +229,15 @@ function rbd_env_detector(){
   return 0
 }
 
+# For master nodes only
 function keystone_operation(){
   local ENABLE_KEYSTONE="$1"
   local ETCD_CLIENT_PORT="$2"
   local REGISTRY="$3"
   local SERVICE_ADDONS_PATH="$4"
   local KUBE_CONF_PATH="$5"
-  local CREATOR="$6"
   local KEYSTONE_REGISTRY
+  local ERROR_CODE
 
   # Try to set etcd key to notify every one that the keystone service is enabled or disabled
   curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/keystone_enabled?prevExist=false" \
@@ -244,22 +246,36 @@ function keystone_operation(){
   [[ -z "${ENABLE_KEYSTONE}" ]] && { echo "etcd error, exiting..." 1>&2; return 1; }
 
   if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
-    echo "Trying to start keystone service..."
     [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && KEYSTONE_REGISTRY="wcen" || KEYSTONE_REGISTRY="${REGISTRY}"
     local KEYSTONE_VERSION="0.1"
-    local KEYSTONE_KEYGEN_ARGUMENT
+    local KEYSTONE_KEYGEN_MODE
     local KEYSTONE_IMAGE_NAME="${KEYSTONE_REGISTRY}/keystone:${KEYSTONE_VERSION}"
     mkdir -p "${SERVICE_ADDONS_PATH}"
-    cp -f "/go/optional-svcs/keystone/keystone-rc.yaml" "${SERVICE_ADDONS_PATH}"
-    cp -f "/go/optional-svcs/keystone/keystone-svc.yaml" "${SERVICE_ADDONS_PATH}"
+    cp -f "/go/kube-conf/optional-addons/keystone/keystone-rc.yaml" "${SERVICE_ADDONS_PATH}"
+    cp -f "/go/kube-conf/optional-addons/keystone/keystone-svc.yaml" "${SERVICE_ADDONS_PATH}"
     sed -i "s|\bKEYSTONE_REGISTRY\b|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\bKEYSTONE_VERSION\b|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    if [[ "${CREATOR}" == "true" ]]; then
-      KEYSTONE_KEYGEN_ARGUMENT="generate_keys"
+
+    local ETCD_PATH_KEYSTONE_KEYS="k8sup/cluster/keystone_keys"
+    local LOCKER_URL="http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH_KEYSTONE_KEYS}"
+    # Try to create the etcd dir for keystone keys.
+    # If succeed, this node will generate keys and upload. If not succeed, this node will download keys.
+    curl -sf "${LOCKER_URL}?prevExist=false" -XPUT -d dir=true &>/dev/null
+    ERROR_CODE="$?"
+    # Error code 22 means the keys have alreay been uploaded by other node before
+    if [[ "${ERROR_CODE}" == "22" ]]; then
+      # Keys on etcd already
+      echo "Prepare to download keystone keys..." 1>&2
+      KEYSTONE_KEYGEN_MODE="download_keys"
+    elif [[ "${ERROR_CODE}" == "0" ]]; then
+      # Keys are not on etcd
+      echo "Prepare to generate keystone keys..." 1>&2
+      KEYSTONE_KEYGEN_MODE="generate_keys"
     else
-      KEYSTONE_KEYGEN_ARGUMENT="download_keys"
+      echo "Connect to etcd error, exiting..." 1>&2
+      return "${ERROR_CODE}"
     fi
-    update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_ARGUMENT}"
+    update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_MODE}" "${ETCD_PATH_KEYSTONE_KEYS}"
   else
     rm -f "${SERVICE_ADDONS_PATH}/keystone-rc.yaml"
     rm -f "${SERVICE_ADDONS_PATH}/keystone-svc.yaml"
@@ -690,7 +706,9 @@ function main(){
     update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
   fi
 
-  keystone_operation "${ENABLE_KEYSTONE}" "${ETCD_CLIENT_PORT}" "${REGISTRY}" "${SERVICE_ADDONS_PATH}" "${KUBE_CONF_PATH}" "${CREATOR}" || exit 1
+  if [[ "${WORKER}" == "false" ]]; then
+    keystone_operation "${ENABLE_KEYSTONE}" "${ETCD_CLIENT_PORT}" "${REGISTRY}" "${SERVICE_ADDONS_PATH}" "${KUBE_CONF_PATH}" || exit 1
+  fi
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   # Remove old/duplicate iptables rules
