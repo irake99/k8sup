@@ -19,6 +19,9 @@ spec:
       - name: service-addons
         image: REGISTRY/kube-addon-manager-ARCH:ADDON_MGR_VER
         imagePullPolicy: IfNotPresent
+        env:
+        - name: image
+          value: REGISTRY/kube-addon-manager-ARCH:ADDON_MGR_VER
         command:
         - /opt/service-addons.sh
         resources:
