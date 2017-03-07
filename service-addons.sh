@@ -113,9 +113,8 @@ function update_addons() {
   local files_with_label=$(find ${ADDON_PATH} -type f -name "*.yaml" ! -type l | xargs --no-run-if-empty grep -l 'cdxvirt/cluster-service: .true.')
   local files_with_label_array=(${files_with_label// / });
   local path filename namespace union_array
-  local not_prune_resource_array=("core/v1/ConfigMap" "storage.k8s.io/v1beta1/StorageClass")
-  local prune_resource_array=("core/v1/Endpoints" \
-                            "core/v1/Namespace" \
+  local not_prune_resource_array=("core/v1/ConfigMap" "storage.k8s.io/v1beta1/StorageClass" "core/v1/Endpoints")
+  local prune_resource_array=("core/v1/Namespace" \
                             "core/v1/PersistentVolumeClaim" \
                             "core/v1/PersistentVolume" \
                             "core/v1/Pod" \
