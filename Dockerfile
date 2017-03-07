@@ -1,4 +1,4 @@
-FROM golang:1.6.3
+FROM golang:1.7.5
 MAINTAINER hsfeng@gmail.com
 
 RUN apt-get -y update
@@ -13,7 +13,7 @@ COPY flannel-conf /go/flannel-conf
 
 WORKDIR /go
 
-RUN go get "github.com/oleksandr/bonjour" \
+RUN go get "github.com/grandcat/zeroconf" \
     && go build -o /go/dnssd/registering /go/dnssd/registering.go \
     && go build -o /go/dnssd/browsing /go/dnssd/browsing.go
 
