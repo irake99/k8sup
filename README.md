@@ -54,12 +54,12 @@ $ docker run -d \
 
 Stop k8s:
 ```
-$ sudo docker exec k8sup /go/kube-down
+$ docker exec k8sup /go/kube-down
 ```
 
 Show k8sup log and Cluster ID:
 ```
-$ sudo docker logs k8sup
+$ docker logs k8sup
 ```
 
 If you want to delete etcd data:
@@ -80,4 +80,4 @@ NOTE:
 
 2. k8sup ships with a default ntp service to synchronize system time of whole cluster. If a node is running other NTP client already, k8sup will not synchronize system time for this node, so you need to ensure all cluster nodes have the same system time by yourself.
 
-3. Running k8sup on Ubuntu 16.04.2 <br /> https://gist.github.com/hsfeng/7fa5b57b68a62d7f14f3a10fc7db46cf <br /> 
+3. Running k8sup on Ubuntu 16.04.2 <br /> https://gist.github.com/hsfeng/7fa5b57b68a62d7f14f3a10fc7db46cf <br />
