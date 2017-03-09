@@ -163,6 +163,25 @@ function stop_k8s(){
       /hyperkube kubectl -s "${APISERVER}" \
         --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
         delete node "${IPADDR}"
+
+    # Stop all OSD containers on this node
+    CONTAINER_IDS="$(docker ps | grep -E "k8s_ceph-osd-pod.[[:alnum:]]{7,8}_ceph-osd-[[:alnum:]]{5}_ceph" | awk '{print $1}')"
+    [[ -n "${CONTAINER_IDS}" ]] && docker exec ${CONTAINER_IDS} ceph-api stop_all_osds 1>/dev/null
+
+    # Waiting for all non-kube-system pods leave
+    until ! \
+        docker run \
+          --net=host \
+          --rm=true \
+          --volume=${KUBELET_VARLIB}/kubeconfig:${KUBELET_VARLIB}/kubeconfig:ro \
+          "${HYPERKUBE_IMAGE}" \
+          /hyperkube kubectl -s "${APISERVER}" \
+            --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
+            get po --all-namespaces -o wide \
+              | grep -v "\<kube-system\>" \
+              | grep "\<${IPADDR}\>" &>/dev/null; do
+      sleep 2
+    done
   fi
 
   # Only for exit local k8s service
