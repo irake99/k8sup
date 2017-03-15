@@ -4,6 +4,7 @@ metadata:
   name: keystone
   labels:
     name: keystone
+    cdxvirt/cluster-service: "true"
 spec:
   replicas: 1
   selector:
