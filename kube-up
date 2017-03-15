@@ -236,6 +236,7 @@ function keystone_operation(){
   local REGISTRY="$3"
   local SERVICE_ADDONS_PATH="$4"
   local KUBE_CONF_PATH="$5"
+  local WORKER="$6"
   local KEYSTONE_REGISTRY
   local ERROR_CODE
 
@@ -256,26 +257,29 @@ function keystone_operation(){
     sed -i "s|\bKEYSTONE_REGISTRY\b|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\bKEYSTONE_VERSION\b|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
 
-    local ETCD_PATH_KEYSTONE_KEYS="k8sup/cluster/keystone_keys"
-    local LOCKER_URL="http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH_KEYSTONE_KEYS}"
-    # Try to create the etcd dir for keystone keys.
-    # If succeed, this node will generate keys and upload. If not succeed, this node will download keys.
-    curl -sf "${LOCKER_URL}?prevExist=false" -XPUT -d dir=true &>/dev/null
-    ERROR_CODE="$?"
-    # Error code 22 means the keys have alreay been uploaded by other node before
-    if [[ "${ERROR_CODE}" == "22" ]]; then
-      # Keys on etcd already
-      echo "Prepare to download keystone keys..." 1>&2
-      KEYSTONE_KEYGEN_MODE="download_keys"
-    elif [[ "${ERROR_CODE}" == "0" ]]; then
-      # Keys are not on etcd
-      echo "Prepare to generate keystone keys..." 1>&2
-      KEYSTONE_KEYGEN_MODE="generate_keys"
-    else
-      echo "Connect to etcd error, exiting..." 1>&2
-      return "${ERROR_CODE}"
+    if [[ "${WORKER}" == "false" ]]; then
+      # Only master nodes need to modify 'master-multi.json'.
+      local ETCD_PATH_KEYSTONE_KEYS="k8sup/cluster/keystone_keys"
+      local LOCKER_URL="http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH_KEYSTONE_KEYS}"
+      # Try to create the etcd dir for keystone keys.
+      # If succeed, this node will generate keys and upload. If not succeed, this node will download keys.
+      curl -sf "${LOCKER_URL}?prevExist=false" -XPUT -d dir=true &>/dev/null
+      ERROR_CODE="$?"
+      # Error code 22 means the keys have alreay been uploaded by other node before
+      if [[ "${ERROR_CODE}" == "22" ]]; then
+        # Keys on etcd already
+        echo "Prepare to download keystone keys..." 1>&2
+        KEYSTONE_KEYGEN_MODE="download_keys"
+      elif [[ "${ERROR_CODE}" == "0" ]]; then
+        # Keys are not on etcd
+        echo "Prepare to generate keystone keys..." 1>&2
+        KEYSTONE_KEYGEN_MODE="generate_keys"
+      else
+        echo "Connect to etcd error, exiting..." 1>&2
+        return "${ERROR_CODE}"
+      fi
+      update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_MODE}" "${ETCD_PATH_KEYSTONE_KEYS}"
     fi
-    update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_MODE}" "${ETCD_PATH_KEYSTONE_KEYS}"
   else
     rm -f "${SERVICE_ADDONS_PATH}/keystone-rc.yaml"
     rm -f "${SERVICE_ADDONS_PATH}/keystone-svc.yaml"
@@ -706,9 +710,7 @@ function main(){
     update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
   fi
 
-  if [[ "${WORKER}" == "false" ]]; then
-    keystone_operation "${ENABLE_KEYSTONE}" "${ETCD_CLIENT_PORT}" "${REGISTRY}" "${SERVICE_ADDONS_PATH}" "${KUBE_CONF_PATH}" || exit 1
-  fi
+  keystone_operation "${ENABLE_KEYSTONE}" "${ETCD_CLIENT_PORT}" "${REGISTRY}" "${SERVICE_ADDONS_PATH}" "${KUBE_CONF_PATH}" "${WORKER}" || exit 1
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   # Remove old/duplicate iptables rules
