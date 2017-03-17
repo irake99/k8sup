@@ -28,10 +28,6 @@
         {
           "name": "kubeconfig",
           "mountPath": "/var/lib/kubelet/kubeconfig"
-        },
-        {
-          "name": "resolv-conf",
-          "mountPath": "/etc/resolv.conf"
         }
       ]
     },
@@ -131,12 +127,6 @@
       "name": "kubeconfig",
       "hostPath": {
         "path": "/var/lib/kubelet/kubeconfig"
-      }
-    },
-    {
-      "name": "resolv-conf",
-      "hostPath": {
-        "path": "/etc/kubernetes/resolv.conf"
       }
     }
   ]
