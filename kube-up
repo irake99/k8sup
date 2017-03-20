@@ -148,6 +148,7 @@ function update_master_multi_keystone(){
   local KEYSTONE_KEYGEN_MODE="$3"
   local ETCD_PATH_KEYSTONE_KEYS="$4"
   local KUBE_ETC="$5"
+  local KEYSTOME_SSL_KEY_PATH="$6"
   local NEW_MASTER_MULTI_VOLUME_MOUNTS
   local NEW_MASTER_MULTI_VOLUMES
   local NEW_MASTER_MULTI_JSON
@@ -163,7 +164,7 @@ function update_master_multi_keystone(){
                    | jq ".[0] |= .+ {\"volumeMounts\":[{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/etc/keystone/ssl/k8s\"}]}" \
                    | jq ".[0].volumeMounts |= .+ [{\"name\":\"data\",\"mountPath\":\"/srv/kubernetes\"}]")"
   NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
-               | jq ". |= .+ [{\"name\":\"keystone-tls-certs\",\"emptyDir\":{}}]")"
+               | jq ". |= .+ [{\"name\":\"keystone-tls-certs\",\"hostPath\":{\"path\":\"${KEYSTOME_SSL_KEY_PATH}\"}}]")"
   if [[ -z "$(jq -r '.spec.volumes[]  | select(contains({"name":"resolv-conf"}))' "${MASTER_MULTI_JSON_FILE_PATH}")" ]]; then
     NEW_MASTER_MULTI_VOLUMES="$(echo "${NEW_MASTER_MULTI_VOLUMES}" \
       | jq ". |= .+ [{\"name\":\"resolv-conf\",\"hostPath\":{\"path\":\"${KUBE_ETC}/resolv.conf\"}}]")"
@@ -244,6 +245,9 @@ function keystone_operation(){
   local WORKER="$6"
   local KUBE_ETC="$7"
   local KUBEDNS_CLUSTER_IP="$8"
+  local KEYSTOME_SSL_KEY_PATH="/etc/kubernetes/keystone/keys"
+  local LDAP_DOMAIN_ADMIN="openldap"
+  local LDAP_PASSWORD_ADMIN="k8sup"
   local KEYSTONE_REGISTRY
   local ERROR_CODE
 
@@ -261,8 +265,13 @@ function keystone_operation(){
     mkdir -p "${SERVICE_ADDONS_PATH}"
     cp -f "/go/kube-conf/optional-addons/keystone/keystone-rc.yaml" "${SERVICE_ADDONS_PATH}"
     cp -f "/go/kube-conf/optional-addons/keystone/keystone-svc.yaml" "${SERVICE_ADDONS_PATH}"
+    sed -i "s|\bLDAP_DOMAIN_ADMIN\b|${LDAP_DOMAIN_ADMIN}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\bLDAP_PASSWORD_ADMIN\b|${LDAP_PASSWORD_ADMIN}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\bKEYSTOME_SSL_KEY_PATH\b|${KEYSTOME_SSL_KEY_PATH}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\bKEYSTONE_REGISTRY\b|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\bKEYSTONE_VERSION\b|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    echo "LDAP ADMIN : ${LDAP_DOMAIN_ADMIN}" 1>&2
+    echo "LDAP PASSWD: ${LDAP_PASSWORD_ADMIN}" 1>&2
 
     if [[ "${WORKER}" == "false" ]]; then
       # Only master nodes need to modify 'master-multi.json'.
@@ -289,7 +298,10 @@ function keystone_operation(){
       make_resolv_conf "${KUBE_ETC}" "${KUBEDNS_CLUSTER_IP}"
       # Update the yaml file of master pods for adding the keystone key maintainer
       update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" \
-        "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_MODE}" "${ETCD_PATH_KEYSTONE_KEYS}" "${KUBE_ETC}"
+        "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_MODE}" "${ETCD_PATH_KEYSTONE_KEYS}" \
+        "${KUBE_ETC}" "${KEYSTOME_SSL_KEY_PATH}"
+      # Make sure that there has no old keys
+      rm -rf "${KEYSTOME_SSL_KEY_PATH}"
     fi
   else
     rm -f "${SERVICE_ADDONS_PATH}/keystone-rc.yaml"

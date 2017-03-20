@@ -24,11 +24,18 @@ spec:
         - containerPort: 35357
         env:
         - name: LDAP_DOMAIN
-          value: openldap
+          value: LDAP_DOMAIN_ADMIN
         - name: LDAP_PASSWORD
-          value: e8fcf4a0f8384e2da2297587b0ef198e
+          value: LDAP_PASSWORD_ADMIN
         livenessProbe:
           tcpSocket:
             port: 5000
           initialDelaySeconds: 30
           timeoutSeconds: 1
+        volumeMounts:
+        - name: key-files
+          mountPath: /etc/keystone/ssl/k8s
+      volumes:
+      - name: key-files
+        hostPath:
+          path: KEYSTOME_SSL_KEY_PATH
