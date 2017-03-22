@@ -246,8 +246,12 @@ function keystone_operation(){
   local KUBE_ETC="$7"
   local KUBEDNS_CLUSTER_IP="$8"
   local KEYSTOME_SSL_KEY_PATH="/etc/kubernetes/keystone/keys"
-  local LDAP_DOMAIN_ADMIN="openldap"
-  local LDAP_PASSWORD_ADMIN="k8sup"
+  local LDAP_DC_ADMIN_K8SUP="openldap"
+  local LDAP_DOMAIN_ADMIN_K8SUP="openldap"
+  local LDAP_PASSWORD_ADMIN_K8SUP="k8sup"
+  local KEYSTONE_MODE="k8sup"
+  local KEYSTONE_DEFAULT_USER_K8SUP="k8sup"
+  local KEYSTONE_DEFAULT_PASS_K8SUP="k8sup"
   local KEYSTONE_REGISTRY
   local ERROR_CODE
 
@@ -265,13 +269,17 @@ function keystone_operation(){
     mkdir -p "${SERVICE_ADDONS_PATH}"
     cp -f "/go/kube-conf/optional-addons/keystone/keystone-rc.yaml" "${SERVICE_ADDONS_PATH}"
     cp -f "/go/kube-conf/optional-addons/keystone/keystone-svc.yaml" "${SERVICE_ADDONS_PATH}"
-    sed -i "s|\bLDAP_DOMAIN_ADMIN\b|${LDAP_DOMAIN_ADMIN}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\bLDAP_PASSWORD_ADMIN\b|${LDAP_PASSWORD_ADMIN}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\bKEYSTOME_SSL_KEY_PATH\b|${KEYSTOME_SSL_KEY_PATH}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\bKEYSTONE_REGISTRY\b|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\bKEYSTONE_VERSION\b|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    echo "LDAP ADMIN : ${LDAP_DOMAIN_ADMIN}" 1>&2
-    echo "LDAP PASSWD: ${LDAP_PASSWORD_ADMIN}" 1>&2
+    sed -i "s|\<KEYSTONE_DEFAULT_USER_K8SUP\>|${KEYSTONE_DEFAULT_USER_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\<KEYSTONE_DEFAULT_PASS_K8SUP\>|${KEYSTONE_DEFAULT_PASS_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\<LDAP_DOMAIN_ADMIN_K8SUP\>|${LDAP_DOMAIN_ADMIN_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\<LDAP_PASSWORD_ADMIN_K8SUP\>|${LDAP_PASSWORD_ADMIN_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\<LDAP_DC_ADMIN_K8SUP\>|${LDAP_DC_ADMIN_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\<KEYSTOME_SSL_KEY_PATH\>|${KEYSTOME_SSL_KEY_PATH}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\<KEYSTONE_MODE\>|${KEYSTONE_MODE}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\<KEYSTONE_REGISTRY\>|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\<KEYSTONE_VERSION\>|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    echo "Keystone default user  : ${KEYSTONE_DEFAULT_USER_K8SUP}" 1>&2
+    echo "Keystone default passwd: ${KEYSTONE_DEFAULT_PASS_K8SUP}" 1>&2
 
     if [[ "${WORKER}" == "false" ]]; then
       # Only master nodes need to modify 'master-multi.json'.

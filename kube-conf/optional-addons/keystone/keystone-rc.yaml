@@ -18,15 +18,18 @@ spec:
       - name: keystone
         image: KEYSTONE_REGISTRY/keystone:KEYSTONE_VERSION
         imagePullPolicy: IfNotPresent
-        args: ["k8sup_ldap"]
-        ports:
-        - containerPort: 5000
-        - containerPort: 35357
+        args: ["KEYSTONE_MODE"]
         env:
+        - name: KEYSTONE_DEFAULT_USER
+          value: KEYSTONE_DEFAULT_USER_K8SUP
+        - name: KEYSTONE_DEFAULT_PASS
+          value: KEYSTONE_DEFAULT_PASS_K8SUP
         - name: LDAP_DOMAIN
-          value: LDAP_DOMAIN_ADMIN
+          value: LDAP_DOMAIN_ADMIN_K8SUP
+        - name: LDAP_DC
+          value: LDAP_DC_ADMIN_K8SUP
         - name: LDAP_PASSWORD
-          value: LDAP_PASSWORD_ADMIN
+          value: LDAP_PASSWORD_ADMIN_K8SUP
         livenessProbe:
           tcpSocket:
             port: 5000

@@ -10,7 +10,9 @@ spec:
   ports:
   - name: public
     port: 5000
+    targetPort: 5000
   - name: admin
     port: 35357
+    targetPort: 35357
   selector:
     name: keystone
