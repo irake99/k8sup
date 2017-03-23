@@ -105,6 +105,22 @@ function except() {
   IFS="$OLDIFS"
 }
 
+function parse_yaml() {
+  local prefix=$2
+  local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
+  sed -ne "s|^\($s\)\($w\)$s:$s\"\(.*\)\"$s\$|\1$fs\2$fs\3|p" \
+      -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$fs\2$fs\3|p"  $1 |
+  awk -F$fs '{
+    indent = length($1)/2;
+    vname[indent] = $2;
+    for (i in vname) {if (i > indent) {delete vname[i]}}
+    if (length($3) > 0) {
+       vn=""; for (i=0; i<indent; i++) {vn=(vn)(vname[i])("_")}
+       printf("%s%s%s=\"%s\"\n", "'$prefix'",vn, $2, $3);
+    }
+    }'
+}
+
 function update_addons() {
   log DBG "== Clear ${ADDON_PATH} hidden files =="
   find ${ADDON_PATH} -type f -name ".*" | xargs --no-run-if-empty rm
@@ -150,7 +166,7 @@ function update_addons() {
         echo "---" >> ${ADDON_PATH}/.${file_namespace}.${kind}
         echo "$file_namespace, $prune_resource" >> /tmp/.service_addons_now_status
       elif [[ ${not_prune_resource} != "" ]]; then
-        meta_name=$(cat ${path} | sed 's/"//g; s/ //g;' | sed -n 's/name://p')
+        meta_name=$(parse_yaml ${path}|awk -F\" '/metadata_name=/{print $2}')
         echo "$file_namespace, $not_prune_resource, $meta_name, $path" >> /tmp/.service_addons_now_status.run_one_time
       fi
     done
