@@ -144,35 +144,27 @@ function update_master_multi_rbd_mount(){
 
 function update_master_multi_keystone(){
   local MASTER_MULTI_JSON_FILE_PATH="$1"
-  local KEYSTONE_IMAGE_NAME="$2"
-  local KEYSTONE_KEYGEN_MODE="$3"
-  local ETCD_PATH_KEYSTONE_KEYS="$4"
-  local KUBE_ETC="$5"
-  local KEYSTOME_SSL_KEY_PATH="$6"
+  local KEYSTONE_CLUSTER_IP="$2"
+  local KEYSTONE_IMAGE_NAME="$3"
+  local KEYSTONE_KEYGEN_MODE="$4"
+  local ETCD_PATH_KEYSTONE_KEYS="$5"
+  local KUBE_ETC="$6"
+  local KEYSTOME_SSL_KEY_PATH="$7"
   local NEW_MASTER_MULTI_VOLUME_MOUNTS
   local NEW_MASTER_MULTI_VOLUMES
   local NEW_MASTER_MULTI_JSON
   [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
 
-  NEW_MASTER_MULTI_VOLUME_MOUNTS="$(echo '[]' \
-                   | jq ". |= .+ [{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/srv/keystone\"}]" \
-                   | jq ". |= .+ [{\"name\":\"resolv-conf\",\"mountPath\":\"/etc/resolv.conf\"}]")"
   NEW_MASTER_MULTI_KEYSTONE_CONTAINERS="$(echo '[]' \
                    | jq ". |= .+ [{\"name\":\"keystone-tls\"}]" \
                    | jq ".[0] |= .+ {\"image\":\"${KEYSTONE_IMAGE_NAME}\"}" \
                    | jq ".[0] |= .+ {\"args\":[\"${KEYSTONE_KEYGEN_MODE}\",\"${ETCD_PATH_KEYSTONE_KEYS}\"]}" \
-                   | jq ".[0] |= .+ {\"volumeMounts\":[{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/etc/keystone/ssl/k8s\"}]}" \
-                   | jq ".[0].volumeMounts |= .+ [{\"name\":\"data\",\"mountPath\":\"/srv/kubernetes\"}]")"
+                   | jq ".[0] |= .+ {\"volumeMounts\":[{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/etc/keystone/ssl/k8s\"}]}")"
   NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
                | jq ". |= .+ [{\"name\":\"keystone-tls-certs\",\"hostPath\":{\"path\":\"${KEYSTOME_SSL_KEY_PATH}\"}}]")"
-  if [[ -z "$(jq -r '.spec.volumes[]  | select(contains({"name":"resolv-conf"}))' "${MASTER_MULTI_JSON_FILE_PATH}")" ]]; then
-    NEW_MASTER_MULTI_VOLUMES="$(echo "${NEW_MASTER_MULTI_VOLUMES}" \
-      | jq ". |= .+ [{\"name\":\"resolv-conf\",\"hostPath\":{\"path\":\"${KUBE_ETC}/resolv.conf\"}}]")"
-  fi
   NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
-    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-url=https://keystone.default.svc.cluster.local:35357/v2.0\"]" \
-    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-ca-file=/srv/keystone/ca.pem\"]" \
-    | jq ".spec.containers[1].volumeMounts |= .+ ${NEW_MASTER_MULTI_VOLUME_MOUNTS}" \
+    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-url=https://${KEYSTONE_CLUSTER_IP}:35357/v2.0\"]" \
+    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-ca-file=/srv/kubernetes/ca.crt\"]" \
     | jq ".spec.containers |= .+ ${NEW_MASTER_MULTI_KEYSTONE_CONTAINERS}" \
     | jq ".spec.volumes |= .+ ${NEW_MASTER_MULTI_VOLUMES}")"
   [[ -z "${NEW_MASTER_MULTI_JSON}" ]] || [[ "${NEW_MASTER_MULTI_JSON}" == "null" ]] && return 1
@@ -238,13 +230,14 @@ function rbd_env_detector(){
 # For master nodes only
 function keystone_operation(){
   local ENABLE_KEYSTONE="$1"
-  local ETCD_CLIENT_PORT="$2"
-  local REGISTRY="$3"
-  local SERVICE_ADDONS_PATH="$4"
-  local KUBE_CONF_PATH="$5"
-  local WORKER="$6"
-  local KUBE_ETC="$7"
-  local KUBEDNS_CLUSTER_IP="$8"
+  local KEYSTONE_CLUSTER_IP="$2"
+  local ETCD_CLIENT_PORT="$3"
+  local REGISTRY="$4"
+  local SERVICE_ADDONS_PATH="$5"
+  local KUBE_CONF_PATH="$6"
+  local WORKER="$7"
+  local KUBE_ETC="$8"
+  local KUBEDNS_CLUSTER_IP="$9"
   local KEYSTOME_SSL_KEY_PATH="/etc/kubernetes/keystone/keys"
   local LDAP_DC_ADMIN_K8SUP="openldap"
   local LDAP_DOMAIN_ADMIN_K8SUP="openldap"
@@ -254,6 +247,7 @@ function keystone_operation(){
   local KEYSTONE_DEFAULT_PASS_K8SUP="k8sup"
   local KEYSTONE_REGISTRY
   local ERROR_CODE
+  local ETCD_PATH_KEYSTONE_KEYS
 
   # Try to set etcd key to notify every one that the keystone service is enabled or disabled
   curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/keystone_enabled?prevExist=false" \
@@ -278,36 +272,19 @@ function keystone_operation(){
     sed -i "s|\<KEYSTONE_MODE\>|${KEYSTONE_MODE}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\<KEYSTONE_REGISTRY\>|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\<KEYSTONE_VERSION\>|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
+    sed -i "s|\<KEYSTONE_CLUSTER_IP\>|${KEYSTONE_CLUSTER_IP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     echo "Keystone default user  : ${KEYSTONE_DEFAULT_USER_K8SUP}" 1>&2
     echo "Keystone default passwd: ${KEYSTONE_DEFAULT_PASS_K8SUP}" 1>&2
 
     if [[ "${WORKER}" == "false" ]]; then
-      # Only master nodes need to modify 'master-multi.json'.
-      local ETCD_PATH_KEYSTONE_KEYS="k8sup/cluster/keystone_keys"
-      local LOCKER_URL="http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH_KEYSTONE_KEYS}"
-      # Try to create the etcd dir for keystone keys.
-      # If succeed, this node will generate keys and upload. If not succeed, this node will download keys.
-      curl -sf "${LOCKER_URL}?prevExist=false" -XPUT -d dir=true &>/dev/null
-      ERROR_CODE="$?"
-      # Error code 22 means the keys have alreay been uploaded by other node before
-      if [[ "${ERROR_CODE}" == "22" ]]; then
-        # Keys on etcd already
-        echo "Prepare to download keystone keys..." 1>&2
-        KEYSTONE_KEYGEN_MODE="download_keys"
-      elif [[ "${ERROR_CODE}" == "0" ]]; then
-        # Keys are not on etcd
-        echo "Prepare to generate keystone keys..." 1>&2
-        KEYSTONE_KEYGEN_MODE="generate_keys"
-      else
-        echo "Connect to etcd error, exiting..." 1>&2
-        return "${ERROR_CODE}"
-      fi
+      KEYSTONE_KEYGEN_MODE="download_keys"
+      ETCD_PATH_KEYSTONE_KEYS="k8sup/cluster/k8s_certs"
       # Make keystone can directly use service domain names from kube-DNS
       make_resolv_conf "${KUBE_ETC}" "${KUBEDNS_CLUSTER_IP}"
       # Update the yaml file of master pods for adding the keystone key maintainer
       update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" \
-        "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_MODE}" "${ETCD_PATH_KEYSTONE_KEYS}" \
-        "${KUBE_ETC}" "${KEYSTOME_SSL_KEY_PATH}"
+        "${KEYSTONE_CLUSTER_IP}" "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_MODE}" \
+        "${ETCD_PATH_KEYSTONE_KEYS}" "${KUBE_ETC}" "${KEYSTOME_SSL_KEY_PATH}"
       # Make sure that there has no old keys
       rm -rf "${KEYSTOME_SSL_KEY_PATH}"
     fi
@@ -597,8 +574,10 @@ function main(){
   local SERVICE_ADDONS_PATH="${KUBE_ETC}/service-addons"
   local KUBELET_VARLIB="/var/lib/kubelet"
   local IP_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
+  local KEYSTONE_CLUSTER_IP="10.0.0.20"
+  local KEYSTONE_DN="keystone.default.svc.cluster.local"
   local MASTER_PUB_DN="kubernetes-public.default.svc.cluster.local"
-  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN}"
+  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,IP:${KEYSTONE_CLUSTER_IP},DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN},DNS:${KEYSTONE_DN}"
   local KUBEDNS_CLUSTER_IP="10.0.0.10"
   local KUBEDNS
   local KUBEDNS_OPTION
@@ -738,7 +717,7 @@ function main(){
     update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
   fi
 
-  keystone_operation "${ENABLE_KEYSTONE}" "${ETCD_CLIENT_PORT}" "${REGISTRY}" \
+  keystone_operation "${ENABLE_KEYSTONE}" "${KEYSTONE_CLUSTER_IP}" "${ETCD_CLIENT_PORT}" "${REGISTRY}" \
     "${SERVICE_ADDONS_PATH}" "${KUBE_CONF_PATH}" "${WORKER}" "${KUBE_ETC}" "${KUBEDNS_CLUSTER_IP}" || exit 1
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
