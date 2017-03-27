@@ -38,73 +38,6 @@ function log() {
   esac
 }
 
-function contains_element() {
-  local e
-  for e in "${@:2}"; do [[ $e == *"$1"* ]] && echo "$e"; done
-}
-
-function prune_resource() {
-  local namespace=$1
-  local prune_whitelist=$2
-  local path=$3
-  random=$(echo $RANDOM)
-
-cat > ${path} << EOF
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: clear-${random}
-  labels:
-    cdxvirt/cluster-service: "true"
-spec:
-  containers:
-  - name: clear-${random}
-    image: ${image}
-    command:
-    - "kubectl"
-    - "delete"
-    - "pod"
-    - "clear-${random}"
-EOF
-
-  ${KUBECTL} --namespace ${namespace} apply --prune=true --prune-whitelist=${prune_whitelist} -l cdxvirt/cluster-service=true -f ${path}
-}
-
-function union() {
-  local OLDIFS
-  local file1=$1
-  local file2=$2
-  local union_array
-
-  test -s ${file1} || touch ${file1}
-  test -s ${file2} || touch ${file2}
-
-  OLDIFS="$IFS"
-  IFS=$'\n'
-
-  union_array=($(sort ${file1} ${file2} | uniq))
-  echo "${union_array[*]}"
-  IFS="$OLDIFS"
-}
-
-function except() {
-  local OLDIFS
-  local file1=$1
-  local file2=$2
-  local except_array
-
-  test -s ${file1} || touch ${file1}
-  test -s ${file2} || touch ${file2}
-
-  OLDIFS="$IFS"
-  IFS=$'\n'
-
-  except_array=($(grep -F -f ${file1} ${file2} -v))
-  echo "${except_array[*]}"
-  IFS="$OLDIFS"
-}
-
 function parse_yaml() {
   local prefix=$2
   local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
@@ -121,103 +54,46 @@ function parse_yaml() {
     }'
 }
 
+function find_deleted_yaml() {
+  local yaml_in_installed=$(find ${ADDON_PATH}/installed -type f -name ".*")
+
+  for path in $yaml_in_installed; do
+    filename=$(echo $path | sed 's/.*\/.//')
+    namespace=$(parse_yaml ${path}|awk -F\" '/metadata_namespace=/{print $2}')
+    if [ -z ${namespace} ]; then
+      namespace="default"
+    else
+      namespace=$namespace
+    fi
+
+    log DBG "PATH: ${path}, FILENAME: ${filename}, NAMESPACE: ${namespace}"
+
+    test -s ${ADDON_PATH}/installed/${filename} || ( kubectl delete -n ${namespace} -f ${path} && rm -f ${path} )
+  done
+}
+
 function update_addons() {
-  log DBG "== Clear ${ADDON_PATH} hidden files =="
-  find ${ADDON_PATH} -type f -name ".*" | xargs --no-run-if-empty rm
-
   log DBG "== Find out files with labels =="
-  local files_with_label=$(find ${ADDON_PATH} -type f -name "*.yaml" ! -type l | xargs --no-run-if-empty grep -l 'cdxvirt/cluster-service: .true.')
-  local files_with_label_array=(${files_with_label// / });
-  local path filename namespace union_array
-  local not_prune_resource_array=("core/v1/ConfigMap" "storage.k8s.io/v1beta1/StorageClass" "core/v1/Endpoints")
-  local prune_resource_array=("core/v1/Namespace" \
-                            "core/v1/PersistentVolumeClaim" \
-                            "core/v1/PersistentVolume" \
-                            "core/v1/Pod" \
-                            "core/v1/ReplicationController" \
-                            "core/v1/Secret" \
-                            "core/v1/Service" \
-                            "batch/v1/Job" \
-                            "extensions/v1beta1/DaemonSet" \
-                            "extensions/v1beta1/Deployment" \
-                            "extensions/v1beta1/HorizontalPodAutoscaler" \
-                            "extensions/v1beta1/Ingress" \
-                            "extensions/v1beta1/ReplicaSet" \
-                            "apps/v1beta1/StatefulSet")
+  local files_with_label=$(find ${ADDON_PATH} -path "${ADDON_PATH}/installed" -prune -o -type f -name "*.yaml" -print | xargs --no-run-if-empty grep -l 'cdxvirt/cluster-service: .true.')
 
-  for path in "${files_with_label_array[@]}"; do
+  for file in $files_with_label; do
+    path=${file}
     filename=$(echo $path | sed 's/.*\///')
-    file_kind=$(find ${path} | xargs sed 's/"//g; s/ //g' | grep "kind:" | sed 's/kind://g' | sort | uniq)
-    file_kind_array=(${file_kind// / });
-    file_namespace=$(find ${path} | xargs sed 's/"//g; s/ //g' | grep "namespace:" | sed 's/namespace://g')
-
-    if [ -z ${file_namespace} ]; then
-      file_namespace="default"
+    name=$(parse_yaml ${path}|awk -F\" '/metadata_name=/{print $2}')
+    kind=$(parse_yaml ${path}|awk -F\" '/kind=/{print $2}')
+    namespace=$(parse_yaml ${path}|awk -F\" '/metadata_namespace=/{print $2}')
+    if [ -z ${namespace} ]; then
+      namespace="default"
     else
-      file_namespace=$file_namespace
+      namespace=$namespace
     fi
 
-    # Find out file kind in prune_resource and write it into /tmp/.service_addons_now_status
-    for kind in "${file_kind_array[@]}"; do
-      prune_resource=$(contains_element $kind "${prune_resource_array[@]}")
-      not_prune_resource=$(contains_element $kind "${not_prune_resource_array[@]}")
-      if [[ ${prune_resource} != "" ]]; then
-        cat ${path} >> ${ADDON_PATH}/.${file_namespace}.${kind}
-        echo "---" >> ${ADDON_PATH}/.${file_namespace}.${kind}
-        echo "$file_namespace, $prune_resource" >> /tmp/.service_addons_now_status
-      elif [[ ${not_prune_resource} != "" ]]; then
-        meta_name=$(parse_yaml ${path}|awk -F\" '/metadata_name=/{print $2}')
-        echo "$file_namespace, $not_prune_resource, $meta_name, $path" >> /tmp/.service_addons_now_status.run_one_time
-      fi
-    done
+    kubectl apply -n ${namespace} -f ${path}
+    mv -f ${path} ${ADDON_PATH}/installed/${filename}
+    cp ${ADDON_PATH}/installed/${filename} ${ADDON_PATH}/installed/.${filename}
   done
 
-  log DBG "== Check before and now yaml status =="
-  OLDIFS="$IFS"
-  IFS=$'\n'
-  union_array=($(union /tmp/.service_addons_before_status /tmp/.service_addons_now_status))
-  mv /tmp/.service_addons_now_status /tmp/.service_addons_before_status
-
-  create_array=($(except /tmp/.service_addons_before_status.run_one_time /tmp/.service_addons_now_status.run_one_time))
-  delete_array=($(except /tmp/.service_addons_now_status.run_one_time /tmp/.service_addons_before_status.run_one_time))
-  mv /tmp/.service_addons_now_status.run_one_time /tmp/.service_addons_before_status.run_one_time
-  IFS="$OLDIFS"
-
-  log DBG "== Run command kubectl apply/create/delte =="
-  for unit in "${union_array[@]}"; do
-    namespace=$(echo ${unit} | awk -F", " '{print$1}')
-    resource=$(echo ${unit} | awk -F", " '{print$2}')
-    kind=$(echo ${resource} | sed 's/.*\///g')
-    path="${ADDON_PATH}/.${namespace}.${kind}"
-
-    # Run with kubectl apply
-    if [[ -f ${path} ]]; then
-      ${KUBECTL} --namespace ${namespace} apply --prune=true --prune-whitelist=${resource} -l cdxvirt/cluster-service=true -f ${path}
-    else
-      prune_resource ${namespace} ${resource} ${path}
-    fi
-  done
-
-  # Run with kubectl create/delete
-  for unit in "${create_array[@]}"; do
-    namespace=$(echo ${unit} | awk -F", " '{print$1}')
-    resource=$(echo ${unit} | awk -F", " '{print$2}')
-    meta_name=$(echo ${unit} | awk -F", " '{print$3}')
-    path=$(echo ${unit} | awk -F", " '{print$4}')
-    kind=$(echo ${resource} | sed 's/.*\///g')
-
-    ${KUBECTL} --namespace ${namespace} create -f ${path}
-  done
-
-  for unit in "${delete_array[@]}"; do
-    namespace=$(echo ${unit} | awk -F", " '{print$1}')
-    resource=$(echo ${unit} | awk -F", " '{print$2}')
-    meta_name=$(echo ${unit} | awk -F", " '{print$3}')
-    path=$(echo ${unit} | awk -F", " '{print$4}')
-    kind=$(echo ${resource} | sed 's/.*\///g')
-
-    ${KUBECTL} --namespace ${namespace} delete ${kind} ${meta_name}
-  done
+  find_deleted_yaml
 
   if [[ $? -eq 0 ]]; then
     log INFO "== Service addons update completed successfully at $(date -Is) =="
