@@ -183,13 +183,22 @@ function download_kube_certs(){
 }
 
 function export_keystone_ssl(){
-  local KEYSTONE_SSL_PATH="/etc/kubernetes/keystone/ssl"
+  local KEYSTONE_CERTS_PATH="/srv/keystone"
   local CERTS_DIR="/srv/kubernetes"
 
-  mkdir -p "${KEYSTONE_SSL_PATH}"
-  openssl x509 -outform PEM -in "${CERTS_DIR}/ca.crt"      -out "${KEYSTONE_SSL_PATH}/ca.pem"
-  openssl x509 -outform PEM -in "${CERTS_DIR}/server.cert" -out "${KEYSTONE_SSL_PATH}/keystone.pem"
-  openssl rsa  -outform PEM -in "${CERTS_DIR}/server.key"  -out "${KEYSTONE_SSL_PATH}/keystonekey.pem" 1>/dev/null
+  mkdir -p "${KEYSTONE_CERTS_PATH}"
+  openssl x509 -outform PEM -in "${CERTS_DIR}/ca.crt"      -out "${KEYSTONE_CERTS_PATH}/ca.pem"
+  openssl x509 -outform PEM -in "${CERTS_DIR}/server.cert" -out "${KEYSTONE_CERTS_PATH}/keystone.pem"
+  openssl rsa  -outform PEM -in "${CERTS_DIR}/server.key"  -out "${KEYSTONE_CERTS_PATH}/keystonekey.pem" 1>/dev/null
+
+  # Waiting for apiserver ready
+  until /hyperkube kubectl get secret &>/dev/null; do
+    sleep 1
+  done
+  # Try to delete old certs and upload new certs
+  /hyperkube kubectl delete secret keystone-tls-certs &>/dev/null
+  /hyperkube kubectl create secret generic keystone-tls-certs --from-file="${KEYSTONE_CERTS_PATH}" --namespace=default 1>/dev/null \
+    && echo "keystone certs uploaded as secret."
 }
 
 function main(){

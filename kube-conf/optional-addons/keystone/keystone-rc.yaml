@@ -40,5 +40,5 @@ spec:
           mountPath: /etc/keystone/ssl/k8s
       volumes:
       - name: key-files
-        hostPath:
-          path: KEYSTOME_SSL_KEY_PATH
+        secret:
+          secretName: "keystone-tls-certs"

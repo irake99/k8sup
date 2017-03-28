@@ -145,11 +145,6 @@ function update_master_multi_rbd_mount(){
 function update_master_multi_keystone(){
   local MASTER_MULTI_JSON_FILE_PATH="$1"
   local KEYSTONE_CLUSTER_IP="$2"
-  local KEYSTONE_IMAGE_NAME="$3"
-  local KEYSTONE_KEYGEN_MODE="$4"
-  local ETCD_PATH_KEYSTONE_KEYS="$5"
-  local KUBE_ETC="$6"
-  local KEYSTOME_SSL_KEY_PATH="$7"
   local NEW_MASTER_MULTI_JSON
   [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
   NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
@@ -226,7 +221,6 @@ function keystone_operation(){
   local WORKER="$7"
   local KUBE_ETC="$8"
   local KUBEDNS_CLUSTER_IP="$9"
-  local KEYSTOME_SSL_KEY_PATH="/etc/kubernetes/keystone/ssl"
   local LDAP_DC_ADMIN_K8SUP="openldap"
   local LDAP_DOMAIN_ADMIN_K8SUP="openldap"
   local LDAP_PASSWORD_ADMIN_K8SUP="k8sup"
@@ -256,7 +250,6 @@ function keystone_operation(){
     sed -i "s|\<LDAP_DOMAIN_ADMIN_K8SUP\>|${LDAP_DOMAIN_ADMIN_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\<LDAP_PASSWORD_ADMIN_K8SUP\>|${LDAP_PASSWORD_ADMIN_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\<LDAP_DC_ADMIN_K8SUP\>|${LDAP_DC_ADMIN_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\<KEYSTOME_SSL_KEY_PATH\>|${KEYSTOME_SSL_KEY_PATH}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\<KEYSTONE_MODE\>|${KEYSTONE_MODE}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\<KEYSTONE_REGISTRY\>|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
     sed -i "s|\<KEYSTONE_VERSION\>|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
@@ -270,11 +263,7 @@ function keystone_operation(){
       # Make keystone can directly use service domain names from kube-DNS
       make_resolv_conf "${KUBE_ETC}" "${KUBEDNS_CLUSTER_IP}"
       # Update the yaml file of master pods for adding the keystone key maintainer
-      update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" \
-        "${KEYSTONE_CLUSTER_IP}" "${KEYSTONE_IMAGE_NAME}" "${KEYSTONE_KEYGEN_MODE}" \
-        "${ETCD_PATH_KEYSTONE_KEYS}" "${KUBE_ETC}" "${KEYSTOME_SSL_KEY_PATH}"
-      # Make sure that there has no old keys
-      rm -rf "${KEYSTOME_SSL_KEY_PATH}"
+      update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_CLUSTER_IP}"
     fi
   else
     rm -f "${SERVICE_ADDONS_PATH}/keystone-rc.yaml"
