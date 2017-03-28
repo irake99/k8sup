@@ -215,21 +215,8 @@ function keystone_operation(){
   local ENABLE_KEYSTONE="$1"
   local KEYSTONE_CLUSTER_IP="$2"
   local ETCD_CLIENT_PORT="$3"
-  local REGISTRY="$4"
-  local SERVICE_ADDONS_PATH="$5"
-  local KUBE_CONF_PATH="$6"
-  local WORKER="$7"
-  local KUBE_ETC="$8"
-  local KUBEDNS_CLUSTER_IP="$9"
-  local LDAP_DC_ADMIN_K8SUP="openldap"
-  local LDAP_DOMAIN_ADMIN_K8SUP="openldap"
-  local LDAP_PASSWORD_ADMIN_K8SUP="k8sup"
-  local KEYSTONE_MODE="k8sup"
-  local KEYSTONE_DEFAULT_USER_K8SUP="k8sup"
-  local KEYSTONE_DEFAULT_PASS_K8SUP="k8sup"
-  local KEYSTONE_REGISTRY
-  local ERROR_CODE
-  local ETCD_PATH_KEYSTONE_KEYS
+  local KUBE_CONF_PATH="$4"
+  local WORKER="$5"
 
   # Try to set etcd key to notify every one that the keystone service is enabled or disabled
   curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/keystone_enabled?prevExist=false" \
@@ -238,36 +225,12 @@ function keystone_operation(){
   [[ -z "${ENABLE_KEYSTONE}" ]] && { echo "etcd error, exiting..." 1>&2; return 1; }
 
   if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
-    [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && KEYSTONE_REGISTRY="wcen" || KEYSTONE_REGISTRY="${REGISTRY}"
-    local KEYSTONE_VERSION="0.1"
-    local KEYSTONE_KEYGEN_MODE
-    local KEYSTONE_IMAGE_NAME="${KEYSTONE_REGISTRY}/keystone:${KEYSTONE_VERSION}"
-    mkdir -p "${SERVICE_ADDONS_PATH}"
-    cp -f "/go/kube-conf/optional-addons/keystone/keystone-rc.yaml" "${SERVICE_ADDONS_PATH}"
-    cp -f "/go/kube-conf/optional-addons/keystone/keystone-svc.yaml" "${SERVICE_ADDONS_PATH}"
-    sed -i "s|\<KEYSTONE_DEFAULT_USER_K8SUP\>|${KEYSTONE_DEFAULT_USER_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\<KEYSTONE_DEFAULT_PASS_K8SUP\>|${KEYSTONE_DEFAULT_PASS_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\<LDAP_DOMAIN_ADMIN_K8SUP\>|${LDAP_DOMAIN_ADMIN_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\<LDAP_PASSWORD_ADMIN_K8SUP\>|${LDAP_PASSWORD_ADMIN_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\<LDAP_DC_ADMIN_K8SUP\>|${LDAP_DC_ADMIN_K8SUP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\<KEYSTONE_MODE\>|${KEYSTONE_MODE}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\<KEYSTONE_REGISTRY\>|${KEYSTONE_REGISTRY}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\<KEYSTONE_VERSION\>|${KEYSTONE_VERSION}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    sed -i "s|\<KEYSTONE_CLUSTER_IP\>|${KEYSTONE_CLUSTER_IP}|g" "${SERVICE_ADDONS_PATH}"/*.yaml
-    echo "Keystone default user  : ${KEYSTONE_DEFAULT_USER_K8SUP}" 1>&2
-    echo "Keystone default passwd: ${KEYSTONE_DEFAULT_PASS_K8SUP}" 1>&2
-
     if [[ "${WORKER}" == "false" ]]; then
-      KEYSTONE_KEYGEN_MODE="download_keys"
-      ETCD_PATH_KEYSTONE_KEYS="k8sup/cluster/k8s_certs"
-      # Make keystone can directly use service domain names from kube-DNS
-      make_resolv_conf "${KUBE_ETC}" "${KUBEDNS_CLUSTER_IP}"
       # Update the yaml file of master pods for adding the keystone key maintainer
       update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_CLUSTER_IP}"
+      echo "Keystone cluster IP should be '${KEYSTONE_CLUSTER_IP}'"
+      echo "And the keystone certs is in the secret 'keystone-tls-certs' (default namespace)"
     fi
-  else
-    rm -f "${SERVICE_ADDONS_PATH}/keystone-rc.yaml"
-    rm -f "${SERVICE_ADDONS_PATH}/keystone-svc.yaml"
   fi
 
   return 0
@@ -552,7 +515,7 @@ function main(){
   local KUBELET_VARLIB="/var/lib/kubelet"
   local IP_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local KEYSTONE_CLUSTER_IP="10.0.0.20"
-  local KEYSTONE_DN="keystone.default.svc.cluster.local"
+  local KEYSTONE_DN="keystone-api.openstack.svc.cluster.local"
   local MASTER_PUB_DN="kubernetes-public.default.svc.cluster.local"
   local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,IP:${KEYSTONE_CLUSTER_IP},DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN},DNS:${KEYSTONE_DN}"
   local KUBEDNS_CLUSTER_IP="10.0.0.10"
@@ -694,8 +657,8 @@ function main(){
     update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
   fi
 
-  keystone_operation "${ENABLE_KEYSTONE}" "${KEYSTONE_CLUSTER_IP}" "${ETCD_CLIENT_PORT}" "${REGISTRY}" \
-    "${SERVICE_ADDONS_PATH}" "${KUBE_CONF_PATH}" "${WORKER}" "${KUBE_ETC}" "${KUBEDNS_CLUSTER_IP}" || exit 1
+  keystone_operation "${ENABLE_KEYSTONE}" "${KEYSTONE_CLUSTER_IP}" \
+    "${ETCD_CLIENT_PORT}" "${KUBE_CONF_PATH}" "${WORKER}" || exit 1
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   # Remove old/duplicate iptables rules
