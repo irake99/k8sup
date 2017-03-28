@@ -150,23 +150,11 @@ function update_master_multi_keystone(){
   local ETCD_PATH_KEYSTONE_KEYS="$5"
   local KUBE_ETC="$6"
   local KEYSTOME_SSL_KEY_PATH="$7"
-  local NEW_MASTER_MULTI_VOLUME_MOUNTS
-  local NEW_MASTER_MULTI_VOLUMES
   local NEW_MASTER_MULTI_JSON
   [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
-
-  NEW_MASTER_MULTI_KEYSTONE_CONTAINERS="$(echo '[]' \
-                   | jq ". |= .+ [{\"name\":\"keystone-tls\"}]" \
-                   | jq ".[0] |= .+ {\"image\":\"${KEYSTONE_IMAGE_NAME}\"}" \
-                   | jq ".[0] |= .+ {\"args\":[\"${KEYSTONE_KEYGEN_MODE}\",\"${ETCD_PATH_KEYSTONE_KEYS}\"]}" \
-                   | jq ".[0] |= .+ {\"volumeMounts\":[{\"name\":\"keystone-tls-certs\",\"mountPath\":\"/etc/keystone/ssl/k8s\"}]}")"
-  NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
-               | jq ". |= .+ [{\"name\":\"keystone-tls-certs\",\"hostPath\":{\"path\":\"${KEYSTOME_SSL_KEY_PATH}\"}}]")"
   NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
     | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-url=https://${KEYSTONE_CLUSTER_IP}:35357/v2.0\"]" \
-    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-ca-file=/srv/kubernetes/ca.crt\"]" \
-    | jq ".spec.containers |= .+ ${NEW_MASTER_MULTI_KEYSTONE_CONTAINERS}" \
-    | jq ".spec.volumes |= .+ ${NEW_MASTER_MULTI_VOLUMES}")"
+    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-ca-file=/srv/kubernetes/ca.crt\"]")"
   [[ -z "${NEW_MASTER_MULTI_JSON}" ]] || [[ "${NEW_MASTER_MULTI_JSON}" == "null" ]] && return 1
 
   echo "${NEW_MASTER_MULTI_JSON}" > "${MASTER_MULTI_JSON_FILE_PATH}"
@@ -238,7 +226,7 @@ function keystone_operation(){
   local WORKER="$7"
   local KUBE_ETC="$8"
   local KUBEDNS_CLUSTER_IP="$9"
-  local KEYSTOME_SSL_KEY_PATH="/etc/kubernetes/keystone/keys"
+  local KEYSTOME_SSL_KEY_PATH="/etc/kubernetes/keystone/ssl"
   local LDAP_DC_ADMIN_K8SUP="openldap"
   local LDAP_DOMAIN_ADMIN_K8SUP="openldap"
   local LDAP_PASSWORD_ADMIN_K8SUP="k8sup"

@@ -182,6 +182,16 @@ function download_kube_certs(){
   done
 }
 
+function export_keystone_ssl(){
+  local KEYSTONE_SSL_PATH="/etc/kubernetes/keystone/ssl"
+  local CERTS_DIR="/srv/kubernetes"
+
+  mkdir -p "${KEYSTONE_SSL_PATH}"
+  openssl x509 -outform PEM -in "${CERTS_DIR}/ca.crt"      -out "${KEYSTONE_SSL_PATH}/ca.pem"
+  openssl x509 -outform PEM -in "${CERTS_DIR}/server.cert" -out "${KEYSTONE_SSL_PATH}/keystone.pem"
+  openssl rsa  -outform PEM -in "${CERTS_DIR}/server.key"  -out "${KEYSTONE_SSL_PATH}/keystonekey.pem" 1>/dev/null
+}
+
 function main(){
   if ! which curl &>/dev/null; then
     apt-get update 1>/dev/null
@@ -205,6 +215,7 @@ function main(){
 
   if [[ "${DONT_HOLD}" != "DONT_HOLD" ]]; then
     check_and_wait_all_cert_files_in_srv_kubernetes
+    export_keystone_ssl
     wait
   else
     check_and_wait_all_certs_exist_on_etcd "${ETCD_PATH}"
