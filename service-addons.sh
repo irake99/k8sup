@@ -68,7 +68,7 @@ function find_deleted_yaml() {
 
     log DBG "PATH: ${path}, FILENAME: ${filename}, NAMESPACE: ${namespace}"
 
-    test -s ${ADDON_PATH}/installed/${filename} || ( kubectl delete -n ${namespace} -f ${path} && rm -f ${path} )
+    test -s ${ADDON_PATH}/installed/${filename} || ( kubectl delete -n ${namespace} -f ${path} ; rm -f ${path} )
   done
 }
 
@@ -88,8 +88,8 @@ function update_addons() {
       namespace=$namespace
     fi
 
-    kubectl apply -n ${namespace} -f ${path}
-    mv -f ${path} ${ADDON_PATH}/installed/${filename}
+    kubectl apply -n ${namespace} -f ${path} && \
+    mv -f ${path} ${ADDON_PATH}/installed/${filename} && \
     cp ${ADDON_PATH}/installed/${filename} ${ADDON_PATH}/installed/.${filename}
   done
 
