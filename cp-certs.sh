@@ -182,6 +182,25 @@ function download_kube_certs(){
   done
 }
 
+function export_keystone_ssl(){
+  local KEYSTONE_CERTS_PATH="/srv/keystone"
+  local CERTS_DIR="/srv/kubernetes"
+
+  mkdir -p "${KEYSTONE_CERTS_PATH}"
+  openssl x509 -outform PEM -in "${CERTS_DIR}/ca.crt"      -out "${KEYSTONE_CERTS_PATH}/ca.pem"
+  openssl x509 -outform PEM -in "${CERTS_DIR}/server.cert" -out "${KEYSTONE_CERTS_PATH}/keystone.pem"
+  openssl rsa  -outform PEM -in "${CERTS_DIR}/server.key"  -out "${KEYSTONE_CERTS_PATH}/keystonekey.pem" 1>/dev/null
+
+  # Waiting for apiserver ready
+  until /hyperkube kubectl get secret &>/dev/null; do
+    sleep 1
+  done
+  # Try to delete old certs and upload new certs
+  /hyperkube kubectl delete secret keystone-tls-certs &>/dev/null
+  /hyperkube kubectl create secret generic keystone-tls-certs --from-file="${KEYSTONE_CERTS_PATH}" --namespace=default 1>/dev/null \
+    && echo "keystone certs uploaded as secret."
+}
+
 function main(){
   if ! which curl &>/dev/null; then
     apt-get update 1>/dev/null
@@ -205,6 +224,7 @@ function main(){
 
   if [[ "${DONT_HOLD}" != "DONT_HOLD" ]]; then
     check_and_wait_all_cert_files_in_srv_kubernetes
+    export_keystone_ssl
     wait
   else
     check_and_wait_all_certs_exist_on_etcd "${ETCD_PATH}"
