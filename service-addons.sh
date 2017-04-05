@@ -88,7 +88,7 @@ function update_addons() {
       namespace=$namespace
     fi
 
-    kubectl apply -n ${namespace} -f ${path} && \
+    kubectl replace -n ${namespace} -f ${path} --force && \
     mv -f ${path} ${ADDON_PATH}/installed/${filename} && \
     cp ${ADDON_PATH}/installed/${filename} ${ADDON_PATH}/installed/.${filename}
   done
@@ -99,6 +99,12 @@ function update_addons() {
     log INFO "== Service addons update completed successfully at $(date -Is) =="
   fi
 }
+
+if [ -d "${ADDON_PATH}/installed" ]; then
+  log DBG "Directory ${ADDON_PATH}/installed exists!"
+else
+  mkdir -p ${ADDON_PATH}/installed
+fi
 
 log INFO "== Service addons started at $(date -Is) with ADDON_CHECK_INTERVAL_SEC=${ADDON_CHECK_INTERVAL_SEC} =="
 
