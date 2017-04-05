@@ -88,7 +88,7 @@ function update_addons() {
       namespace=$namespace
     fi
 
-    kubectl apply -n ${namespace} -f ${path} && \
+    kubectl replace -n ${namespace} -f ${path} --force && \
     mv -f ${path} ${ADDON_PATH}/installed/${filename} && \
     cp ${ADDON_PATH}/installed/${filename} ${ADDON_PATH}/installed/.${filename}
   done
