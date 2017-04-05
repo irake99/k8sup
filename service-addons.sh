@@ -100,6 +100,12 @@ function update_addons() {
   fi
 }
 
+if [ -d "${ADDON_PATH}/installed" ]; then
+  log DBG "Directory ${ADDON_PATH}/installed exists!"
+else
+  mkdir -p ${ADDON_PATH}/installed
+fi
+
 log INFO "== Service addons started at $(date -Is) with ADDON_CHECK_INTERVAL_SEC=${ADDON_CHECK_INTERVAL_SEC} =="
 
 # Start the apply loop.
