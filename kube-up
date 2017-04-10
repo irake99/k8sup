@@ -328,7 +328,7 @@ Options:
 -p, --worker                  Run as k8s worker
 -a, --apiserver-port=PORT     Apiserver port (Default: 6443)
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
--v, --version=VERSION         Specify k8s version (Default: 1.5.6)
+-v, --version=VERSION         Specify k8s version (Default: 1.6.1)
 -r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
     --creator                 Mark as the first node
     --forced-worker           Run as k8s worker persistently
@@ -447,7 +447,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.5.6"
+    export EX_K8S_VERSION="1.6.1"
   fi
 
   if [[ -z "${EX_REGISTRY}" ]]; then
@@ -528,7 +528,7 @@ function main(){
   export REGISTRY="${EX_REGISTRY}"
   export ARCH=amd64
   export K8S_VERSION="${EX_K8S_VERSION}"
-  export ADDON_MGR_VER=v6.1
+  export ADDON_MGR_VER="v6.4-beta.1"
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
 
   # Erase old k8s emptyDir
@@ -711,7 +711,8 @@ function main(){
           --pod-manifest-path=${KUBE_CONF_PATH} \
           --containerized \
           --network-plugin=cni \
-          --network-plugin-dir=/etc/cni/net.d \
+          --cni-conf-dir=/etc/cni/net.d \
+          --cni-bin-dir=/opt/cni/bin \
           --pod-infra-container-image=${REGISTRY}/pause-${ARCH}:3.0 \
           --cluster-dns=${KUBEDNS_CLUSTER_IP} \
           --cluster-domain=cluster.local \
