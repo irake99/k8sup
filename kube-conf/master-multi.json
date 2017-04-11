@@ -48,6 +48,7 @@
               "--service-account-key-file=/srv/kubernetes/server.key",
               "--service-account-lookup=false",
               "--token-auth-file=/srv/kubernetes/known_tokens.csv",
+              "--authorization-mode=RBAC,AlwaysAllow",
               "--allow-privileged=true",
               "--apiserver-count=1",
               "--v=2"
