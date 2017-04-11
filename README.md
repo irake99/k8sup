@@ -23,8 +23,8 @@ Options:
     --start-etcd-only          Start etcd and flannel but don't start kubernetes services
     --worker                   Force to run as k8s worker and etcd proxy
     --debug                    Enable debug mode
--r, --registry=REGISTRY        Registry of docker image
     --enable-keystone          Enable Keystone service (Default: disabled)
+-r, --registry=REGISTRY        Registry of docker image
                                (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
 -v, --version                  Show k8sup version                               
 -h, --help                     This help text

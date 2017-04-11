@@ -1,49 +1,73 @@
 apiVersion: v1
 kind: ReplicationController
 metadata:
-  labels:
-    name: influxGrafana
-    kubernetes.io/cluster-service: 'true'
-  name: influxdb-grafana
+  name: monitoring-influxdb-grafana-v4
   namespace: kube-system
+  labels:
+    k8s-app: influxGrafana
+    version: v4
+    kubernetes.io/cluster-service: "true"
 spec:
   replicas: 1
   selector:
-    name: influxGrafana
+    k8s-app: influxGrafana
+    version: v4
   template:
     metadata:
       labels:
-        name: influxGrafana
-        kubernetes.io/cluster-service: 'true'
+        k8s-app: influxGrafana
+        version: v4
+        kubernetes.io/cluster-service: "true"
     spec:
       containers:
-      - name: influxdb
-        image: KUBERNETES_REGISTRY/heapster_influxdb:v0.5
-        volumeMounts:
-        - mountPath: /data
-          name: influxdb-storage
-      - name: grafana
-        image: REGISTRY/heapster_grafana:v2.6.0-2
-        env:
-          - name: INFLUXDB_SERVICE_URL
-            value: http://monitoring-influxdb:8086
-            # The following env variables are required to make Grafana accessible via
-            # the kubernetes api-server proxy. On production clusters, we recommend
-            # removing these env variables, setup auth for grafana, and expose the grafana
-            # service using a LoadBalancer or a public IP.
-          - name: GF_AUTH_BASIC_ENABLED
-            value: "false"
-          - name: GF_AUTH_ANONYMOUS_ENABLED
-            value: "true"
-          - name: GF_AUTH_ANONYMOUS_ORG_ROLE
-            value: Admin
-          - name: GF_SERVER_ROOT_URL
-            value: /api/v1/proxy/namespaces/kube-system/services/monitoring-grafana/
-        volumeMounts:
-        - mountPath: /var
-          name: grafana-storage
+        - image: REGISTRY/heapster_influxdb:v0.7
+          name: influxdb
+          resources:
+            # keep request = limit to keep this container in guaranteed class
+            limits:
+              cpu: 100m
+              memory: 500Mi
+            requests:
+              cpu: 100m
+              memory: 500Mi
+          ports:
+            - containerPort: 8083
+            - containerPort: 8086
+          volumeMounts:
+          - name: influxdb-persistent-storage
+            mountPath: /data
+        - image: REGISTRY/heapster_grafana:v3.1.1
+          name: grafana
+          env:
+          resources:
+            # keep request = limit to keep this container in guaranteed class
+            limits:
+              cpu: 100m
+              memory: 100Mi
+            requests:
+              cpu: 100m
+              memory: 100Mi
+          env:
+            # This variable is required to setup templates in Grafana.
+            - name: INFLUXDB_SERVICE_URL
+              value: http://monitoring-influxdb:8086
+              # The following env variables are required to make Grafana accessible via
+              # the kubernetes api-server proxy. On production clusters, we recommend
+              # removing these env variables, setup auth for grafana, and expose the grafana
+              # service using a LoadBalancer or a public IP.
+            - name: GF_AUTH_BASIC_ENABLED
+              value: "false"
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Admin
+            - name: GF_SERVER_ROOT_URL
+              value: /api/v1/proxy/namespaces/kube-system/services/monitoring-grafana/
+          volumeMounts:
+          - name: grafana-persistent-storage
+            mountPath: /var
       volumes:
-      - name: influxdb-storage
+      - name: influxdb-persistent-storage
         emptyDir: {}
-      - name: grafana-storage
+      - name: grafana-persistent-storage
         emptyDir: {}

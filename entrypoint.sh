@@ -140,8 +140,6 @@ function etcd_follower(){
       -XPUT -d value="${MAX_ETCD_MEMBER_SIZE}" 1>&2
   fi
 
-  docker pull "${ENV_ETCD_IMAGE}" &>/dev/null
-
   # Check if this node has joined etcd this cluster
   local MEMBERS="$(curl -sf --retry 10 http://${ETCD_NODE}:${CLIENT_PORT}/v2/members)"
   if [[ -z "${MEMBERS}" ]] || [[ -z "${MAX_ETCD_MEMBER_SIZE}" ]]; then
@@ -375,9 +373,9 @@ function get_ipaddr_and_mask_from_netinfo(){
 function check_is_image_available(){
   local IMAGE_NAME="$1"
   local SVC_NAME="$2"
-  if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -o "${IMAGE_NAME}" &>/dev/null \
+  if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "${IMAGE_NAME}" \
     && ! docker pull "${IMAGE_NAME}" &>/dev/null; then
-      echo "No such hyperkube image: \"${IMAGE_NAME}\", either wrong ${SVC_NAME} version or wrong ${SVC_NAME} registry. Exiting..." 1>&2
+      echo "No such container image: \"${IMAGE_NAME}\", either wrong ${SVC_NAME} version or wrong ${SVC_NAME} registry. Exiting..." 1>&2
       return 1
   fi
 }
@@ -580,7 +578,7 @@ Options:
                                e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                                or \"eth0\"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.5.2)
+    --k8s-version=VERSION      Specify k8s version (Default: 1.5.6)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
@@ -737,7 +735,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.5.2"
+    export EX_K8S_VERSION="1.5.6"
   fi
   if [[ -z "${EX_FLANNEL_VERSION}" ]]; then
     export EX_FLANNEL_VERSION="0.6.2"
