@@ -417,7 +417,7 @@ function main(){
   [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
   [[ -n "${CONTAINER_IDS}" ]] && docker rm -v ${CONTAINER_IDS} 1>/dev/null || true
 
-  docker rm -f -v k8sup 1>/dev/null
+  bash -c "sleep 3; docker rm -f -v k8sup 1>/dev/null" &
   echo "Done" 1>&2
 }
 
