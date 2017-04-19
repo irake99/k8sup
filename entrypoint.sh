@@ -467,9 +467,9 @@ function kube_up(){
   bash -c 'docker stop k8sup-certs k8sup-kubelet' &>/dev/null || true
   bash -c 'docker rm k8sup-certs k8sup-kubelet' &>/dev/null || true
 
-  [[ -n "$(docker ps | grep -w 'k8sup-flannel')" ]] \
-  && curl -sf -m 3 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys &>/dev/null \
-  || { echo "etcd or flannel not ready, exiting..." && return 1; }
+  # [[ -n "$(docker ps | grep -w 'k8sup-flannel')" ]] \
+  # && curl -sf -m 3 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys &>/dev/null \
+  # || { echo "etcd or flannel not ready, exiting..." && return 1; }
 
   echo "Running Kubernetes" 1>&2
   if [[ -n "${REGISTRY}" ]]; then
@@ -931,19 +931,21 @@ function main(){
 
     echo "Running etcd"
     if [[ "${ROLE}" == "creator" ]]; then
-      etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
-        "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" || exit 1
+      :
+#      etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
+#        "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" || exit 1
     else
-      etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTING_ETCD_NODE_LIST}" "${PROXY}" || exit 1
+      :
+#      etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTING_ETCD_NODE_LIST}" "${PROXY}" || exit 1
     fi
   fi
 
-  until curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys 1>/dev/null 2>&1; do
-    echo "Waiting for etcd ready..."
-    sleep 1
-  done
+  # until curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys 1>/dev/null 2>&1; do
+  #   echo "Waiting for etcd ready..."
+  #   sleep 1
+  # done
 
-  wait_etcd_cluster_healthy "${ETCD_CLIENT_PORT}"
+#  wait_etcd_cluster_healthy "${ETCD_CLIENT_PORT}"
 
   # DNS-SD
   local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/go/dnssd/registering' | grep -v grep | awk '{print $1}')"
@@ -953,7 +955,7 @@ function main(){
   /go/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
 
   echo "Running flanneld"
-  flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"
+#  flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"
 
   # Write configure to file
   if ! grep "EX_IPADDR" "${CONFIG_FILE}" &>/dev/null; then

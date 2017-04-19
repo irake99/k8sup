@@ -537,8 +537,9 @@ function main(){
 
   # Reset node labels and exit
   if [[ "${RESET_LABELS}" == "true" ]]; then
-    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" \
-                  || { echo "No such API servers, exiting..." 1>&2; exit 1; }
+    # APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" \
+    #               || { echo "No such API servers, exiting..." 1>&2; exit 1; }
+    APISERVERS="192.168.32.4"
     APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
 
     local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
@@ -605,41 +606,42 @@ function main(){
     /hyperkube proxy \
       --cleanup-iptables
 
-  echo "Getting or generating certs..." 1>&2
-  [[ "$-" == *x* ]] && local DEBUG_CMD="bash -x"
-  docker run \
-    --net=host \
-    --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
-    --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
-    --name=k8sup-certs \
-    "${HYPERKUBE_IMAGE_NAME}" \
-    "${DEBUG_CMD} /cp-certs.sh" \
-      "${DOMAIN_NAME}" \
-      "DONT_HOLD" 1>/dev/null
+  # echo "Getting or generating certs..." 1>&2
+  # [[ "$-" == *x* ]] && local DEBUG_CMD="bash -x"
+  # docker run \
+  #   --net=host \
+  #   --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
+  #   --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+  #   --name=k8sup-certs \
+  #   "${HYPERKUBE_IMAGE_NAME}" \
+  #   "${DEBUG_CMD} /cp-certs.sh" \
+  #     "${DOMAIN_NAME}" \
+  #     "DONT_HOLD" 1>/dev/null
 
   # If etcd is running as a proxy, set k8s as a worker
-  local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
-  if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
+  # local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
+  # if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
     ETCD_PROXY="off"
     WORKER="false"
-  else
-    ETCD_PROXY="on"
-    WORKER="true"
-  fi
+  # else
+  #   ETCD_PROXY="on"
+  #   WORKER="true"
+  # fi
 
   if [[ "${WORKER}" == "false" ]]; then
     APIHOST="127.0.0.1:6443"
     # Remove old certs for master services
-    if [[ -d "${KUBELET_VARLIB}/pods" ]]; then
-      CERT_DIRS="$(dirname "$(find "${KUBELET_VARLIB}/pods/" -type f -name server.cert)")"
-      if [[ "${CERT_DIRS}" != "." ]]; then
-        for CERT_DIR in ${CERT_DIRS}; do
-          rm -rf "${CERT_DIR}/"*
-        done
-      fi
-    fi
+    # if [[ -d "${KUBELET_VARLIB}/pods" ]]; then
+    #   CERT_DIRS="$(dirname "$(find "${KUBELET_VARLIB}/pods/" -type f -name server.cert)")"
+    #   if [[ "${CERT_DIRS}" != "." ]]; then
+    #     for CERT_DIR in ${CERT_DIRS}; do
+    #       rm -rf "${CERT_DIR}/"*
+    #     done
+    #   fi
+    # fi
   else
-    APIHOST="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" | cut -d ',' -f 1)"
+#    APIHOST="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" | cut -d ',' -f 1)"
+    APIHOST="192.168.32.4"
     APIHOST="${APIHOST:8}"
     [[ -z "${APIHOST}" ]] && { echo "No such API servers, exiting..." 1>&2; exit 1; }
     echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
@@ -657,8 +659,8 @@ function main(){
     update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
   fi
 
-  keystone_operation "${ENABLE_KEYSTONE}" "${KEYSTONE_CLUSTER_IP}" \
-    "${ETCD_CLIENT_PORT}" "${KUBE_CONF_PATH}" "${WORKER}" || exit 1
+  # keystone_operation "${ENABLE_KEYSTONE}" "${KEYSTONE_CLUSTER_IP}" \
+  #   "${ETCD_CLIENT_PORT}" "${KUBE_CONF_PATH}" "${WORKER}" || exit 1
 
   echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
   # Remove old/duplicate iptables rules
@@ -692,6 +694,8 @@ function main(){
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
+      --volume=${KUBE_CONF_PATH}/etcd.json:${KUBE_CONF_PATH}/etcd.json \
+      --volume=${KUBE_CONF_PATH}/flannel.json:${KUBE_CONF_PATH}/flannel.json \
       ${KUBEDNS_OPTION} \
       ${RBD_OPTIONS_KUBELET} \
       --net=host \
