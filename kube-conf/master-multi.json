@@ -18,6 +18,8 @@
               "--service-account-private-key-file=/srv/kubernetes/server.key",
               "--root-ca-file=/srv/kubernetes/ca.crt",
               "--min-resync-period=3m",
+              "--allocate-node-cidrs=true",
+              "--cluster-cidr=10.244.0.0/16",
               "--v=2"
       ],
       "volumeMounts": [

@@ -695,7 +695,6 @@ function main(){
       --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
       --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
       --volume=${KUBE_CONF_PATH}/etcd.json:${KUBE_CONF_PATH}/etcd.json \
-      --volume=${KUBE_CONF_PATH}/flannel.json:${KUBE_CONF_PATH}/flannel.json \
       ${KUBEDNS_OPTION} \
       ${RBD_OPTIONS_KUBELET} \
       --net=host \
