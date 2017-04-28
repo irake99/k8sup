@@ -13,9 +13,13 @@ COPY flannel-conf /go/flannel-conf
 
 WORKDIR /go
 
-RUN go get "github.com/grandcat/zeroconf" \
-    && go build -o /go/dnssd/registering /go/dnssd/registering.go \
-    && go build -o /go/dnssd/browsing /go/dnssd/browsing.go
+RUN mkdir -p /go/src \
+    && ln -s /go/dnssd /go/src/dnssd \
+    && go get -u github.com/kardianos/govendor \
+    && cd /go/src/dnssd \
+    && govendor sync \
+    && go build -o /go/src/dnssd/registering /go/src/dnssd/registering.go \
+    && go build -o /go/src/dnssd/browsing /go/src/dnssd/browsing.go
 
 ADD runcom /go/runcom
 ADD kube-up /go/kube-up
