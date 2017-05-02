@@ -1,6 +1,8 @@
 #!/bin/bash
 # run commands
 
+export LIB_DOCKER_PATH="$(dirname $(find $(readlink -f /lib) -iname libc.so.6))"
+
 function docker(){
   local DEBUG && [[ "$-" == *x* ]] && DEBUG="true" && set +x
 
@@ -16,7 +18,7 @@ function docker(){
   done
   [[ "${DEBUG}" == "true" ]] && set -x
 
-  bash -c "LD_LIBRARY_PATH=/lib:/host/lib $(which docker) ${ARGS}"
+  bash -c "LD_LIBRARY_PATH=${LIB_DOCKER_PATH}:/host/lib $(which docker) ${ARGS}"
 
   return "$?"
 }
