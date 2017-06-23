@@ -30,17 +30,8 @@ function cni_svc_route_maintainer(){
   [[ -z "${CLUSTER_IP}" ]] && return 1
 
   while true; do
-    if [[ -n "$(ip route | grep -w 'cni0')" ]]; then
-      if [[ -n "$(ip route | grep -w 'flannel.1' | grep -w "${CLUSTER_IP}")" ]]; then
-        ip route del "${CLUSTER_NET}" dev flannel.1 &>/dev/null
-      fi
-      if [[ -z "$(ip route | grep -w 'cni0' | grep -w "${CLUSTER_IP}")" ]]; then
-        ip route add "${CLUSTER_NET}" dev cni0 &>/dev/null
-      fi
-    else
-      if [[ -z "$(ip route | grep -w 'flannel.1' | grep -w "${CLUSTER_IP}")" ]]; then
-        ip route add "${CLUSTER_NET}" dev flannel.1 &>/dev/null
-      fi
+    if [[ -z "$(ip route | grep -w 'flannel.1' | grep -w "${CLUSTER_IP}")" ]]; then
+      ip route add "${CLUSTER_NET}" dev flannel.1 &>/dev/null
     fi
     sleep 3;
   done
