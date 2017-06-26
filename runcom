@@ -23,20 +23,6 @@ function docker(){
   return "$?"
 }
 
-# usage: cni_svc_route_maintainer "10.0.0.0/24" &
-function cni_svc_route_maintainer(){
-  local CLUSTER_NET="$1"
-  local CLUSTER_IP="$(echo "${CLUSTER_NET}" | cut -d '/' -f 1)"
-  [[ -z "${CLUSTER_IP}" ]] && return 1
-
-  while true; do
-    if [[ -z "$(ip route | grep -w 'flannel.1' | grep -w "${CLUSTER_IP}")" ]]; then
-      ip route add "${CLUSTER_NET}" dev flannel.1 &>/dev/null
-    fi
-    sleep 3;
-  done
-}
-
 # Convert CIDR to submask format. e.g. 23 => 255.255.254.0
 function cidr2mask(){
    # Number of args to shift, 255..255, first non-255 byte, zeroes
@@ -71,4 +57,3 @@ function get_subnet_id_and_mask(){
 
 export -f docker
 export -f cidr2mask addr2hex get_subnet_id_and_mask
-export -f cni_svc_route_maintainer

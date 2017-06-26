@@ -733,9 +733,6 @@ function main(){
 
   mark_default_iface_ipaddr "${IPADDR}" "${ETCD_CLIENT_PORT}"
 
-  # Set routing table to make host can access cni services using cluster IP
-  cni_svc_route_maintainer "10.0.0.0/24" &
-
   # If NTP client is not found then start a NTP client
   if ps aux | grep -v grep | grep -wE "systemd-timesyncd|ntpd" &>/dev/null; then
     echo "Warning! Found a running NTP client on this node. k8sup will not synchronize system time with other nodes in this cluster." 1>&2
