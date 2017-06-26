@@ -819,7 +819,6 @@ function main(){
 
   bash -c 'docker stop k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
   bash -c 'docker rm k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
-  bash -c 'ip link delete cni0' &>/dev/null || true
 
   local NODE_NAME="$(hostname)"
   local ETCD_CLIENT_PORT="2379"
