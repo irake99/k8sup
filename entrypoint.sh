@@ -578,7 +578,7 @@ Options:
                                e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                                or \"eth0\"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.5.6)
+    --k8s-version=VERSION      Specify k8s version (Default: 1.7.0)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
@@ -601,7 +601,7 @@ Options:
 function shwo_debug_usage(){
   local USAGE="Usage: ${0##*/} [options...]
 Options:
-    --etcd-version=VERSION     Specify etcd version (Default: 3.0.14)
+    --etcd-version=VERSION     Specify etcd version (Default: 3.0.17)
     --flannel-version=VERSION  Specify flannel version (Default: 0.6.2)
 "
 
@@ -735,13 +735,13 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.5.6"
+    export EX_K8S_VERSION="1.7.0"
   fi
   if [[ -z "${EX_FLANNEL_VERSION}" ]]; then
     export EX_FLANNEL_VERSION="0.6.2"
   fi
   if [[ -z "${EX_ETCD_VERSION}" ]]; then
-    export EX_ETCD_VERSION="3.0.14"
+    export EX_ETCD_VERSION="3.0.17"
   fi
 
   if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
@@ -924,8 +924,7 @@ function main(){
 
     echo "Copy cni plugins"
     mkdir -p /etc/cni/net.d/
-    cp -f /go/cni-conf/10-containernet.conf /etc/cni/net.d/
-    cp -f /go/cni-conf/99-loopback.conf /etc/cni/net.d/
+    cp -f /go/cni-conf/* /etc/cni/net.d/
     mkdir -p /var/lib/cni/networks/containernet; echo "" > /var/lib/cni/networks/containernet/last_reserved_ip
 
     echo "Running etcd"

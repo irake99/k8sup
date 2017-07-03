@@ -96,6 +96,14 @@
           "mountPath": "/cp-certs.sh"
         },
         {
+          "name": "setup-files",
+          "mountPath": "/setup-files.sh"
+        },
+        {
+          "name": "make-ca-cert",
+          "mountPath": "/make-ca-cert.sh"
+        },
+        {
           "name": "etc-k8s",
           "mountPath": "/etc/kubernetes"
         },
@@ -115,6 +123,18 @@
       "name": "cp-certs",
       "hostPath": {
         "path": "/etc/kubernetes/cp-certs.sh"
+      }
+    },
+    {
+      "name": "setup-files",
+      "hostPath": {
+        "path": "/etc/kubernetes/setup-files.sh"
+      }
+    },
+    {
+      "name": "make-ca-cert",
+      "hostPath": {
+        "path": "/etc/kubernetes/make-ca-cert.sh"
       }
     },
     {
