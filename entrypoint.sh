@@ -372,11 +372,22 @@ function get_ipaddr_and_mask_from_netinfo(){
 
 function check_is_image_available(){
   local IMAGE_NAME="$1"
-  local SVC_NAME="$2"
   if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "${IMAGE_NAME}" \
     && ! docker pull "${IMAGE_NAME}" &>/dev/null; then
-      echo "No such container image: \"${IMAGE_NAME}\", either wrong ${SVC_NAME} version or wrong ${SVC_NAME} registry. Exiting..." 1>&2
+      echo "No such container image: \"${IMAGE_NAME}\", either wrong version or wrong registry. Exiting..." 1>&2
       return 1
+  fi
+}
+
+function check_k8s_major_minor_version_meet_requirement(){
+  local K8S_SPECIFIED_VER="$(echo "$1" | grep -oE "[0-9]+\.[0-9]+")"
+  local K8S_REQUIRED_VER="$(echo "$2" | grep -oE "[0-9]+\.[0-9]+")"
+
+  [[ -z "${K8S_SPECIFIED_VER}" ]] || [[ -z "${K8S_REQUIRED_VER}" ]] && { echo "Format error, exiting..." 1>&2; return 1; }
+  if [[ "${K8S_SPECIFIED_VER}" != "${K8S_REQUIRED_VER}" ]]; then
+    local K8S_SPECIFIED_VER_FULL="$1"
+    echo "User specified k8s version: v${K8S_SPECIFIED_VER_FULL} is not meet the requirement: v${K8S_REQUIRED_VER}.x!" 1>&2
+    return 1
   fi
 }
 
@@ -402,9 +413,6 @@ function check_k8s_new_version_changeable(){
     echo "('v${K8S_CURR_VER}' -> 'v${K8S_NEW_VER}') The same major version change should not be more than two minor releases at a time, exiting..." 1>&2
     return 1
   fi
-
-  echo "Detecting and getting hyperkube image..."
-  check_is_image_available "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_NEW_VER}" "k8s" || return 1
 
   return 0
 }
@@ -578,7 +586,7 @@ Options:
                                e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                                or \"eth0\"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.5.6)
+    --k8s-version=VERSION      Specify k8s version (Default: 1.5.7)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
@@ -735,7 +743,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.5.6"
+    export EX_K8S_VERSION="1.5.7"
   fi
   if [[ -z "${EX_FLANNEL_VERSION}" ]]; then
     export EX_FLANNEL_VERSION="0.6.2"
@@ -760,6 +768,7 @@ function main(){
   local COREOS_REGISTRY="${EX_COREOS_REGISTRY}" && unset EX_COREOS_REGISTRY
   local K8S_REGISTRY="${EX_K8S_REGISTRY}" && unset EX_K8S_REGISTRY
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
+  local HYPERKUBE_IMAGE="${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
   export ENV_ETCD_VERSION="${EX_ETCD_VERSION}" && unset EX_ETCD_VERSION
   export ENV_FLANNELD_VERSION="${EX_FLANNEL_VERSION}" && unset EX_FLANNEL_VERSION
   export ENV_ETCD_IMAGE="${COREOS_REGISTRY}/etcd:v${ENV_ETCD_VERSION}"
@@ -768,6 +777,13 @@ function main(){
   local CONFIG_FILE="/root/.bashrc"
   local REJOIN_ETCD="${EX_REJOIN_ETCD}" && unset EX_REJOIN_ETCD
   local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_ETCD_ONLY
+
+  echo "Checking hyperkube version for the requirement..."
+  check_k8s_major_minor_version_meet_requirement "${K8S_VERSION}" "1.5" && echo "OK" || exit "$?"
+  echo "Checking and getting images..."
+  check_is_image_available "${ENV_ETCD_IMAGE}" || exit "$?"
+  check_is_image_available "${ENV_FLANNELD_IMAGE}" || exit "$?"
+  check_is_image_available "${HYPERKUBE_IMAGE}" && echo "OK" || exit "$?"
 
   local PROXY="${EX_PROXY}" && unset EX_PROXY
   # Just re-join etcd cluster only
@@ -791,10 +807,6 @@ function main(){
     kube_up "${CONFIG_FILE}" || exit 1
     exit 0
   fi
-
-  echo "Checking images..."
-  check_is_image_available "${ENV_ETCD_IMAGE}" "etcd" || exit 1
-  check_is_image_available "${ENV_FLANNELD_IMAGE}" "flannel" || exit 1
 
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
   local NETWORK="${EX_NETWORK}" && unset EX_NETWORK
@@ -842,7 +854,7 @@ function main(){
                  | sed -n "s/.*NodeName=\([[:alnum:]_-]*\).*/\1/p" \
                  | grep -w "${NODE_NAME}" \
                  | wc -l)" -gt "1" ]]; then
-          echo "Hostname is duplicate, please rename the hostname and try again, exiting..." 1>&2
+          echo "Hostname: ${NODE_NAME} is duplicate, please rename the hostname and try again, exiting..." 1>&2
           exit 1
         fi
 
@@ -894,6 +906,7 @@ function main(){
           fi
         fi
         if [[ -z "${EXISTING_ETCD_NODE}" ]]; then
+          # If still not found existing node, try to find unstarted etcd creator node
           local CREATOR_NODE="$(echo "${DISCOVERY_RESULTS}" \
                                     | grep 'etcdStarted=false' \
                                     | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*UnixNanoTime=\([[:digit:]]*\).*/\1:\2 \3/p" \
@@ -902,7 +915,12 @@ function main(){
                                     | awk '{print $1}')"
           if [[ "${CREATOR_NODE}" != "${IPADDR}:${ETCD_CLIENT_PORT}" ]]; then
             EXISTING_ETCD_NODE_LIST="${CREATOR_NODE}"
-            EXISTING_ETCD_NODE="$(echo "${EXISTING_ETCD_NODE_LIST}" | head -n 1)"
+            EXISTING_ETCD_NODE="${EXISTING_ETCD_NODE_LIST}"
+          else
+            echo "This node is creator..." 1>&2
+          fi
+          if [[ -n "${EXISTING_ETCD_NODE}" ]]; then
+            echo "Trying to join the etcd unstarted node: ${EXISTING_ETCD_NODE}..." 1>&2
           fi
         fi
         [[ -z "${EXISTING_ETCD_NODE}" && "${PROXY}" == "on" ]]
@@ -930,9 +948,12 @@ function main(){
 
     echo "Running etcd"
     if [[ "${ROLE}" == "creator" ]]; then
+      echo "This is a creator node!" 1>&2
       etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
         "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" || exit 1
     else
+      echo "This is a follower node and try to join other nodes:" 1>&2
+      echo "${EXISTING_ETCD_NODE_LIST}" 1>&2
       etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTING_ETCD_NODE_LIST}" "${PROXY}" || exit 1
     fi
   fi
