@@ -855,7 +855,7 @@ function main(){
                  | sed -n "s/.*NodeName=\([[:alnum:]_-]*\).*/\1/p" \
                  | grep -w "${NODE_NAME}" \
                  | wc -l)" -gt "1" ]]; then
-          echo "Hostname is duplicate, please rename the hostname and try again, exiting..." 1>&2
+          echo "Hostname: ${NODE_NAME} is duplicate, please rename the hostname and try again, exiting..." 1>&2
           exit 1
         fi
 
@@ -907,6 +907,7 @@ function main(){
           fi
         fi
         if [[ -z "${EXISTING_ETCD_NODE}" ]]; then
+          # If still not found existing node, try to find unstarted etcd creator node
           local CREATOR_NODE="$(echo "${DISCOVERY_RESULTS}" \
                                     | grep 'etcdStarted=false' \
                                     | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*UnixNanoTime=\([[:digit:]]*\).*/\1:\2 \3/p" \
@@ -915,7 +916,12 @@ function main(){
                                     | awk '{print $1}')"
           if [[ "${CREATOR_NODE}" != "${IPADDR}:${ETCD_CLIENT_PORT}" ]]; then
             EXISTING_ETCD_NODE_LIST="${CREATOR_NODE}"
-            EXISTING_ETCD_NODE="$(echo "${EXISTING_ETCD_NODE_LIST}" | head -n 1)"
+            EXISTING_ETCD_NODE="${EXISTING_ETCD_NODE_LIST}"
+          else
+            echo "This node is creator..." 1>&2
+          fi
+          if [[ -n "${EXISTING_ETCD_NODE}" ]]; then
+            echo "Trying to join the etcd unstarted node: ${EXISTING_ETCD_NODE}..." 1>&2
           fi
         fi
         [[ -z "${EXISTING_ETCD_NODE}" && "${PROXY}" == "on" ]]
@@ -942,9 +948,12 @@ function main(){
 
     echo "Running etcd"
     if [[ "${ROLE}" == "creator" ]]; then
+      echo "This is a creator node!" 1>&2
       etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
         "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" || exit 1
     else
+      echo "This is a follower node and try to join other nodes:" 1>&2
+      echo "${EXISTING_ETCD_NODE_LIST}" 1>&2
       etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTING_ETCD_NODE_LIST}" "${PROXY}" || exit 1
     fi
   fi
