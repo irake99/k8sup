@@ -55,5 +55,17 @@ function get_subnet_id_and_mask(){
   echo "${SUBNET_ID}/${MASK}"
 }
 
+function cleanup_old_kubeproxy_iptables(){
+  local HYPERKUBE_IMAGE_NAME="$1"
+  docker run \
+    --net=host \
+    --rm=true \
+    --privileged \
+    --volume=/var/run/dbus \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube proxy \
+      --cleanup-iptables
+}
+
 export -f docker
 export -f cidr2mask addr2hex get_subnet_id_and_mask

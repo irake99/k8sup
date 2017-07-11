@@ -612,14 +612,7 @@ function main(){
     | xargs -0 sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g"
 
   echo "Cleaning up kube-proxy old iptables rules..." 1>&2
-  docker run \
-    --net=host \
-    --rm=true \
-    --privileged \
-    --volume=/var/run/dbus \
-    "${HYPERKUBE_IMAGE_NAME}" \
-    /hyperkube proxy \
-      --cleanup-iptables
+  cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE_NAME}"
 
   echo "Getting or generating certs..." 1>&2
   [[ "$-" == *x* ]] && local DEBUG_CMD="bash -x"
