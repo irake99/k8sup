@@ -28,8 +28,8 @@ func main() {
 	go func(results <-chan *zeroconf.ServiceEntry) {
 		for entry := range results {
 			fmt.Printf("%s %s:%d %s %s\n", entry.HostName, entry.AddrIPv4, entry.Port, entry.Text, entry.ServiceInstanceName())
-			time.Sleep(1e8)
 		}
+		log.Println("No more entries.")
 	}(entries)
 
 	// Send the "stop browsing" signal after the desired timeout
