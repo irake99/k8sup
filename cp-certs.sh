@@ -225,7 +225,7 @@ function main(){
   if [[ "${DONT_HOLD}" != "DONT_HOLD" ]]; then
     check_and_wait_all_cert_files_in_srv_kubernetes
     export_keystone_ssl
-    wait
+    sleep infinity
   else
     check_and_wait_all_certs_exist_on_etcd "${ETCD_PATH}"
     check_and_wait_all_cert_files_in_srv_kubernetes

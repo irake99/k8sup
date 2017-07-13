@@ -38,28 +38,17 @@
         },
         "volumeMounts": [
           {
+            "name": "copy-addons",
+            "mountPath": "/copy-addons.sh"
+          },
+          {
             "name": "addons",
             "mountPath": "/srv/kubernetes/addons",
             "readOnly": false
           },
           {
-            "name": "addons-kube-proxy",
-            "mountPath": "/etc/kubernetes/addons/multinode/kube-proxy.yaml",
-            "readOnly": false
-          },
-          {
-            "name": "addons-heapster",
-            "mountPath": "/etc/kubernetes/addons/multinode/heapster-influxdb",
-            "readOnly": false
-          },
-          {
-            "name": "addons-ntpserver",
-            "mountPath": "/etc/kubernetes/addons/multinode/ntp-server",
-            "readOnly": false
-          },
-          {
-            "name": "service-addons",
-            "mountPath": "/etc/kubernetes/addons/multinode/service-addons.yaml",
+            "name": "addons-multinode",
+            "mountPath": "/etc/kubernetes/addons/multinode",
             "readOnly": false
           }
         ]
@@ -67,31 +56,19 @@
     ],
     "volumes": [
       {
+        "name": "copy-addons",
+        "hostPath": {
+          "path": "/etc/kubernetes/copy-addons.sh"
+        }
+      },
+      {
         "name": "addons",
         "emptyDir": {}
       },
       {
-        "name": "addons-kube-proxy",
+        "name": "addons-multinode",
         "hostPath": {
-          "path": "/etc/kubernetes/addons/multinode/kube-proxy.yaml"
-        }
-      },
-      {
-        "name": "addons-heapster",
-        "hostPath": {
-          "path": "/etc/kubernetes/addons/multinode/heapster-influxdb"
-        }
-      },
-      {
-        "name": "addons-ntpserver",
-        "hostPath": {
-          "path": "/etc/kubernetes/addons/multinode/ntp-server"
-        }
-      },
-      {
-        "name": "service-addons",
-        "hostPath": {
-          "path": "/etc/kubernetes/addons/multinode/service-addons.yaml"
+          "path": "/etc/kubernetes/addons/multinode"
         }
       }
     ]

@@ -14,7 +14,7 @@ Options:
                                e. g. "192.168.11.0/24" or "192.168.11.1"
                                or "eth0"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.5.2)
+    --k8s-version=VERSION      Specify k8s version (Default: 1.7.0)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
@@ -32,7 +32,7 @@ Options:
 
 Run k8s:
 ```
-$ docker pull cdxvirt/k8sup:latest
+$ docker pull cdxvirt/k8sup:k8s-1.7
 $ docker run -d \
     --privileged \
     --net=host \
@@ -55,6 +55,11 @@ $ docker run -d \
 Stop k8s:
 ```
 $ docker exec k8sup /go/kube-down
+```
+
+Remove k8s from node:
+```
+$ docker exec k8sup /go/kube-down --remove
 ```
 
 Show k8sup log and Cluster ID:

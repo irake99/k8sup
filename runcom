@@ -1,6 +1,8 @@
 #!/bin/bash
 # run commands
 
+export LIB_DOCKER_PATH="$(dirname $(find $(readlink -f /lib) -iname libc.so.6))"
+
 function docker(){
   local DEBUG && [[ "$-" == *x* ]] && DEBUG="true" && set +x
 
@@ -16,32 +18,9 @@ function docker(){
   done
   [[ "${DEBUG}" == "true" ]] && set -x
 
-  bash -c "LD_LIBRARY_PATH=/lib:/host/lib $(which docker) ${ARGS}"
+  bash -c "LD_LIBRARY_PATH=${LIB_DOCKER_PATH}:/host/lib $(which docker) ${ARGS}"
 
   return "$?"
-}
-
-# usage: cni_svc_route_maintainer "10.0.0.0/24" &
-function cni_svc_route_maintainer(){
-  local CLUSTER_NET="$1"
-  local CLUSTER_IP="$(echo "${CLUSTER_NET}" | cut -d '/' -f 1)"
-  [[ -z "${CLUSTER_IP}" ]] && return 1
-
-  while true; do
-    if [[ -n "$(ip route | grep -w 'cni0')" ]]; then
-      if [[ -n "$(ip route | grep -w 'flannel.1' | grep -w "${CLUSTER_IP}")" ]]; then
-        ip route del "${CLUSTER_NET}" dev flannel.1 &>/dev/null
-      fi
-      if [[ -z "$(ip route | grep -w 'cni0' | grep -w "${CLUSTER_IP}")" ]]; then
-        ip route add "${CLUSTER_NET}" dev cni0 &>/dev/null
-      fi
-    else
-      if [[ -z "$(ip route | grep -w 'flannel.1' | grep -w "${CLUSTER_IP}")" ]]; then
-        ip route add "${CLUSTER_NET}" dev flannel.1 &>/dev/null
-      fi
-    fi
-    sleep 3;
-  done
 }
 
 # Convert CIDR to submask format. e.g. 23 => 255.255.254.0
@@ -76,6 +55,17 @@ function get_subnet_id_and_mask(){
   echo "${SUBNET_ID}/${MASK}"
 }
 
+function cleanup_old_kubeproxy_iptables(){
+  local HYPERKUBE_IMAGE_NAME="$1"
+  docker run \
+    --net=host \
+    --rm=true \
+    --privileged \
+    --volume=/var/run/dbus \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube proxy \
+      --cleanup-iptables
+}
+
 export -f docker
 export -f cidr2mask addr2hex get_subnet_id_and_mask
-export -f cni_svc_route_maintainer

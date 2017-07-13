@@ -328,7 +328,7 @@ Options:
 -p, --worker                  Run as k8s worker
 -a, --apiserver-port=PORT     Apiserver port (Default: 6443)
 -a, --etcd-port=PORT          etcd client port (Default: 2379)
--v, --version=VERSION         Specify k8s version (Default: 1.5.6)
+-v, --version=VERSION         Specify k8s version (Default: 1.7.0)
 -r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
     --creator                 Mark as the first node
     --forced-worker           Run as k8s worker persistently
@@ -447,7 +447,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.5.6"
+    export EX_K8S_VERSION="1.7.0"
   fi
 
   if [[ -z "${EX_REGISTRY}" ]]; then
@@ -469,24 +469,40 @@ function get_API_Servers(){
   local APISERVER=""
   local APIHOST=""
   local KUBE_NODE_LIST=""
+  local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local CERTS_DIR="${KUBELET_VARLIB}/kubeconfig"
   local CERT_OPTS="--cert ${CERTS_DIR}/kubecfg.crt \
                    --key ${CERTS_DIR}/kubecfg.key \
                    --cacert ${CERTS_DIR}/ca.crt"
 
-  # Wait for any apiserver started
-  until [[ -n "${KUBE_NODE_LIST}" ]]; do
-    KUBE_NODE_LIST="$(curl -m 2 -sf "127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/registry/services/endpoints/default/kubernetes" \
-                       | jq -r '.node.value' \
-                       | jq -r '.subsets[].addresses[].ip' 2>/dev/null)" || true
-    sleep 1
-  done
+  if [[ ! -f "${CERTS_DIR}/kubecfg.crt" ]] \
+    || [[ ! -f "${CERTS_DIR}/kubecfg.key" ]] \
+    || [[ ! -f "${CERTS_DIR}/ca.crt" ]] \
+    || [[ ! -f "${CERTS_DIR}/kubeconfig.yaml" ]]; then
+   echo "Error, no such cert files in ${CERTS_DIR} or kubeconfig file in ${KUBELET_VARLIB}!" 1>&2
+   return 1
+  fi
 
-  for KUBE_NODE in ${KUBE_NODE_LIST}; do
-    APISERVER="https://${KUBE_NODE}:${APISERVER_PORT}"
-    if curl ${CERT_OPTS} -s -k -m 2 "${APISERVER}/healthz" &>/dev/null; then
-      APISERVERS="${APISERVERS}","${APISERVER}"
-    fi
+  # Wait for any apiserver started
+  until [[ -n "${APISERVERS}" ]]; do
+    # Get apiserver list
+    until [[ -n "${KUBE_NODE_LIST}" ]]; do
+      KUBE_NODE_LIST="$(curl -sf --retry 10 "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members" \
+        | jq -r ".members[].clientURLs[0]" \
+        | grep -v 'null' \
+        | grep -o "${IPADDR_PATTERN}")"
+
+      sleep 1
+    done
+
+    # Check accessibilities of apiservers
+    for KUBE_NODE in ${KUBE_NODE_LIST}; do
+      APISERVER="https://${KUBE_NODE}:${APISERVER_PORT}"
+      if curl ${CERT_OPTS} -s -k -m 2 "${APISERVER}/healthz" &>/dev/null; then
+        APISERVERS="${APISERVERS}","${APISERVER}"
+      fi
+    done
+    [[ -z "${APISERVERS}" ]] && sleep 1
   done
 
   APISERVERS="$(echo "${APISERVERS}" | cut -c 2-)"
@@ -526,9 +542,9 @@ function main(){
   local EMPTY_DIRS
 
   export REGISTRY="${EX_REGISTRY}"
-  export ARCH=amd64
+  export ARCH="amd64"
   export K8S_VERSION="${EX_K8S_VERSION}"
-  export ADDON_MGR_VER=v6.1
+  export ADDON_MGR_VER="v6.4-beta.2"
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
 
   # Erase old k8s emptyDir
@@ -537,10 +553,6 @@ function main(){
 
   # Reset node labels and exit
   if [[ "${RESET_LABELS}" == "true" ]]; then
-    APISERVERS="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}")" \
-                  || { echo "No such API servers, exiting..." 1>&2; exit 1; }
-    APISERVER="$(echo "${APISERVERS}" | cut -d ',' -f 1)"
-
     local MEMBER_LIST="$(curl -s http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
     if [[ "${MEMBER_LIST}" == *"${IPADDR}:${ETCD_CLIENT_PORT}"* ]]; then
       WORKER="false"
@@ -570,7 +582,11 @@ function main(){
   cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml "${KUBELET_VARLIB}/kubeconfig"
   cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
+  cp -f /go/setup-files.sh "${KUBE_ETC}/"
+  cp -f /go/copy-addons.sh "${KUBE_ETC}/"
+  cp -f /go/make-ca-cert.sh "${KUBE_ETC}/"
   cp -f /go/service-addons.sh "${KUBE_ETC}/"
+  cp -f /go/easy-rsa.tar.gz "${KUBE_ETC}/"
 
   local K8SUP_NTPSERVER_VERSION="0.1"
   local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
@@ -596,14 +612,7 @@ function main(){
     | xargs -0 sed -i "s|\"--apiserver-count=.*\",|\"--apiserver-count=${APISERVER_COUNT}\",|g"
 
   echo "Cleaning up kube-proxy old iptables rules..." 1>&2
-  docker run \
-    --net=host \
-    --rm=true \
-    --privileged \
-    --volume=/var/run/dbus \
-    "${HYPERKUBE_IMAGE_NAME}" \
-    /hyperkube proxy \
-      --cleanup-iptables
+  cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE_NAME}"
 
   echo "Getting or generating certs..." 1>&2
   [[ "$-" == *x* ]] && local DEBUG_CMD="bash -x"
@@ -611,6 +620,9 @@ function main(){
     --net=host \
     --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
     --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+    --volume=${KUBE_ETC}/setup-files.sh:/setup-files.sh \
+    --volume=${KUBE_ETC}/make-ca-cert.sh:/make-ca-cert.sh \
+    --volume=${KUBE_ETC}/easy-rsa.tar.gz:/root/kube/easy-rsa.tar.gz \
     --name=k8sup-certs \
     "${HYPERKUBE_IMAGE_NAME}" \
     "${DEBUG_CMD} /cp-certs.sh" \
@@ -642,8 +654,8 @@ function main(){
     APIHOST="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" | cut -d ',' -f 1)"
     APIHOST="${APIHOST:8}"
     [[ -z "${APIHOST}" ]] && { echo "No such API servers, exiting..." 1>&2; exit 1; }
-    echo '{}' > "${KUBE_CONF_PATH}/master-multi.json"
-    echo '{}' > "${KUBE_CONF_PATH}/addon-manager-multinode.json"
+    rm -f "${KUBE_CONF_PATH}/master-multi.json"
+    rm -f "${KUBE_CONF_PATH}/addon-manager-multinode.json"
   fi
 
   until ! docker ps | grep -w 'k8sup-kubelet'; do
@@ -654,7 +666,9 @@ function main(){
   local RBD_PATHS
   if RBD_PATHS=($(rbd_env_detector)); then
     local RBD_OPTIONS_KUBELET="$(make_rbd_docker_option "${RBD_PATHS[@]}")"
-    update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
+    if [[ "${WORKER}" == "false" ]]; then
+      update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
+    fi
   fi
 
   keystone_operation "${ENABLE_KEYSTONE}" "${KEYSTONE_CLUSTER_IP}" \
@@ -690,8 +704,10 @@ function main(){
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
-      --volume=${KUBE_CONF_PATH}/master-multi.json:${KUBE_CONF_PATH}/master-multi.json \
-      --volume=${KUBE_CONF_PATH}/addon-manager-multinode.json:${KUBE_CONF_PATH}/addon-manager-multinode.json \
+      --volume=${KUBE_ETC}/setup-files.sh:/setup-files.sh \
+      --volume=${KUBE_ETC}/make-ca-cert.sh:/make-ca-cert.sh \
+      --volume=${KUBE_ETC}/easy-rsa.tar:/root/kube/easy-rsa.tar \
+      --volume=${KUBE_CONF_PATH}:${KUBE_CONF_PATH} \
       ${KUBEDNS_OPTION} \
       ${RBD_OPTIONS_KUBELET} \
       --net=host \
@@ -711,7 +727,8 @@ function main(){
           --pod-manifest-path=${KUBE_CONF_PATH} \
           --containerized \
           --network-plugin=cni \
-          --network-plugin-dir=/etc/cni/net.d \
+          --cni-bin-dir=/opt/cni/bin \
+          --cni-conf-dir=/etc/cni/net.d \
           --pod-infra-container-image=${REGISTRY}/pause-${ARCH}:3.0 \
           --cluster-dns=${KUBEDNS_CLUSTER_IP} \
           --cluster-domain=cluster.local \
@@ -732,9 +749,6 @@ function main(){
   update_node_role_label "${IPADDR}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}" "${WORKER}"
 
   mark_default_iface_ipaddr "${IPADDR}" "${ETCD_CLIENT_PORT}"
-
-  # Set routing table to make host can access cni services using cluster IP
-  cni_svc_route_maintainer "10.0.0.0/24" &
 
   # If NTP client is not found then start a NTP client
   if ps aux | grep -v grep | grep -wE "systemd-timesyncd|ntpd" &>/dev/null; then

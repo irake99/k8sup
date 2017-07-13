@@ -26,7 +26,12 @@ ADD kube-up /go/kube-up
 ADD kube-down /go/kube-down
 ADD entrypoint.sh /go/entrypoint.sh
 ADD cp-certs.sh /go/cp-certs.sh
+ADD setup-files.sh /go/setup-files.sh
+ADD copy-addons.sh /go/copy-addons.sh
+ADD make-ca-cert.sh /go/make-ca-cert.sh
 ADD service-addons.sh /go/service-addons.sh
+
+ADD https://storage.googleapis.com/kubernetes-release/easy-rsa/easy-rsa.tar.gz /go/easy-rsa.tar.gz
 
 RUN chmod +x /go/entrypoint.sh
 RUN chmod +x /go/kube-up
