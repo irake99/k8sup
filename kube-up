@@ -540,6 +540,7 @@ function main(){
   local CERT_DIRS
   local CERT_DIR
   local EMPTY_DIRS
+  local MSG
 
   export REGISTRY="${EX_REGISTRY}"
   export ARCH="amd64"
@@ -582,6 +583,8 @@ function main(){
   cp -rf /go/kube-conf/kubeconfig/kubeconfig.yaml "${KUBELET_VARLIB}/kubeconfig"
   cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
+  cp -f /go/abac-policy-file.jsonl "${KUBE_ETC}/"
+  cp -f /go/rbac-kubecfg-binding.yaml "${KUBE_ETC}/"
   cp -f /go/setup-files.sh "${KUBE_ETC}/"
   cp -f /go/copy-addons.sh "${KUBE_ETC}/"
   cp -f /go/make-ca-cert.sh "${KUBE_ETC}/"
@@ -620,6 +623,7 @@ function main(){
     --net=host \
     --volume=/var/lib/kubelet/kubeconfig:/var/lib/kubelet/kubeconfig \
     --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+    --volume=${KUBE_ETC}/abac-policy-file.jsonl:/abac-policy-file.jsonl \
     --volume=${KUBE_ETC}/setup-files.sh:/setup-files.sh \
     --volume=${KUBE_ETC}/make-ca-cert.sh:/make-ca-cert.sh \
     --volume=${KUBE_ETC}/easy-rsa.tar.gz:/root/kube/easy-rsa.tar.gz \
@@ -704,6 +708,7 @@ function main(){
       --volume=/var/lib/cni/:/var/lib/cni:rw \
       --volume=/etc/cni:/etc/cni:rw \
       --volume=${KUBE_ETC}/cp-certs.sh:/cp-certs.sh \
+      --volume=${KUBE_ETC}/abac-policy-file.jsonl:/abac-policy-file.jsonl \
       --volume=${KUBE_ETC}/setup-files.sh:/setup-files.sh \
       --volume=${KUBE_ETC}/make-ca-cert.sh:/make-ca-cert.sh \
       --volume=${KUBE_ETC}/easy-rsa.tar:/root/kube/easy-rsa.tar \
@@ -733,6 +738,21 @@ function main(){
           --cluster-dns=${KUBEDNS_CLUSTER_IP} \
           --cluster-domain=cluster.local \
           --node-labels="$(set_role_labels "${WORKER}" "${FORCED_WORKER}")"
+
+  if [[ "${CREATOR}" == "true" ]]; then
+    echo "Trying to apply RBAC kubecfg ClusterRoleBinding..."
+    until MSG="$(docker run \
+            --net=host \
+            --rm=true \
+            --privileged \
+            --volume="${KUBE_ETC}/rbac-kubecfg-binding.yaml:/rbac-kubecfg-binding.yaml" \
+            "${HYPERKUBE_IMAGE_NAME}" \
+            /hyperkube kubectl \
+              create -f "/rbac-kubecfg-binding.yaml" 2>&1)"; do
+      echo "${MSG}" | grep -vE "duplicate proto|right host or port" 1>&2 || true
+      sleep 1
+    done
+  fi
 
   echo "Waiting for kube-proxy connect to apiserver..."
   until [[ "$(test_proxy)" -ge "1" ]]; do

@@ -26,6 +26,8 @@ ADD kube-up /go/kube-up
 ADD kube-down /go/kube-down
 ADD entrypoint.sh /go/entrypoint.sh
 ADD cp-certs.sh /go/cp-certs.sh
+ADD kube-conf/abac-policy-file.jsonl /go/abac-policy-file.jsonl
+ADD kube-conf/rbac-kubecfg-binding.yaml /go/rbac-kubecfg-binding.yaml
 ADD setup-files.sh /go/setup-files.sh
 ADD copy-addons.sh /go/copy-addons.sh
 ADD make-ca-cert.sh /go/make-ca-cert.sh

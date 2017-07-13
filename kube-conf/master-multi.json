@@ -49,6 +49,9 @@
               "--service-account-lookup=false",
               "--token-auth-file=/srv/kubernetes/known_tokens.csv",
               "--allow-privileged=true",
+              "--authorization-mode=RBAC,ABAC",
+              "--authorization-policy-file=/srv/kubernetes/abac-policy-file.jsonl",
+              "--anonymous-auth=false",
               "--apiserver-count=1",
               "--v=2"
       ],
