@@ -47,19 +47,57 @@ $ docker run -d \
     -v /var/lib/etcd:/var/lib/etcd \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
+    -v /etc/kubernetes/k8sup-home:/root \
     --name=k8sup \
-    cdxvirt/k8sup:latest \
+    cdxvirt/k8sup:k8s-1.7 \
     --network={your-subnet-id/mask}
 ```
 
 Stop k8s:
 ```
-$ docker exec k8sup /go/kube-down
+$ docker run \
+    --privileged \
+    --net=host \
+    --pid=host \
+    --rm=true \
+    -v $(which docker):/bin/docker:ro \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /usr/lib/:/host/lib:ro \
+    -v /lib/modules:/lib/modules:ro \
+    -v /usr/sbin/modprobe:/usr/sbin/modprobe:ro \
+    -v /opt/bin:/opt/bin:rw \
+    -v /etc/cni:/etc/cni \
+    -v /var/lib/cni:/var/lib/cni \
+    -v /var/lib/etcd:/var/lib/etcd \
+    -v /var/lib/kubelet:/var/lib/kubelet \
+    -v /etc/kubernetes:/etc/kubernetes \
+    -v /etc/kubernetes/k8sup-home:/root \
+    --entrypoint=/go/kube-down \
+    cdxvirt/k8sup:k8s-1.7
 ```
 
 Remove k8s from node:
 ```
-$ docker exec k8sup /go/kube-down --remove
+$ docker run \
+    --privileged \
+    --net=host \
+    --pid=host \
+    --rm=true \
+    -v $(which docker):/bin/docker:ro \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /usr/lib/:/host/lib:ro \
+    -v /lib/modules:/lib/modules:ro \
+    -v /usr/sbin/modprobe:/usr/sbin/modprobe:ro \
+    -v /opt/bin:/opt/bin:rw \
+    -v /etc/cni:/etc/cni \
+    -v /var/lib/cni:/var/lib/cni \
+    -v /var/lib/etcd:/var/lib/etcd \
+    -v /var/lib/kubelet:/var/lib/kubelet \
+    -v /etc/kubernetes:/etc/kubernetes \
+    -v /etc/kubernetes/k8sup-home:/root \
+    --entrypoint=/go/kube-down \
+    cdxvirt/k8sup:k8s-1.7 \
+    --remove
 ```
 
 Show k8sup log and Cluster ID:
