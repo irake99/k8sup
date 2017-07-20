@@ -4,6 +4,20 @@ source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting
 
 #---
 
+# Return code 0 means this container is k8sup
+function check_if_this_container_is_k8sup(){
+  local CONTAINER_ID="$(cat /proc/self/cgroup | sed -n "s|.*\/docker\/\(.*\)|\1|p" | uniq)"
+  if [[ "$(echo "${CONTAINER_ID}" | wc -l)" != "1" ]]; then
+    echo "'/proc/self/cgroup' may has some problem, exiting..." 1>&2
+    exit 1
+  fi
+  if [[ "$(docker inspect "${CONTAINER_ID}" | jq -r '.[0].Name')" == "/k8sup" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
 function remove_node_from_endpoints(){
   local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
   local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
@@ -333,8 +347,13 @@ function get_options(){
 
 function main(){
   get_options "$@"
-
   source "/root/.bashrc"
+
+  if check_if_this_container_is_k8sup; then
+    echo "Container named k8sup can not run kube-down by itself, please run another container to do this." 1>&2
+    exit 1
+  fi
+
   local IPADDR="${EX_IPADDR}"
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}"
   local K8S_VERSION="${EX_K8S_VERSION}"
@@ -417,7 +436,9 @@ function main(){
   [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
   [[ -n "${CONTAINER_IDS}" ]] && docker rm -v ${CONTAINER_IDS} 1>/dev/null || true
 
-  bash -c "sleep 3; docker rm -f -v k8sup 1>/dev/null" &
+  docker stop k8sup 1>/dev/null || true
+  docker rm -v k8sup 1>/dev/null || true
+
   echo "Done" 1>&2
 }
 
