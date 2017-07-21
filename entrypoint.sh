@@ -20,6 +20,17 @@ function cleanup(){
   fi
 }
 
+function init_bashrc(){
+cat <<EOF > "/root/.bashrc"
+export PS1="[\[\033[1;34m\]\u\[\033[0;37m\]@\h\[\033[0;32m\]:\w\[\033[0m\]]\[\033[0;33m\]\n\[\033[1;32m\]#\[\033[0m\] "
+export TERM=xterm
+
+alias ls='ls --color'
+alias l='ls'
+alias ll='ls -alFh'
+EOF
+}
+
 function get_alive_etcd_member_size(){
   local MEMBER_LIST="$1"
   local MEMBER_CLIENT_ADDR_LIST="$(echo "${MEMBER_LIST}" | jq -r ".members[].clientURLs[0]" | grep -v 'null')"
@@ -764,6 +775,7 @@ function get_options(){
 
 function main(){
   get_options "$@"
+  init_bashrc
 
   local COREOS_REGISTRY="${EX_COREOS_REGISTRY}" && unset EX_COREOS_REGISTRY
   local K8S_REGISTRY="${EX_K8S_REGISTRY}" && unset EX_K8S_REGISTRY
