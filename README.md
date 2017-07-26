@@ -14,7 +14,7 @@ Options:
                                e. g. "192.168.11.0/24" or "192.168.11.1"
                                or "eth0"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.7.0)
+    --k8s-version=VERSION      Specify k8s version (Default: 1.7.1)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
@@ -47,19 +47,57 @@ $ docker run -d \
     -v /var/lib/etcd:/var/lib/etcd \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
+    -v /etc/kubernetes/k8sup-home:/root \
     --name=k8sup \
-    cdxvirt/k8sup:latest \
+    cdxvirt/k8sup:k8s-1.7 \
     --network={your-subnet-id/mask}
 ```
 
 Stop k8s:
 ```
-$ docker exec k8sup /go/kube-down
+$ docker run \
+    --privileged \
+    --net=host \
+    --pid=host \
+    --rm=true \
+    -v $(which docker):/bin/docker:ro \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /usr/lib/:/host/lib:ro \
+    -v /lib/modules:/lib/modules:ro \
+    -v /usr/sbin/modprobe:/usr/sbin/modprobe:ro \
+    -v /opt/bin:/opt/bin:rw \
+    -v /etc/cni:/etc/cni \
+    -v /var/lib/cni:/var/lib/cni \
+    -v /var/lib/etcd:/var/lib/etcd \
+    -v /var/lib/kubelet:/var/lib/kubelet \
+    -v /etc/kubernetes:/etc/kubernetes \
+    -v /etc/kubernetes/k8sup-home:/root \
+    --entrypoint=/go/kube-down \
+    cdxvirt/k8sup:k8s-1.7
 ```
 
 Remove k8s from node:
 ```
-$ docker exec k8sup /go/kube-down --remove
+$ docker run \
+    --privileged \
+    --net=host \
+    --pid=host \
+    --rm=true \
+    -v $(which docker):/bin/docker:ro \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /usr/lib/:/host/lib:ro \
+    -v /lib/modules:/lib/modules:ro \
+    -v /usr/sbin/modprobe:/usr/sbin/modprobe:ro \
+    -v /opt/bin:/opt/bin:rw \
+    -v /etc/cni:/etc/cni \
+    -v /var/lib/cni:/var/lib/cni \
+    -v /var/lib/etcd:/var/lib/etcd \
+    -v /var/lib/kubelet:/var/lib/kubelet \
+    -v /etc/kubernetes:/etc/kubernetes \
+    -v /etc/kubernetes/k8sup-home:/root \
+    --entrypoint=/go/kube-down \
+    cdxvirt/k8sup:k8s-1.7 \
+    --remove
 ```
 
 Show k8sup log and Cluster ID:
