@@ -475,7 +475,7 @@ function kube_up(){
   local CONFIG_FILE="$1"
   source "${CONFIG_FILE}" || exit 1
 
-  local IPADDR="${EX_IPADDR}" && unset EX_IPADDR
+  local IP_AND_MASK="${EX_IP_AND_MASK}" && unset EX_IP_AND_MASK
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   local REGISTRY="${EX_REGISTRY}" && unset EX_REGISTRY
   local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
@@ -503,7 +503,7 @@ function kube_up(){
   if [[ "${ROLE}" == "creator" ]]; then
     local CREATOR_OPT="--creator"
   fi
-  /go/kube-up --ip="${IPADDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT}
+  /go/kube-up --ip-cidr="${IP_AND_MASK}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT}
 }
 
 function restart_flannel(){

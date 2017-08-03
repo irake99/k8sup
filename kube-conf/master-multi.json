@@ -37,6 +37,7 @@
       "command": [
               "/hyperkube",
               "apiserver",
+              "--advertise-address=NODE_IPADDR",
               "--service-cluster-ip-range=10.0.0.0/24",
               "--etcd-servers=http://127.0.0.1:2379",
               "--admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota",
