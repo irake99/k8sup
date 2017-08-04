@@ -48,7 +48,7 @@ function get_subnet_id_and_mask(){
 
   local HEX_ADDR=$(addr2hex "${ADDR}")
   local HEX_MASK=$(addr2hex $(cidr2mask "${MASK}"))
-  local HEX_NETWORK=$(printf '%02X' $((${HEX_ADDR} & ${HEX_MASK})))
+  local HEX_NETWORK=$(printf '%08X' $((${HEX_ADDR} & ${HEX_MASK})))
 
   local NETWORK=$(printf '%d.' 0x${HEX_NETWORK:0:2} 0x${HEX_NETWORK:2:2} 0x${HEX_NETWORK:4:2} 0x${HEX_NETWORK:6:2})
   SUBNET_ID="${NETWORK:0:-1}"
