@@ -691,6 +691,7 @@ function main(){
       --net=host \
       --privileged=true \
       --pid=host \
+      --restart=on-failure \
       --name=k8sup-kubelet \
       -d \
       "${HYPERKUBE_IMAGE_NAME}" \
