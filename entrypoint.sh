@@ -73,6 +73,7 @@ function etcd_creator(){
     -v /usr/share/ca-certificates/:/etc/ssl/certs \
     -v /var/lib/etcd:/var/lib/etcd \
     --net=host \
+    --restart=on-failure \
     --name=k8sup-etcd \
     "${ENV_ETCD_IMAGE}" \
     /usr/local/bin/etcd \
@@ -235,6 +236,7 @@ function etcd_follower(){
     -v /usr/share/ca-certificates/:/etc/ssl/certs \
     -v /var/lib/etcd:/var/lib/etcd \
     --net=host \
+    --restart=on-failure \
     --name=k8sup-etcd \
     "${ENV_ETCD_IMAGE}" \
     /usr/local/bin/etcd \
@@ -328,6 +330,7 @@ function flanneld(){
     -d \
     --name k8sup-flannel \
     --net=host \
+    --restart=on-failure \
     --privileged \
     -v /dev/net:/dev/net \
     -v /run/flannel:/run/flannel \
