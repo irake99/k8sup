@@ -8,7 +8,7 @@ trap 'cleanup $?' EXIT
 function cleanup(){
   local RC="$1"
   if [[ ! -f "/.started" ]] && [[ "${RC}" -eq "1" ]]; then
-    local LOGNAME="k8sup-$(date +"%Y%m%d%H%M%S-%N")"
+    local LOGNAME="k8sup-$(date +"%Y%m%d%H%M%S")"
     mkdir -p "/etc/kubernetes/logs"
     docker logs k8sup &>"/etc/kubernetes/logs/${LOGNAME}.log"
     docker inspect k8sup &>"/etc/kubernetes/logs/${LOGNAME}.json"
