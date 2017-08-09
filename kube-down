@@ -4,18 +4,32 @@ source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting
 
 #---
 
-# Return code 0 means this container is k8sup
-function check_if_this_container_is_k8sup(){
+function get_this_container_id(){
   local CONTAINER_ID="$(cat /proc/self/cgroup | sed -n "s|.*\/docker\/\(.*\)|\1|p" | uniq)"
   if [[ "$(echo "${CONTAINER_ID}" | wc -l)" != "1" ]]; then
     echo "'/proc/self/cgroup' may has some problem, exiting..." 1>&2
     exit 1
   fi
+
+  echo "${CONTAINER_ID}"
+}
+
+# Return code 0 means this container is k8sup
+function check_if_this_container_is_k8sup(){
+  local CONTAINER_ID="$(get_this_container_id)"
   if [[ "$(docker inspect "${CONTAINER_ID}" | jq -r '.[0].Name')" == "/k8sup" ]]; then
     return 0
   else
     return 1
   fi
+}
+
+function kube_down_save_log(){
+  local CONTAINER_ID="$(get_this_container_id)"
+  local LOGNAME="kube-down-$(date +"%Y%m%d%H%M%S")"
+  mkdir -p "/etc/kubernetes/logs"
+  docker logs "${CONTAINER_ID}" &>"/etc/kubernetes/logs/${LOGNAME}.log"
+  docker inspect "${CONTAINER_ID}" &>"/etc/kubernetes/logs/${LOGNAME}.json"
 }
 
 function remove_node_from_endpoints(){
@@ -434,6 +448,8 @@ function main(){
 
   docker stop k8sup 1>/dev/null || true
   docker rm -v k8sup 1>/dev/null || true
+
+  kube_down_save_log
 
   echo "Done" 1>&2
 }
