@@ -8,7 +8,7 @@ trap 'cleanup $?' EXIT
 function cleanup(){
   local RC="$1"
   if [[ ! -f "/.started" ]] && [[ "${RC}" -eq "1" ]]; then
-    local LOGNAME="k8sup-$(date +"%Y%m%d%H%M%S-%N")"
+    local LOGNAME="k8sup-$(date +"%Y%m%d%H%M%S")"
     mkdir -p "/etc/kubernetes/logs"
     docker logs k8sup &>"/etc/kubernetes/logs/${LOGNAME}.log"
     docker inspect k8sup &>"/etc/kubernetes/logs/${LOGNAME}.json"
@@ -73,6 +73,7 @@ function etcd_creator(){
     -v /usr/share/ca-certificates/:/etc/ssl/certs \
     -v /var/lib/etcd:/var/lib/etcd \
     --net=host \
+    --restart=on-failure \
     --name=k8sup-etcd \
     "${ENV_ETCD_IMAGE}" \
     /usr/local/bin/etcd \
@@ -235,6 +236,7 @@ function etcd_follower(){
     -v /usr/share/ca-certificates/:/etc/ssl/certs \
     -v /var/lib/etcd:/var/lib/etcd \
     --net=host \
+    --restart=on-failure \
     --name=k8sup-etcd \
     "${ENV_ETCD_IMAGE}" \
     /usr/local/bin/etcd \
@@ -328,6 +330,7 @@ function flanneld(){
     -d \
     --name k8sup-flannel \
     --net=host \
+    --restart=on-failure \
     --privileged \
     -v /dev/net:/dev/net \
     -v /run/flannel:/run/flannel \

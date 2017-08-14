@@ -669,7 +669,7 @@ function main(){
     echo "Could not get network interface which use '${IPCIDR}', exiting..." 1>&2
     exit 1
   fi
-  ip route add "10.0.0.1/32" dev "${IFACE}" &>/dev/null || true
+  ip route add "10.0.0.0/24" dev "${IFACE}" &>/dev/null || true
 
   echo "Running Kubernetes ..."
   docker run \
@@ -691,6 +691,7 @@ function main(){
       --net=host \
       --privileged=true \
       --pid=host \
+      --restart=on-failure \
       --name=k8sup-kubelet \
       -d \
       "${HYPERKUBE_IMAGE_NAME}" \
