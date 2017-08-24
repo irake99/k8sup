@@ -251,15 +251,24 @@ function ntp_updater(){
   local TIME_GAP="$2"
   local RESULT
 
-  until ntpdate "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>/dev/null; do
-    sleep 1
-  done
-  echo "NTP client synchronized!" 1>&2
-  sleep "${TIME_GAP}"
+  if ! ps aux | grep -v grep | grep -q "/etc/chrony/chrony.conf"; then
+    until ntpdate "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>/dev/null; do
+      sleep 1
+    done
+    echo "NTP client synchronized!" 1>&2
+    sleep "${TIME_GAP}"
+  else
+    echo "NTP server pod is running on this node, skip time sync at this moment."
+  fi
 
   while true; do
-    RESULT="$(ntpdate "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>&1)" || true
-    [[ "$-" == *x* ]] && echo "${RESULT}" 1>&2
+    if ! ps aux | grep -v grep | grep -q "/etc/chrony/chrony.conf"; then
+      RESULT="$(ntpdate "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>&1)" || true
+      [[ "$-" == *x* ]] && echo "${RESULT}" 1>&2
+    else
+      [[ "$-" == *x* ]] \
+        && echo "NTP server pod is running on this node, skip time sync at this moment." 1>&2
+    fi
     sleep "${TIME_GAP}"
   done
 }
