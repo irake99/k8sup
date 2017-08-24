@@ -252,7 +252,7 @@ function ntp_updater(){
   local RESULT
 
   if ! ps aux | grep -v grep | grep -q "/etc/chrony/chrony.conf"; then
-    until ntpdate "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>/dev/null; do
+    until ntpdate -b "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>/dev/null; do
       sleep 1
     done
     echo "NTP client synchronized!" 1>&2
@@ -263,7 +263,7 @@ function ntp_updater(){
 
   while true; do
     if ! ps aux | grep -v grep | grep -q "/etc/chrony/chrony.conf"; then
-      RESULT="$(ntpdate "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>&1)" || true
+      RESULT="$(ntpdate -b "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>&1)" || true
       [[ "$-" == *x* ]] && echo "${RESULT}" 1>&2
     else
       [[ "$-" == *x* ]] \
