@@ -167,7 +167,8 @@ function download_kube_certs(){
       | sed "s/\\\n/\n/g" \
       | base64 -d -i)"
     echo "${CERT}" |  tee "${CERTS_DIR}/${FILE}" 1>/dev/null \
-      && echo "${FILE}" downloaded 1>&2
+      && echo "${FILE} downloaded" 1>&2 \
+      || { echo "Error: download or writing '${FILE}' failed!"; return 1; }
   done
 
   for FILE in ${FILE_LIST}; do
@@ -214,13 +215,15 @@ function main(){
 
   CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
   if [[ "${CERTS_ON_ETCD}" == "true" ]]; then
-    download_kube_certs "${ETCD_PATH}"
+    download_kube_certs "${ETCD_PATH}" || exit 1
   else
     upload_kube_certs "${ETCD_PATH}" &
   fi
 
   mkdir -p "${CERTS_DIR}"
-  cp -f "/abac-policy-file.jsonl" "${CERTS_DIR}"
+  if [[ -f "/abac-policy-file.jsonl" ]]; then
+    cp -f "/abac-policy-file.jsonl" "${CERTS_DIR}"
+  fi
 
   /setup-files.sh "${DOMAIN_NAME}" &
 
