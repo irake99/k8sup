@@ -578,7 +578,7 @@ function main(){
   cp -rf /go/kube-conf/addons "${KUBE_ETC}/"
   cp -f /go/cp-certs.sh "${KUBE_ETC}/"
   cp -f /go/abac-policy-file.jsonl "${KUBE_ETC}/"
-  cp -f /go/rbac-kubecfg-binding.yaml "${KUBE_ETC}/"
+  cp -f /go/rbac-basic-binding.yaml "${KUBE_ETC}/"
   cp -f /go/setup-files.sh "${KUBE_ETC}/"
   cp -f /go/copy-addons.sh "${KUBE_ETC}/"
   cp -f /go/make-ca-cert.sh "${KUBE_ETC}/"
@@ -750,10 +750,10 @@ function main(){
             --net=host \
             --rm=true \
             --privileged \
-            --volume="${KUBE_ETC}/rbac-kubecfg-binding.yaml:/rbac-kubecfg-binding.yaml" \
+            --volume="${KUBE_ETC}/rbac-basic-binding.yaml:/rbac-basic-binding.yaml" \
             "${HYPERKUBE_IMAGE_NAME}" \
             /hyperkube kubectl \
-              create -f "/rbac-kubecfg-binding.yaml" 2>&1)"; do
+              create -f "/rbac-basic-binding.yaml" 2>&1)"; do
       echo "${MSG}" | grep -vE "duplicate proto|right host or port" 1>&2 || true
       sleep 1
     done
