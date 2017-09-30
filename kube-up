@@ -317,17 +317,18 @@ function update_node_role_label(){
 function show_usage(){
   USAGE="Usage: ${0##*/} [options...]
 Options:
--i, --ip=IPADDR               Host IP address (Required)
--p, --worker                  Run as k8s worker
--a, --apiserver-port=PORT     Apiserver port (Default: 6443)
--a, --etcd-port=PORT          etcd client port (Default: 2379)
--v, --version=VERSION         Specify k8s version (Default: 1.5.6)
--r, --registry=REGISTRY       Registry of docker image (Default: 'gcr.io/google_containers')
-    --creator                 Mark as the first node
-    --forced-worker           Run as k8s worker persistently
-    --reset-labels            Reset node labels
-    --enable-keystone         Enable Keystone service (Default: disabled)
--h, --help                    This help text
+-i, --ip=IPADDR                     Host IP address (Required)
+-p, --worker                        Run as k8s worker
+-a, --apiserver-port=PORT           Apiserver port (Default: 6443)
+    --apiserver-insecure-port=PORT  Apiserver insecure port (Default: 8080)
+-a, --etcd-port=PORT                etcd client port (Default: 2379)
+-v, --version=VERSION               Specify k8s version (Default: 1.5.6)
+-r, --registry=REGISTRY             Registry of docker image (Default: 'gcr.io/google_containers')
+    --creator                       Mark as the first node
+    --forced-worker                 Run as k8s worker persistently
+    --reset-labels                  Reset node labels
+    --enable-keystone               Enable Keystone service (Default: disabled)
+-h, --help                          This help text
 "
 
   echo "${USAGE}"
@@ -336,7 +337,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:r:h"
-  local LONGOPTS="ip-cidr:,apiserver-port:,etcd-port:,creator,worker,version:,registry:,forced-worker,reset-labels,enable-keystone,help"
+  local LONGOPTS="ip-cidr:,apiserver-port:,apiserver-insecure-port:,etcd-port:,creator,worker,version:,registry:,forced-worker,reset-labels,enable-keystone,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -351,6 +352,10 @@ function get_options(){
               ;;
           -a|--apiserver-port)
               export EX_APISERVER_PORT="$2"
+              shift 2
+              ;;
+             --apiserver-insecure-port)
+              export EX_APISERVER_INSECURE_PORT="$2"
               shift 2
               ;;
           -a|--etcd-port)
@@ -412,6 +417,13 @@ function get_options(){
 
   if [[ -z "${EX_APISERVER_PORT}" ]]; then
     export EX_APISERVER_PORT="6443"
+  fi
+
+  if [[ -z "${EX_APISERVER_INSECURE_PORT}" ]]; then
+    export EX_K8S_INSECURE_PORT="8080"
+  elif [[ -n "$(echo "${EX_APISERVER_INSECURE_PORT}" | grep -o '[^0-9]*')" ]]; then
+    echo "Error: wrong kube-apiserver insecure port, exiting..." 1>&2
+    exit 1
   fi
 
   if [[ -z "${EX_ETCD_CLIENT_PORT}" ]]; then
@@ -492,6 +504,7 @@ function main(){
   local WORKER="${EX_WORKER}" && unset EX_WORKER
   local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
   local APISERVER_PORT="${EX_APISERVER_PORT}" && unset EX_APISERVER_PORT
+  local APISERVER_INSECURE_PORT="${EX_APISERVER_INSECURE_PORT}" && unset EX_APISERVER_INSECURE_PORT
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local RESET_LABELS="${EX_RESET_LABELS}" && unset EX_RESET_LABELS
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
@@ -585,6 +598,7 @@ function main(){
   find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bVERSION\b|v${K8S_VERSION}|g"
   find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bDOMAIN_NAME\b|${DOMAIN_NAME}|g"
   find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bADDON_MGR_VER\b|${ADDON_MGR_VER}|g"
+  find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bAPISERVER_INSECURE_PORT\b|${APISERVER_INSECURE_PORT}|g"
   find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 \
     | xargs -0 sed -i "s|\"--master=127.0.0.1:8080\"\,|\"--leader-elect=true\"\,\n              \"--kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml\"\,|g"
   find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 \
