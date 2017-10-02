@@ -609,6 +609,11 @@ function main(){
   sed -i "s|\"--v=[0-9]\"|\"--v=${K8S_DEBUG_LEVEL}\"|g" "${KUBE_CONF_PATH}"/master-multi.json "${KUBE_ADDONS_CONF_PATH}"/kube-proxy.yaml
   sed -i "s|\bNODE_IPADDR\b|${IPADDR}|g" "${KUBE_CONF_PATH}"/master-multi.json
 
+  if [[ -n "${KUBE_APISERVER_OPTS}" ]]; then
+    KUBE_APISERVER_OPTS="$(echo "${KUBE_APISERVER_OPTS}" | sed 's| -|\\\",\\n              \\\"-|g')"
+    sed -i "s|              \"apiserver\",$|              \"apiserver\",\n              \"${KUBE_APISERVER_OPTS}\",|g" "${KUBE_CONF_PATH}"/master-multi.json
+  fi
+
   # Replace strings in all json and yaml files in sub-directories
   [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local KUBERNETES_REGISTRY="kubernetes" || local KUBERNETES_REGISTRY="${REGISTRY}"
   find "${KUBE_ETC}" -type f \( -name "*.json" -or -name "*.yaml" \) -print0 | xargs -0 sed -i "s|\bREGISTRY\b|${REGISTRY}|g"
