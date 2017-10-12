@@ -1,44 +1,46 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
-	"github.com/oleksandr/bonjour"
+	"github.com/grandcat/zeroconf"
+)
+
+var (
+	service  = flag.String("service", "_etcd._tcp", "Set the service category to look for devices.")
+	domain   = flag.String("domain", "local.", "Set the search domain. For local networks, default is fine.")
+	waitTime = flag.Int("wait", 5, "Duration in [s] to run discovery.")
 )
 
 func main() {
-	resolver, err := bonjour.NewResolver(nil)
+	flag.Parse()
+
+	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
-		log.Println("Failed to initialize resolver:", err.Error())
-		os.Exit(1)
+		log.Fatalln("Failed to initialize resolver:", err.Error())
 	}
 
-	results := make(chan *bonjour.ServiceEntry)
+	entries := make(chan *zeroconf.ServiceEntry)
+	go func(results <-chan *zeroconf.ServiceEntry) {
+		for entry := range results {
+			fmt.Printf("%s %s:%d %s %s\n", entry.HostName, entry.AddrIPv4, entry.Port, entry.Text, entry.ServiceInstanceName())
+		}
+		log.Println("No more entries.")
+	}(entries)
 
 	// Send the "stop browsing" signal after the desired timeout
-	timeout := time.Duration(5e9)
-	exitCh := make(chan bool)
-	go func() {
-		time.Sleep(timeout)
-		go func() { resolver.Exit <- true }()
-		go func() { exitCh <- true }()
-	}()
-
-	err = resolver.Browse("_etcd._tcp", "local.", results)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(*waitTime))
+	defer cancel()
+	err = resolver.Browse(ctx, *service, *domain, entries)
 	if err != nil {
-		log.Println("Failed to browse:", err.Error())
+		log.Fatalln("Failed to browse:", err.Error())
 	}
 
-	for {
-		select {
-		case e := <-results:
-			fmt.Printf("%s %s:%d %s %s\n", e.HostName, e.AddrIPv4, e.Port, e.Text, e.ServiceInstanceName())
-			time.Sleep(1e8)
-		case <-exitCh:
-			os.Exit(0)
-		}
-	}
+	<-ctx.Done()
+	// Wait some additional time to see debug messages on go routine shutdown.
+	time.Sleep(1e9)
 }

@@ -21,7 +21,7 @@ function check_and_wait_all_cert_files_in_var_lib_kubelet_kubeconfig(){
 
 function check_and_wait_all_cert_files_in_srv_kubernetes(){
   local CERTS_DIR="/srv/kubernetes"
-  local FILE_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv"
+  local FILE_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv abac-policy-file.jsonl"
 
   # Wait a moment until all files exist
   local CERTS_EXISTED="false"
@@ -117,7 +117,7 @@ function cp_kube_certs(){
 function upload_kube_certs(){
   local ETCD_PATH="$1"
   local CERTS_DIR="/srv/kubernetes"
-  local FILE_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv"
+  local FILE_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv abac-policy-file.jsonl"
   local ENCODED_DATA=""
 
   # Wait a moment until all files exist
@@ -150,7 +150,7 @@ function upload_kube_certs(){
 function download_kube_certs(){
   local ETCD_PATH="$1"
   local CERTS_DIR="/srv/kubernetes"
-  local FILE_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv"
+  local FILE_LIST="ca.crt kubecfg.crt kubecfg.key server.cert server.key basic_auth.csv known_tokens.csv abac-policy-file.jsonl"
   local RAWDATA=""
   local CERT=""
 
@@ -167,7 +167,8 @@ function download_kube_certs(){
       | sed "s/\\\n/\n/g" \
       | base64 -d -i)"
     echo "${CERT}" |  tee "${CERTS_DIR}/${FILE}" 1>/dev/null \
-      && echo "${FILE}" downloaded 1>&2
+      && echo "${FILE} downloaded" 1>&2 \
+      || { echo "Error: download or writing '${FILE}' failed!"; return 1; }
   done
 
   for FILE in ${FILE_LIST}; do
@@ -182,19 +183,46 @@ function download_kube_certs(){
   done
 }
 
+function export_keystone_ssl(){
+  local KEYSTONE_CERTS_PATH="/srv/keystone"
+  local CERTS_DIR="/srv/kubernetes"
+
+  mkdir -p "${KEYSTONE_CERTS_PATH}"
+  openssl x509 -outform PEM -in "${CERTS_DIR}/ca.crt"      -out "${KEYSTONE_CERTS_PATH}/ca.pem"
+  openssl x509 -outform PEM -in "${CERTS_DIR}/server.cert" -out "${KEYSTONE_CERTS_PATH}/keystone.pem"
+  openssl rsa  -outform PEM -in "${CERTS_DIR}/server.key"  -out "${KEYSTONE_CERTS_PATH}/keystonekey.pem" 1>/dev/null
+
+  # Waiting for apiserver ready
+  until /hyperkube kubectl get secret &>/dev/null; do
+    sleep 1
+  done
+  # Try to delete old certs and upload new certs
+  /hyperkube kubectl delete secret keystone-tls-certs &>/dev/null
+  /hyperkube kubectl create secret generic keystone-tls-certs --from-file="${KEYSTONE_CERTS_PATH}" --namespace=default 1>/dev/null \
+    && echo "keystone certs uploaded as secret."
+}
+
 function main(){
-  apt-get update 1>/dev/null
-  apt-get install -y curl 1>/dev/null
+  if ! which curl &>/dev/null; then
+    apt-get update 1>/dev/null
+    apt-get install -y curl 1>/dev/null
+  fi
   local DOMAIN_NAME="$1"
   local DONT_HOLD="$2"
   local ETCD_PATH="k8sup/cluster/k8s_certs"
+  local CERTS_DIR="/srv/kubernetes"
   local CERTS_ON_ETCD=""
 
   CERTS_ON_ETCD="$(check_certs_exist_on_etcd "${ETCD_PATH}")" || exit
   if [[ "${CERTS_ON_ETCD}" == "true" ]]; then
-    download_kube_certs "${ETCD_PATH}"
+    download_kube_certs "${ETCD_PATH}" || exit 1
   else
     upload_kube_certs "${ETCD_PATH}" &
+  fi
+
+  mkdir -p "${CERTS_DIR}"
+  if [[ -f "/abac-policy-file.jsonl" ]]; then
+    cp -f "/abac-policy-file.jsonl" "${CERTS_DIR}"
   fi
 
   /setup-files.sh "${DOMAIN_NAME}" &
@@ -203,7 +231,8 @@ function main(){
 
   if [[ "${DONT_HOLD}" != "DONT_HOLD" ]]; then
     check_and_wait_all_cert_files_in_srv_kubernetes
-    wait
+    export_keystone_ssl
+    sleep infinity
   else
     check_and_wait_all_certs_exist_on_etcd "${ETCD_PATH}"
     check_and_wait_all_cert_files_in_srv_kubernetes

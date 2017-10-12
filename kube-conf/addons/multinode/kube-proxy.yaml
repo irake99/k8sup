@@ -38,6 +38,7 @@ spec:
         - proxy
         - --v=2
         - --kubeconfig=/var/lib/kubelet/kubeconfig/kubeconfig.yaml
+        - --cluster-cidr=10.0.0.0/24
         securityContext:
           privileged: true
         volumeMounts:

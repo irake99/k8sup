@@ -37,7 +37,8 @@
       "command": [
               "/hyperkube",
               "apiserver",
-              "--service-cluster-ip-range=10.0.0.1/24",
+              "--advertise-address=NODE_IPADDR",
+              "--service-cluster-ip-range=10.0.0.0/24",
               "--etcd-servers=http://127.0.0.1:2379",
               "--admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota",
               "--basic-auth-file=/srv/kubernetes/basic_auth.csv",
@@ -49,6 +50,9 @@
               "--service-account-lookup=false",
               "--token-auth-file=/srv/kubernetes/known_tokens.csv",
               "--allow-privileged=true",
+              "--authorization-mode=RBAC,ABAC",
+              "--authorization-policy-file=/srv/kubernetes/abac-policy-file.jsonl",
+              "--anonymous-auth=false",
               "--apiserver-count=1",
               "--v=2"
       ],
@@ -96,6 +100,14 @@
           "mountPath": "/cp-certs.sh"
         },
         {
+          "name": "setup-files",
+          "mountPath": "/setup-files.sh"
+        },
+        {
+          "name": "make-ca-cert",
+          "mountPath": "/make-ca-cert.sh"
+        },
+        {
           "name": "etc-k8s",
           "mountPath": "/etc/kubernetes"
         },
@@ -115,6 +127,18 @@
       "name": "cp-certs",
       "hostPath": {
         "path": "/etc/kubernetes/cp-certs.sh"
+      }
+    },
+    {
+      "name": "setup-files",
+      "hostPath": {
+        "path": "/etc/kubernetes/setup-files.sh"
+      }
+    },
+    {
+      "name": "make-ca-cert",
+      "hostPath": {
+        "path": "/etc/kubernetes/make-ca-cert.sh"
       }
     },
     {

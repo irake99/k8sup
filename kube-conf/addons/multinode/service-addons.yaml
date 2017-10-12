@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: service-addons
+  labels:
+    kubernetes.io/cluster-service: 'true'
+spec:
+  replicas: 1
+  selector:
+    name: service-addons
+  template:
+    metadata:
+      name: service-addons
+      labels:
+        name: service-addons
+    spec:
+      hostNetwork: true
+      containers:
+      - name: service-addons
+        image: REGISTRY/kube-addon-manager-ARCH:ADDON_MGR_VER
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: image
+          value: REGISTRY/kube-addon-manager-ARCH:ADDON_MGR_VER
+        command:
+        - /opt/service-addons.sh
+        resources:
+          requests:
+            cpu: 5m
+            memory: 50Mi
+        volumeMounts:
+        - name: kube-addons
+          mountPath: /opt/service-addons.sh
+        - name: addons
+          mountPath: /etc/kubernetes/addons
+      volumes:
+      - name: addons
+        hostPath:
+          path: /etc/kubernetes/service-addons
+      - name: kube-addons
+        hostPath:
+          path: /etc/kubernetes/service-addons.sh
