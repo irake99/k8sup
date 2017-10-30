@@ -249,7 +249,7 @@ function etcd_follower(){
       --initial-cluster "${ENDPOINTS}" \
       --initial-cluster-state existing \
       --data-dir /var/lib/etcd \
-      --proxy "${PROXY}" || return 1
+      --proxy "${PROXY}" 1>/dev/null || return 1
 
 
   if [[ "${ALREADY_MEMBER}" != "true" ]] && [[ "${PROXY}" == "off" ]]; then
@@ -263,6 +263,8 @@ function etcd_follower(){
   until curl -sf -m 1 127.0.0.1:${CLIENT_PORT}/v2/keys &>/dev/null; do
     sleep 3
   done
+
+  echo "${PROXY}"
 }
 
 function wait_etcd_cluster_healthy(){
@@ -588,7 +590,8 @@ function rejoin_etcd(){
   bash -c 'docker rm k8sup-etcd' &>/dev/null || true
 
   # Join the same etcd cluster again
-  etcd_follower "${IPADDR}" "${NODE_NAME}" "${ETCD_NODE_LIST}" "${PROXY}"
+  PROXY="$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${ETCD_NODE_LIST}" "${PROXY}")" || exit 1
+  echo "etcdProxy: ${PROXY}" 1>&2
 
   # DNS-SD
   local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/go/dnssd/registering' | grep -v grep | awk '{print $1}')"
@@ -604,7 +607,7 @@ Options:
                                e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                                or \"eth0\"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.5.7)
+    --k8s-version=VERSION      Specify k8s version (Default: 1.5.8)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
@@ -766,7 +769,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.5.7"
+    export EX_K8S_VERSION="1.5.8"
   fi
   if [[ -z "${EX_FLANNEL_VERSION}" ]]; then
     export EX_FLANNEL_VERSION="0.6.2"
@@ -985,9 +988,10 @@ function main(){
     else
       echo "This is a follower node and try to join other nodes:" 1>&2
       echo "${EXISTING_ETCD_NODE_LIST}" 1>&2
-      etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTING_ETCD_NODE_LIST}" "${PROXY}" || exit 1
+      PROXY="$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTING_ETCD_NODE_LIST}" "${PROXY}")" || exit 1
     fi
   fi
+  echo "etcdProxy: ${PROXY}" 1>&2
 
   until curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys 1>/dev/null 2>&1; do
     echo "Waiting for etcd ready..."
