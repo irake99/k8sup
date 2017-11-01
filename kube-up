@@ -5,13 +5,14 @@ source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting
 #---
 
 function set_role_labels(){
-  local WORKER="$1"
-  local FORCED_WORKER="$2"
+  local IPADDR="$1"
+  local WORKER="$2"
+  local FORCED_WORKER="$3"
   local ROLE_LABELS
   local K8S_MASTER
   [[ "${WORKER}" == "false" ]] && K8S_MASTER="true" || K8S_MASTER="false"
 
-  ROLE_LABELS="cdxvirt/k8s_master=${K8S_MASTER},cdxvirt/k8s_forced_worker=${FORCED_WORKER}"
+  ROLE_LABELS="cdxvirt/k8s_master=${K8S_MASTER},cdxvirt/k8s_forced_worker=${FORCED_WORKER},cdxvirt/nodeip=${IPADDR}"
 
   echo "${ROLE_LABELS}"
 }
@@ -739,7 +740,7 @@ function main(){
           --pod-infra-container-image=${REGISTRY}/pause-${ARCH}:3.0 \
           --cluster-dns=${KUBEDNS_CLUSTER_IP} \
           --cluster-domain=cluster.local \
-          --node-labels="$(set_role_labels "${WORKER}" "${FORCED_WORKER}")"
+          --node-labels="$(set_role_labels "${IPADDR}" "${WORKER}" "${FORCED_WORKER}")"
 
   echo "Waiting for kube-proxy connect to apiserver..."
   until [[ "$(test_proxy)" -ge "1" ]]; do
