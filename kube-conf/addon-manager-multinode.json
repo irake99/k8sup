@@ -12,6 +12,12 @@
       {
         "name": "kube-addon-manager",
         "image": "REGISTRY/kube-addon-manager-ARCH:ADDON_MGR_VER",
+        "env": [
+          {
+            "name": "KUBECTL_OPTS",
+            "value": "--server=127.0.0.1:APISERVER_INSECURE_PORT"
+          }
+        ],
         "resources": {
           "requests": {
             "cpu": "5m",

@@ -484,6 +484,7 @@ function kube_up(){
   local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
+  local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
   local ROLE="${EX_ROLE}" && unset EX_ROLE
 
   bash -c 'docker stop k8sup-certs k8sup-kubelet' &>/dev/null || true
@@ -506,7 +507,10 @@ function kube_up(){
   if [[ "${ROLE}" == "creator" ]]; then
     local CREATOR_OPT="--creator"
   fi
-  /go/kube-up --ip-cidr="${IP_AND_MASK}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT}
+  if [[ "${K8S_INSECURE_PORT}" != "8080" ]]; then
+    local K8S_INSECURE_PORT_OPT="--apiserver-insecure-port=${K8S_INSECURE_PORT}"
+  fi
+  /go/kube-up --ip-cidr="${IP_AND_MASK}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT} ${K8S_INSECURE_PORT_OPT}
 }
 
 function restart_flannel(){
@@ -606,6 +610,7 @@ Options:
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
     --rejoin-etcd              Re-join the same etcd cluster
+    --k8s-insecure-port=PORT   Kube-apiserver insecure port (Default: 8080)
     --start-kube-svcs-only     Try to start kubernetes services (Assume etcd and flannel are ready)
     --start-etcd-only          Start etcd and flannel but don't start kubernetes services
     --worker                   Force to run as k8s worker and etcd proxy
@@ -633,7 +638,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:r:vh"
-  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
+  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,k8s-insecure-port:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
   local PARSED_OPTIONS=""
   local K8SUP_VERSION="0.9.0"
 
@@ -682,6 +687,10 @@ function get_options(){
              --rejoin-etcd)
               export EX_REJOIN_ETCD="true"
               shift
+              ;;
+             --k8s-insecure-port)
+              export EX_K8S_INSECURE_PORT="$2"
+              shift 2
               ;;
              --start-kube-svcs-only)
               export EX_START_KUBE_SVCS_ONLY="true"
@@ -770,6 +779,13 @@ function get_options(){
     export EX_MAX_ETCD_MEMBER_SIZE="3"
   fi
 
+  if [[ -z "${EX_K8S_INSECURE_PORT}" ]]; then
+    export EX_K8S_INSECURE_PORT="8080"
+  elif [[ -n "$(echo "${EX_K8S_INSECURE_PORT}" | grep -o '[^0-9]*')" ]]; then
+    echo "Error: wrong kube-apiserver insecure port, exiting..." 1>&2
+    exit 1
+  fi
+
   if [[ -z "${EX_COREOS_REGISTRY}" ]] || [[ -z "${EX_K8S_REGISTRY}" ]]; then
     export EX_COREOS_REGISTRY="quay.io/coreos"
     export EX_K8S_REGISTRY="gcr.io/google_containers"
@@ -839,9 +855,9 @@ function main(){
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
+  local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
   local ETCD_PATH="k8sup/cluster"
   local K8S_PORT="6443"
-  local K8S_INSECURE_PORT="8080"
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
 
