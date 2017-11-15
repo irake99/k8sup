@@ -4,7 +4,7 @@ source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting
 
 #---
 
-function set_role_labels(){
+function get_node_labels(){
   local IPADDR="$1"
   local WORKER="$2"
   local FORCED_WORKER="$3"
@@ -294,13 +294,11 @@ function set_node_schedulable(){
 }
 
 # Try to set this node as schedulable
-function update_node_role_label(){
+function update_node_labels(){
   local NODE_NAME="$1"
   local KUBELET_VARLIB="$2"
   local HYPERKUBE_IMAGE_NAME="$3"
-  local WORKER="$4"
-  local K8S_MASTER
-  [[ "${WORKER}" == "false" ]] && K8S_MASTER="true" || K8S_MASTER="false"
+  local NODE_LABELS="$(echo "$4" | sed 's/,/ /g')"
 
   echo "Update role label for this node..." 1>&2
   until docker run \
@@ -310,7 +308,7 @@ function update_node_role_label(){
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl \
      --kubeconfig ${KUBELET_VARLIB}/kubeconfig/kubeconfig.yaml \
-     label --overwrite node "${NODE_NAME}" "cdxvirt/k8s_master=${K8S_MASTER}" &>/dev/null; do
+     label --overwrite node "${NODE_NAME}" ${NODE_LABELS} &>/dev/null; do
        sleep 1
   done
 }
@@ -701,6 +699,8 @@ function main(){
   fi
   ip route add "10.0.0.0/24" dev "${IFACE}" &>/dev/null || true
 
+  local NODE_LABELS="$(get_node_labels "${IPADDR}" "${WORKER}" "${FORCED_WORKER}")"
+
   echo "Running Kubernetes ..."
   docker run \
       --volume=/:/rootfs:ro \
@@ -740,7 +740,7 @@ function main(){
           --pod-infra-container-image=${REGISTRY}/pause-${ARCH}:3.0 \
           --cluster-dns=${KUBEDNS_CLUSTER_IP} \
           --cluster-domain=cluster.local \
-          --node-labels="$(set_role_labels "${IPADDR}" "${WORKER}" "${FORCED_WORKER}")"
+          --node-labels="${NODE_LABELS}"
 
   echo "Waiting for kube-proxy connect to apiserver..."
   until [[ "$(test_proxy)" -ge "1" ]]; do
@@ -754,7 +754,7 @@ function main(){
   done
 
   set_node_schedulable "${NODE_NAME}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}"
-  update_node_role_label "${NODE_NAME}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}" "${WORKER}"
+  update_node_labels "${NODE_NAME}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}" "${NODE_LABELS}"
 
   # If NTP client is not found then start a NTP client
   if ps aux | grep -v grep | grep -wE "systemd-timesyncd|ntpd" &>/dev/null; then
