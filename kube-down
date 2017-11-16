@@ -476,17 +476,16 @@ function main(){
     # Default removing
     if [[ "${START_ETCD_ONLY}" != "true" ]]; then
       echo "Stopping k8s containers........." 1>&2
-      APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")"
+      APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")" || exit 1
       stop_k8s "${NODE_NAME}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE}" "${APISERVER}" "${REMOTE_K8S_NODE_NAME}" "${EXIT}" || true
-      ENDPOINT_AMOUNT="$(get_endpoint_amount "${ETCD_CLIENT_PORT}")" || exit 1
+      cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE}"
+      APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")" \
+        && ENDPOINT_AMOUNT="$(get_endpoint_amount "${HYPERKUBE_IMAGE}" "${KUBELET_VARLIB}" "${APISERVER}")" \
+        || ENDPOINT_AMOUNT="0"
       if [[ "${ENDPOINT_AMOUNT}" -gt "1" ]]; then
         # Try to find another apiserver for removing this node from endpoints
-        if APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")"; then
-          if [[ -n "${REMOTE_K8S_NODE_NAME}" ]]; then
-            REMOTE_K8S_IPADDR="$(get_node_ip_by_node_name "${REMOTE_K8S_NODE_NAME}" "${HYPERKUBE_IMAGE}" "${APISERVER}" "${KUBELET_VARLIB}")"
-          fi
-          remove_node_from_endpoints "${IPADDR}" "${HYPERKUBE_IMAGE}" "${APISERVER}" "${KUBELET_VARLIB}" "${REMOTE_K8S_IPADDR}" || true
-        fi
+        APISERVER="$(find_an_apiserver "${ETCD_CLIENT_PORT}" "${K8S_PORT}" "${K8S_INSECURE_PORT}" "${KUBELET_VARLIB}")" \
+         && remove_node_from_endpoints "${IPADDR}" "${HYPERKUBE_IMAGE}" "${APISERVER}" "${KUBELET_VARLIB}" "${REMOTE_K8S_IPADDR}" || true
       fi
     fi
     if [[ "${STOP_K8S_ONLY}" == "true" ]] || [[ -n "${REMOTE_K8S_IPADDR}" ]]; then
