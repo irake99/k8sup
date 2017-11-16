@@ -317,9 +317,9 @@ function flanneld(){
     if [[ "${KENNEL_VER_MEETS}" == "true" ]] && \
      [[ "$(modinfo vxlan &>/dev/null; echo $?)" -eq "0" ]] && \
      [[ -n "$(ip link add type vxlan help 2>&1 | grep vxlan)" ]]; then
-      local FLANNDL_CONF="$(cat /go/flannel-conf/network-vxlan.json)"
+      local FLANNDL_CONF="$(cat /workdir/assets/k8sup/flannel-conf/network-vxlan.json)"
     else
-      local FLANNDL_CONF="$(cat /go/flannel-conf/network.json)"
+      local FLANNDL_CONF="$(cat /workdir/assets/k8sup/flannel-conf/network.json)"
     fi
     docker exec -d \
       k8sup-etcd \
@@ -441,9 +441,9 @@ function get_network_by_cluster_id(){
   local DISCOVERY_RESULTS
 
   if [[ -n "${CLUSTER_ID}" ]]; then
-    DISCOVERY_RESULTS="$(/go/dnssd/browsing 2>/dev/null | grep "\<clusterID=${CLUSTER_ID}\>[^-]" | grep -w 'etcdProxy=off')" || true
+    DISCOVERY_RESULTS="$(/workdir/assets/k8sup/dnssd/browsing 2>/dev/null | grep "\<clusterID=${CLUSTER_ID}\>[^-]" | grep -w 'etcdProxy=off')" || true
   else
-    DISCOVERY_RESULTS="$(/go/dnssd/browsing 2>/dev/null | grep -w 'etcdProxy=off')" || true
+    DISCOVERY_RESULTS="$(/workdir/assets/k8sup/dnssd/browsing 2>/dev/null | grep -w 'etcdProxy=off')" || true
     CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p"| uniq)"
     if [[ "$(echo "${CLUSTER_ID}" | wc -l)" -gt "1" ]]; then
       echo "${DISCOVERY_RESULTS}" 1>&2
@@ -512,7 +512,7 @@ function kube_up(){
   if [[ "${K8S_INSECURE_PORT}" != "8080" ]]; then
     local K8S_INSECURE_PORT_OPT="--apiserver-insecure-port=${K8S_INSECURE_PORT}"
   fi
-  /go/kube-up --ip-cidr="${IP_AND_MASK}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT} ${K8S_INSECURE_PORT_OPT}
+  /workdir/assets/k8sup/kube-up --ip-cidr="${IP_AND_MASK}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT} ${K8S_INSECURE_PORT_OPT}
 }
 
 function restart_flannel(){
@@ -568,7 +568,7 @@ function rejoin_etcd(){
     return 0
   fi
 
-  DISCOVERY_RESULTS="$(/go/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
+  DISCOVERY_RESULTS="$(/workdir/assets/k8sup/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
   ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                     | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
                     | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
@@ -594,10 +594,10 @@ function rejoin_etcd(){
   echo "etcdProxy: ${PROXY}" 1>&2
 
   # DNS-SD
-  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/go/dnssd/registering' | grep -v grep | awk '{print $1}')"
+  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/assets/k8sup/dnssd/registering' | grep -v grep | awk '{print $1}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
-  /go/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
+  /workdir/assets/k8sup/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
 }
 
 function show_usage(){
@@ -832,7 +832,7 @@ function main(){
 
   local RESTART="${EX_RESTART}" && unset EX_RESTART
   if [[ "${RESTART}" == "true" ]]; then
-    /go/kube-down --stop-k8s-only || exit 1
+    /workdir/assets/k8sup/kube-down --stop-k8s-only || exit 1
     rejoin_etcd "${CONFIG_FILE}" "${PROXY}" || exit 1
     restart_flannel "${CONFIG_FILE}" || exit 1
     kube_up "${CONFIG_FILE}" || exit 1
@@ -877,11 +877,11 @@ function main(){
       "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" && ROLE="follower" || exit 1
   else
     if [[ "${NEW_CLUSTER}" != "true" ]]; then
-      /go/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "false" 2>/dev/null &
+      /workdir/assets/k8sup/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "false" 2>/dev/null &
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
       while
-        DISCOVERY_RESULTS="$(/go/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')" || true
+        DISCOVERY_RESULTS="$(/workdir/assets/k8sup/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')" || true
         echo "${DISCOVERY_RESULTS}"
 
         # Check if the hostname is duplicate then exit
@@ -977,7 +977,7 @@ function main(){
 
     echo "Copy cni plugins"
     mkdir -p /etc/cni/net.d/
-    cp -f /go/cni-conf/* /etc/cni/net.d/
+    cp -f /workdir/assets/k8sup/cni-conf/* /etc/cni/net.d/
     mkdir -p /var/lib/cni/networks/containernet; echo "" > /var/lib/cni/networks/containernet/last_reserved_ip
 
     echo "Running etcd"
@@ -1001,11 +1001,11 @@ function main(){
   wait_etcd_cluster_healthy "${ETCD_CLIENT_PORT}"
 
   # DNS-SD
-  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/go/dnssd/registering' | grep -v grep | awk '{print $1}')"
+  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/assets/k8sup/dnssd/registering' | grep -v grep | awk '{print $1}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  /go/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
+  /workdir/assets/k8sup/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
 
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"

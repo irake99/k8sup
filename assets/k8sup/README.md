@@ -72,7 +72,7 @@ $ docker run \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     -v /etc/kubernetes/k8sup-home:/root \
-    --entrypoint=/go/kube-down \
+    --entrypoint=/workdir/assets/k8sup/kube-down \
     cdxvirt/k8sup:k8s-1.7
 ```
 
@@ -95,7 +95,7 @@ $ docker run \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     -v /etc/kubernetes/k8sup-home:/root \
-    --entrypoint=/go/kube-down \
+    --entrypoint=/workdir/assets/k8sup/kube-down \
     cdxvirt/k8sup:k8s-1.7 \
     --remove
 ```
