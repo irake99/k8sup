@@ -47,7 +47,6 @@ $ docker run -d \
     -v /var/lib/etcd:/var/lib/etcd \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
-    -v /etc/kubernetes/k8sup-home:/root \
     --name=k8sup \
     cdxvirt/k8sup:k8s-1.7 \
     --network={your-subnet-id/mask}
@@ -71,7 +70,6 @@ $ docker run \
     -v /var/lib/etcd:/var/lib/etcd \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
-    -v /etc/kubernetes/k8sup-home:/root \
     --entrypoint=/go/kube-down \
     cdxvirt/k8sup:k8s-1.7
 ```
@@ -94,7 +92,6 @@ $ docker run \
     -v /var/lib/etcd:/var/lib/etcd \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
-    -v /etc/kubernetes/k8sup-home:/root \
     --entrypoint=/go/kube-down \
     cdxvirt/k8sup:k8s-1.7 \
     --remove
