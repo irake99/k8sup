@@ -8,7 +8,8 @@ if [[ "${NO_K8SUP}" != "true" ]]; then
   # wait for k8s started
 
   # TODO
-  # Try to get ssh keys from k8s secrets
+  # Try to get client ssh keys from k8s secrets
 fi
 
-sleep infinity
+# Start SSH daemon and hold
+/usr/sbin/sshd -D
