@@ -28,6 +28,7 @@ COPY assets /workdir/assets
 COPY bin /workdir/bin
 COPY entrypoint.sh /workdir/
 COPY func.sh /workdir/
+COPY env.sh /workdir/
 
 RUN mkdir -p /go/src \
     && ln -s /workdir/assets/k8sup/dnssd /go/src/dnssd \
