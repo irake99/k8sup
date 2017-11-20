@@ -8,8 +8,8 @@ if [[ "${NO_K8SUP}" != "true" ]]; then
   # wait for k8s started
   hold_until_kube_apiserver_started
 
-  # TODO
   # Try to get client ssh keys from k8s secrets
+  get_all_authorized_keys_from_k8s_secrets &
 fi
 
 # Start SSH daemon and hold
