@@ -1,6 +1,7 @@
 FROM golang:1.7.5
 MAINTAINER hsfeng@gmail.com
 
+ENV WORKDIR /workdir
 WORKDIR /workdir
 
 ENV DEBIAN_FRONTEND noninteractive
@@ -24,11 +25,9 @@ RUN apt-get -y update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-COPY assets /workdir/assets
-COPY bin /workdir/bin
-COPY entrypoint.sh /workdir/
-COPY func.sh /workdir/
-COPY env.sh /workdir/
+COPY . /workdir/
+
+ENV PATH /opt/bin:$PATH
 
 RUN mkdir -p /go/src \
     && ln -s /workdir/assets/k8sup/dnssd /go/src/dnssd \
@@ -45,11 +44,8 @@ ENTRYPOINT ["/workdir/entrypoint.sh"]
 ENV NOTVISIBLE "in users profile"
 RUN echo "export VISIBLE=now" >> /etc/profile
 
-ADD opt/bin/* /opt/bin/
-ENV PATH /opt/bin:$PATH
-
-RUN rm -f /etc/ssh/sshd_config
-ADD sshd_config /etc/ssh/sshd_config
+RUN rm -f /etc/ssh/sshd_config \
+    && cp /workdir/assets/sshd/sshd_config /etc/ssh/
 
 # Regenerating host keys of sshd
 RUN mkdir /var/run/sshd \
