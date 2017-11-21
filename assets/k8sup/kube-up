@@ -581,8 +581,8 @@ function main(){
 
   echo "Copy manifests-multi to /etc/kubernetes"
 
-  mkdir -p mkdir -p "${KUBE_CONF_PATH}"
-  mkdir -p ${KUBE_ETC}/addons
+  mkdir -p "${KUBE_CONF_PATH}"
+  mkdir -p "${KUBE_ETC}/addons"
   mkdir -p "${KUBELET_VARLIB}/kubeconfig"
   mkdir -p "${KUBE_ADDONS_CONF_PATH}"
 
