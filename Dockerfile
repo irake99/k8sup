@@ -34,8 +34,8 @@ RUN mkdir -p /go/src \
     && cd /go/src/dnssd \
     && go get -u github.com/kardianos/govendor \
     && govendor sync \
-    && go build -o /workdir/assets/k8sup/src/dnssd/registering /go/src/dnssd/registering.go \
-    && go build -o /workdir/assets/k8sup/src/dnssd/browsing /go/src/dnssd/browsing.go
+    && go build -o /workdir/assets/k8sup/dnssd/registering /go/src/dnssd/registering.go \
+    && go build -o /workdir/assets/k8sup/dnssd/browsing /go/src/dnssd/browsing.go
 
 ADD https://storage.googleapis.com/kubernetes-release/easy-rsa/easy-rsa.tar.gz /workdir/assets/k8sup/easy-rsa.tar.gz
 
