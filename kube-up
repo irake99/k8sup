@@ -754,6 +754,7 @@ function main(){
           --node-ip="${IPADDR}" \
           --address=0.0.0.0 \
           --enable-server \
+          --enable-controller-attach-detach \
           --pod-manifest-path=${KUBE_CONF_PATH} \
           --containerized \
           --network-plugin=cni \
