@@ -58,6 +58,32 @@ function set_basic_auth_secret(){
   echo "Set basic auth succeed" 1>&2
 }
 
+function set_kube_system_configmap_from_file(){
+  local HYPERKUBE_IMAGE_NAME="$1"
+  local KUBE_ETC="$2"
+  local KUBECONFIG_PATH="$3"
+  local CM_NAME="$4"
+  local CM_KEY="$5"
+  local CM_DATA_FILE_PATH="$6"
+
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${CM_DATA_FILE_PATH}:${CM_DATA_FILE_PATH}":ro \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig "${KUBECONFIG_PATH}" \
+     -n kube-system \
+     create configmap \
+     "${CM_NAME}" \
+     --from-file="${CM_KEY}"="${CM_DATA_FILE_PATH}" 2>/dev/null; do
+       sleep 1
+  done
+
+  echo "Set configmap ${CM_NAME} succeed" 1>&2
+}
+
 function check_and_run_ntp_update(){
   K8SUP_NTPSERVER_CLUSTER_IP="$1"
 
@@ -619,6 +645,7 @@ function main(){
 
   rm -rf "${KUBE_ETC}"/*
   cp -r /workdir/assets/k8sup/kube-conf/addons "${KUBE_ETC}"/
+  cp -r /workdir/assets/k8sup/kube-conf/abac-policy-file.jsonl "${KUBE_ETC}"/
 
   local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
   [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local NTPSERVER_REGISTRY="wcen" || local NTPSERVER_REGISTRY="${REGISTRY}"
@@ -653,6 +680,11 @@ function main(){
     sed -i 's|      volumes:$|      volumes:\n      - name: basic-auth\n        secret:\n          secretName: basic-auth|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
     sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/basic_auth\n          name: basic-auth\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
     sed -i 's|        - apiserver|        - apiserver\n        - --basic-auth-file=/etc/kubernetes/basic_auth/basic_auth.csv|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+  fi
+  if ! grep -q 'ABAC' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+    sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
   fi
   if ! grep -q '"size": 3' "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"; then
     sed -i 's|"size": 1,|"size": 3,|g' \
@@ -757,6 +789,7 @@ function main(){
           --node-labels="${NODE_LABELS}"
 
   set_basic_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" &
+  set_kube_system_configmap_from_file "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "abac-policy" "abac-policy-file.jsonl" "${KUBE_ETC}/abac-policy-file.jsonl" &
 
   /workdir/bootkube \
     start \
