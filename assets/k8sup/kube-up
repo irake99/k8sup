@@ -750,6 +750,10 @@ function main(){
   echo "Try to start NTP server..." 1>&2
   start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "ntp-server"
 
+  # New url: https://<NODE_IP>/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
+  echo "Try to start kubernetes-dashboard..." 1>&2
+  start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "kubernetes-dashboard"
+
   check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
 
   echo "kubelet started!" 1>&2
