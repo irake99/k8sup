@@ -627,6 +627,10 @@ function main(){
   sed -i 's|    - apiserver|    - apiserver\n        - --apiserver-count=3|g' \
     "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
   fi
+  if ! grep -q '"size": 3' "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"; then
+    sed -i 's|"size": 1,|"size": 3,|g' \
+      "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"
+  fi
 
   mkdir -p "${KUBE_ETC}"
   cp -f "/workdir/k8s-assets/auth/kubeconfig" "${KUBE_ETC}/kubeconfig"
