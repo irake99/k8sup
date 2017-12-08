@@ -792,6 +792,12 @@ function main(){
   get_options "$@"
   init_bashrc
 
+  if [[ -n "$(docker ps --filter="name=k8sup-kubelet" -q)" ]]; then
+    echo "Container k8sup-kubelet exists, skip k8sup and run ntp client only..." 1>&2
+    export EX_NTP_UPDATE_ONLY="true"
+    /workdir/assets/k8sup/kube-up
+  fi
+
   local COREOS_REGISTRY="${EX_COREOS_REGISTRY}" && unset EX_COREOS_REGISTRY
   local K8S_REGISTRY="${EX_K8S_REGISTRY}" && unset EX_K8S_REGISTRY
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION

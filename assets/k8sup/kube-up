@@ -17,6 +17,37 @@ function get_node_labels(){
   echo "${ROLE_LABELS}"
 }
 
+function start_addon(){
+  local HYPERKUBE_IMAGE_NAME="$1"
+  local KUBE_ETC="$2"
+  local KUBECONFIG_PATH="$3"
+  local ADDON_DIR="$4"
+
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${KUBE_ETC}/addons:/addons:ro" \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig "${KUBECONFIG_PATH}" \
+     create -f "/addons/multinode/${ADDON_DIR}"/; do
+       sleep 1
+  done
+}
+
+function check_and_run_ntp_update(){
+  K8SUP_NTPSERVER_CLUSTER_IP="$1"
+
+  # If NTP client is not found then start a NTP client
+  if ps aux | grep -v grep | grep -wE "systemd-timesyncd|ntpd" &>/dev/null; then
+    echo "Warning! Found a running NTP client on this node. k8sup will not synchronize system time with other nodes in this cluster." 1>&2
+    echo "Please make sure that the NTP server list and other time settings on all cluster nodes are synchronized!" 1>&2
+  else
+    ntp_updater "${K8SUP_NTPSERVER_CLUSTER_IP}" "300" &
+  fi
+}
+
 function get_container_dirpath_from_host_volumes(){
   local HOST_DIR_PATH="$1"
   local VOLUMES="$2"
@@ -514,6 +545,13 @@ function get_API_Servers(){
 }
 
 function main(){
+  local K8SUP_NTPSERVER_VERSION="0.1"
+  local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
+  if [[ "${EX_NTP_UPDATE_ONLY}" == "true" ]]; then
+    check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
+    tail -f /dev/null
+  fi
+
   get_options "$@"
   local IPCIDR="${EX_IPCIDR}" && unset EX_IPCIDR
   local WORKER="${EX_WORKER}" && unset EX_WORKER
@@ -558,9 +596,8 @@ function main(){
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
 
   rm -rf "${KUBE_ETC}"/*
+  cp -r /workdir/assets/k8sup/kube-conf/addons "${KUBE_ETC}"/
 
-  local K8SUP_NTPSERVER_VERSION="0.1"
-  local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
   local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
   [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local NTPSERVER_REGISTRY="wcen" || local NTPSERVER_REGISTRY="${REGISTRY}"
   sed -i "s|\bK8SUP_SUBNET_ID\b|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
@@ -705,6 +742,11 @@ function main(){
 
   set_node_schedulable "${NODE_NAME}" "${KUBECONFIG_PATH}" "${HYPERKUBE_IMAGE_NAME}"
   update_node_labels "${NODE_NAME}" "${KUBECONFIG_PATH}" "${HYPERKUBE_IMAGE_NAME}" "${NODE_LABELS}"
+
+  echo "Try to start NTP server..." 1>&2
+  start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "ntp-server"
+
+  check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
 
   echo "kubelet started!" 1>&2
 }
