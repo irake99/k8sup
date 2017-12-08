@@ -2,6 +2,7 @@
 source "$(dirname "$0")/env.sh" || { echo 'Can not load the env.sh file, exiting...' >&2 && exit 1 ; }
 
 function init(){
+  mkdir -p "/opt/bin"
   cp -f "${WORKDIR}/bin"/* "/opt/bin/"
 }
 

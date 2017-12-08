@@ -64,3 +64,10 @@ RUN cd /workdir; \
   tar xf bootkube.tar.gz -C bootkube-dir/; \
   mv bootkube-dir/bin/linux/bootkube .; \
   rm -rf bootkube-dir bootkube.tar.gz
+
+RUN mkdir -p /go/src \
+    && ln -s /workdir/assets/k8sup/kubelet-cert-distributor /go/src/kubelet-cert-distributor \
+    && cd /go/src/kubelet-cert-distributor \
+    && govendor sync \
+    && go build -o /workdir/bin/kubelet-cert-distributor \
+       /go/src/kubelet-cert-distributor/kubelet-cert-distributor.go

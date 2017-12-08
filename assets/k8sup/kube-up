@@ -821,6 +821,8 @@ function main(){
 
   check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
 
+  /opt/bin/kubelet-cert-distributor &
+
   echo "kubelet started!" 1>&2
 }
 
