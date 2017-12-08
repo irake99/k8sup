@@ -303,9 +303,9 @@ function get_newer_kernel_ver(){
 function flanneld(){
   local IPADDR="$1"
   local ETCD_CLIENT_PORT="$2"
-  local ROLE="$3"
+  local CREATOR="$3"
 
-  if [[ "${ROLE}" == "creator" ]]; then
+  if [[ "${CREATOR}" == "true" ]]; then
     echo "Setting flannel parameters to etcd"
     local MIN_KERNEL_VER="3.9.0"
     local KERNEL_VER="$(uname -r)"
@@ -441,9 +441,9 @@ function get_network_by_cluster_id(){
   local DISCOVERY_RESULTS
 
   if [[ -n "${CLUSTER_ID}" ]]; then
-    DISCOVERY_RESULTS="$(/workdir/assets/k8sup/dnssd/browsing 2>/dev/null | grep "\<clusterID=${CLUSTER_ID}\>[^-]" | grep -w 'etcdProxy=off')" || true
+    DISCOVERY_RESULTS="$(/workdir/bin/dnssd-browsing 2>/dev/null | grep "\<clusterID=${CLUSTER_ID}\>[^-]")" || true
   else
-    DISCOVERY_RESULTS="$(/workdir/assets/k8sup/dnssd/browsing 2>/dev/null | grep -w 'etcdProxy=off')" || true
+    DISCOVERY_RESULTS="$(/workdir/bin/dnssd-browsing 2>/dev/null)" || true
     CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p"| uniq)"
     if [[ "$(echo "${CLUSTER_ID}" | wc -l)" -gt "1" ]]; then
       echo "${DISCOVERY_RESULTS}" 1>&2
@@ -483,29 +483,33 @@ function kube_up(){
   local IP_AND_MASK="${EX_IP_AND_MASK}" && unset EX_IP_AND_MASK
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   local REGISTRY="${EX_REGISTRY}" && unset EX_REGISTRY
+  local TARGET_HOST="${EX_EX_TARGET_HOST}" && unset EX_EX_TARGET_HOST
   local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
-  local ROLE="${EX_ROLE}" && unset EX_ROLE
+  local CREATOR="${EX_CREATOR}" && unset EX_CREATOR
 
   echo "Running Kubernetes" 1>&2
   if [[ -n "${REGISTRY}" ]]; then
     local REGISTRY_OPTION="--registry=${REGISTRY}"
   fi
-  if [[ "${FORCED_WORKER}" == "on" ]]; then
+  if [[ "${FORCED_WORKER}" == "true" ]]; then
     local FORCED_WORKER_OPT="--forced-worker"
   fi
   if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
     local ENABLE_KEYSTONE_OPT="--enable-keystone"
   fi
-  if [[ "${ROLE}" == "creator" ]]; then
+  if [[ "${CREATOR}" == "true" ]]; then
     local CREATOR_OPT="--creator"
+  fi
+  if [[ -n "${TARGET_HOST}" ]]; then
+    local TARGET_HOST_OPT="--target-host=${TARGET_HOST}"
   fi
   if [[ "${K8S_INSECURE_PORT}" != "8080" ]]; then
     local K8S_INSECURE_PORT_OPT="--apiserver-insecure-port=${K8S_INSECURE_PORT}"
   fi
-  /workdir/assets/k8sup/kube-up --ip-cidr="${IP_AND_MASK}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT} ${K8S_INSECURE_PORT_OPT}
+  /workdir/assets/k8sup/kube-up --ip-cidr="${IP_AND_MASK}" "${TARGET_HOST_OPT}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT} ${K8S_INSECURE_PORT_OPT}
 }
 
 function restart_flannel(){
@@ -541,7 +545,7 @@ function rejoin_etcd(){
           | grep -o "${IPPORT_PATTERN}")" \
           || return 1
 
-  local EXISTING_ETCD_NODE
+  local EXISTING_NODE
   local NODE
   local DISCOVERY_RESULTS
   local ETCD_NODE_LIST
@@ -561,7 +565,7 @@ function rejoin_etcd(){
     return 0
   fi
 
-  DISCOVERY_RESULTS="$(/workdir/assets/k8sup/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
+  DISCOVERY_RESULTS="$(/workdir/bin/dnssd-browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
   ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                     | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
                     | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
@@ -569,11 +573,11 @@ function rejoin_etcd(){
   # Get an existing etcd member
   for NODE in ${ETCD_NODE_LIST}; do
     if curl -s -m 10 "${NODE}/health" &>/dev/null; then
-      EXISTING_ETCD_NODE="${NODE}"
+      EXISTING_NODE="${NODE}"
       break
     fi
   done
-  if [[ -z "${EXISTING_ETCD_NODE}" ]]; then
+  if [[ -z "${EXISTING_NODE}" ]]; then
     echo "No etcd member available, exiting..." 1>&2
     return 1
   fi
@@ -587,10 +591,10 @@ function rejoin_etcd(){
   echo "etcdProxy: ${PROXY}" 1>&2
 
   # DNS-SD
-  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/assets/k8sup/dnssd/registering' | grep -v grep | awk '{print $1}')"
+  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/bin/dnssd-registering' | grep -v grep | awk '{print $1}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
-  /workdir/assets/k8sup/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
+  /workdir/bin/dnssd-registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
 }
 
 function show_usage(){
@@ -609,7 +613,7 @@ Options:
     --k8s-insecure-port=PORT   Kube-apiserver insecure port (Default: 8080)
     --start-kube-svcs-only     Try to start kubernetes services (Assume etcd and flannel are ready)
     --start-etcd-only          Start etcd and flannel but don't start kubernetes services
-    --worker                   Force to run as k8s worker and etcd proxy
+    --worker                   Force to run as k8s worker
     --debug                    Enable debug mode
     --enable-keystone          Enable Keystone service (Default: disabled)
 -r, --registry=REGISTRY        Registry of docker image
@@ -702,7 +706,7 @@ function get_options(){
               shift
               ;;
              --worker)
-              export EX_PROXY="on"
+              export EX_WORKER="true"
               shift
               ;;
           -r|--registry)
@@ -736,8 +740,8 @@ function get_options(){
       esac
   done
 
-  if [[ "${EX_PROXY}" != "on" ]]; then
-    export EX_PROXY="off"
+  if [[ "${EX_WORKER}" != "true" ]]; then
+    export EX_WORKER="false"
   fi
 
   if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
@@ -749,8 +753,8 @@ function get_options(){
     export EX_NEW_CLUSTER="true"
   fi
 
-  if [[ "${EX_PROXY}" == "on" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
-    echo "Error! Either run as proxy or start a new/restored etcd cluster, exiting..." 1>&2
+  if [[ "${EX_WORKER}" == "true" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
+    echo "Error! Either run as worker or start a new/restored cluster, exiting..." 1>&2
     exit 1
   fi
 
@@ -815,27 +819,13 @@ function main(){
   echo "Detecting and getting hyperkube image..."
   check_is_image_available "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" && echo "OK" || exit "$?"
 
-  local PROXY="${EX_PROXY}" && unset EX_PROXY
-  # Just re-join etcd cluster only
-  if [[ "${REJOIN_ETCD}" == "true" ]]; then
-    rejoin_etcd "${CONFIG_FILE}" "${PROXY}"
-    exit "$?"
-  fi
+  local WORKER="${EX_WORKER}" && unset EX_WORKER
 
   local START_KUBE_SVCS_ONLY="${EX_START_KUBE_SVCS_ONLY}" && unset EX_START_KUBE_SVCS_ONLY
   if [[ "${START_KUBE_SVCS_ONLY}" == "true" ]]; then
     docker ps | grep k8sup-kubelet &>/dev/null && { echo "K8S is running, exiting..." 1>&2; exit 1; }
     kube_up "${CONFIG_FILE}"
     exit "$?"
-  fi
-
-  local RESTART="${EX_RESTART}" && unset EX_RESTART
-  if [[ "${RESTART}" == "true" ]]; then
-    /workdir/assets/k8sup/kube-down --stop-k8s-only || exit 1
-    rejoin_etcd "${CONFIG_FILE}" "${PROXY}" || exit 1
-    restart_flannel "${CONFIG_FILE}" || exit 1
-    kube_up "${CONFIG_FILE}" || exit 1
-    exit 0
   fi
 
   echo "Checking images..."
@@ -859,20 +849,159 @@ function main(){
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
   local ETCD_PATH="k8sup/cluster"
-  local K8S_PORT="6443"
+  local K8S_PORT="443"
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
+  local SERVICE_PORT
+  local UNIX_NANO_TIME
 
   local NODE_NAME="$(hostname)"
-  local ETCD_CLIENT_PORT="2379"
+  local CREATOR="false"
   local ROLE
+  [[ "${WORKER}" == "false" ]] && ROLE="master" || ROLE="worker"
+
+  echo "Starting k8sup..." 1>&2
+  if [[ "${ROLE}" == "master" ]]; then
+    /workdir/bin/dnssd-registering -IPMask "${IP_AND_MASK}" -port "${K8S_PORT}" -clusterID "${CLUSTER_ID}" -creator "${CREATOR}" -started "false" 2>/dev/null &
+  fi
+  echo "Discovering etcd cluster..."
+  while
+    DISCOVERY_RESULTS="$(/workdir/bin/dnssd-browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}")" || true
+    echo "${DISCOVERY_RESULTS}"
+
+    # Check if the hostname is duplicate then exit
+    if [[ "$(echo "${DISCOVERY_RESULTS}" \
+             | sed -n "s/.*NodeName=\([[:alnum:]_-]*\).*/\1/p" \
+             | grep -w "${NODE_NAME}" \
+             | wc -l)" -gt "1" ]]; then
+      echo "Hostname: ${NODE_NAME} is duplicate, please rename the hostname and try again, exiting..." 1>&2
+      exit 1
+    fi
+
+    if [[ "${ROLE}" == "master" ]]; then
+      UNIX_NANO_TIME="$(echo "${DISCOVERY_RESULTS}" \
+       | grep -w "IPAddr=${IPADDR}" \
+       | sed -n 's/.*UnixNanoTime=\([[:digit:]]*\).*/\1/p')"
+    fi
+
+    # If find an k8s cluster that user specified or find only one etcd cluster, join it instead of starting a new.
+    local TARGET_HOST_LIST
+    local TARGET_HOST
+    local TARGET_HOST_IP
+    local TARGET_HOST_PORT
+    local CLUSTER_ID_AMOUNT="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p" | uniq | wc -l)"
+
+    if [[ "${WORKER}" == "true" ]] \
+       && [[ "${CLUSTER_ID_AMOUNT}" -eq "0" ]]; then
+      echo "No such any existing cluster for this worker, re-discovering..." 1>&2
+      continue
+    fi
+
+    if [[ -z "${CLUSTER_ID}" ]]; then
+      if [[ "${CLUSTER_ID_AMOUNT}" -gt "1" ]]; then
+        # I don't have clusterID and found more than one existing cluster.
+        if [[ "${WORKER}" == "false" ]]; then
+          CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
+          echo "Found multiple existing clusters, starting a new cluster using ID: ${CLUSTER_ID}..." 1>&2
+          break
+        else
+          echo "Found more than one existing cluster, please re-run k8sup and specify Cluster ID or turn off other cluster(s) if you don't need, re-discovering..." 1>&2
+          continue
+        fi
+      elif [[ "${CLUSTER_ID_AMOUNT}" -eq "1" ]]; then
+        # I don't have clusterID and found some nodes have the same clusterID (Some nodes may have no clusterID).
+        CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p" | uniq)"
+        TARGET_HOST_LIST="$(echo "${DISCOVERY_RESULTS}" \
+                                  | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
+                                  | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*Port=\([[:digit:]]*\).*/\1:\2/p")"
+        TARGET_HOST="$(echo "${TARGET_HOST_LIST}" | head -n 1)"
+        echo "Target k8s master: ${TARGET_HOST} in the existing cluster, try to join it..." 1>&2
+      fi
+    else
+      if [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "Started=true" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")" ]]; then
+        # I have clusterID and an existing cluster has the same clusterID.
+        TARGET_HOST_LIST="$(echo "${DISCOVERY_RESULTS}" \
+                                   | grep -w "Started=true" \
+                                   | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
+                                   | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*Port=\([[:digit:]]*\).*/\1:\2/p")"
+        TARGET_HOST="$(echo "${TARGET_HOST_LIST}" | head -n 1)"
+        echo "Target k8s master: ${TARGET_HOST} in the existing cluster, try to join it..." 1>&2
+      elif [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "Started=false" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")" ]]; then
+        # I have clusterID and other nodes have the same, but all not started yet.
+        DISCOVERY_RESULTS="$(echo "${DISCOVERY_RESULTS}" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")"
+      elif [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "Creator=true" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")" ]]; then
+        # I found some one else has been creator node
+        TARGET_HOST_LIST="$(echo "${DISCOVERY_RESULTS}" \
+                              | grep -w "Creator=true" \
+                              | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
+                              | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*Port=\([[:digit:]]*\).*/\1:\2/p")"
+        TARGET_HOST="$(echo "${TARGET_HOST_LIST}" | head -n 1)"
+      elif [[ "${WORKER}" == "true" ]]; then
+        echo "No such any existing clusterID that you specified for this worker, re-discovering..." 1>&2
+        continue
+      fi
+    fi
+    if [[ -z "${TARGET_HOST}" ]]; then
+      # If still not found existing node, try to find unstarted etcd creator node
+      local CREATOR_NODE="$(echo "${DISCOVERY_RESULTS}" \
+                                | grep 'Started=false' \
+                                | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*Port=\([[:digit:]]*\).*UnixNanoTime=\([[:digit:]]*\).*/\1:\2 \3/p" \
+                                | sort -k 2,2 \
+                                | head -n 1 \
+                                | awk '{print $1}')"
+      if [[ "${CREATOR_NODE}" != "${IPADDR}:${K8S_PORT}" ]]; then
+        TARGET_HOST_LIST="${CREATOR_NODE}"
+        TARGET_HOST="${TARGET_HOST_LIST}"
+      else
+        echo "This node is creator..." 1>&2
+      fi
+      if [[ -n "${TARGET_HOST}" ]]; then
+        echo "Trying to join the unstarted master node: ${TARGET_HOST}..." 1>&2
+      fi
+    fi
+    [[ -z "${TARGET_HOST}" && "${WORKER}" == "true" ]]
+  do :; done
+
+  if [[ -n "${TARGET_HOST}" ]]; then
+    TARGET_HOST_IP="$(echo "${TARGET_HOST}" | cut -d ':' -f 1)"
+    TARGET_HOST_PORT="$(echo "${TARGET_HOST}" | cut -d ':' -f 2)"
+  fi
+
+  if [[ -z "${TARGET_HOST}" ]]; then
+    CREATOR="true"
+    if [[ -z "${CLUSTER_ID}" ]]; then
+      CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
+    fi
+  else
+    CREATOR="false"
+    if [[ -z "${CLUSTER_ID}" ]]; then
+      CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" \
+                         | grep -w "IPAddr=${TARGET_HOST_IP}" \
+                         | sed -n "s/.*clusterID=\(.*\) IPAddr.*/\1/p")"
+    fi
+  fi
+
+  # Update DNS-SD info
+  if [[ "${CREATOR}" == "true" ]]; then
+    local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/bin/dnssd-registering' | grep -v grep | awk '{print $1}')"
+    [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
+    [[ -z "${CLUSTER_ID}" ]] && { echo "Error: No such cluster ID!" 1>&2; exit 1; }
+    /workdir/bin/dnssd-registering -IPMask "${IP_AND_MASK}" -port "${K8S_PORT}" -clusterID "${CLUSTER_ID}" -creator "${CREATOR}" -started "false" -unix-nano-time "${UNIX_NANO_TIME}" 2>/dev/null &
+  else
+    until curl -s -m 1 "${TARGET_HOST_IP}:23555" &>/dev/null; do
+      echo "Waiting for creator ${TARGET_HOST_IP} started..." 1>&2
+      sleep 10
+    done
+  fi
 
   # Write configurations to a file
   echo "export EX_IPADDR=${IPADDR}" > "${CONFIG_FILE}"
   echo "export EX_NETWORK=${NETWORK}" >> "${CONFIG_FILE}"
+  echo "export EX_CREATOR=${CREATOR}" >> "${CONFIG_FILE}"
   echo "export EX_ROLE=${ROLE}" >> "${CONFIG_FILE}"
-  echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
-  echo "export EX_FORCED_WORKER=${PROXY}" >> "${CONFIG_FILE}"
+  echo "export EX_TARGET_HOST=${TARGET_HOST}" >> "${CONFIG_FILE}"
+  echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
+  echo "export EX_FORCED_WORKER=${WORKER}" >> "${CONFIG_FILE}"
   echo "export EX_ETCD_VERSION=${ENV_ETCD_VERSION}" >> "${CONFIG_FILE}"
   echo "export EX_FLANNELD_VERSION=${ENV_FLANNELD_VERSION}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
@@ -895,6 +1024,16 @@ function main(){
   fi
 
   touch "/.started"
+
+  # Update DNS-SD info
+  if [[ "${CREATOR}" == "true" ]]; then
+    local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/bin/dnssd-registering' | grep -v grep | awk '{print $1}')"
+    [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
+    [[ -z "${CLUSTER_ID}" ]] && { echo "Error: No such cluster ID!" 1>&2; exit 1; }
+    /workdir/bin/dnssd-registering -IPMask "${IP_AND_MASK}" -port "${K8S_PORT}" -clusterID "${CLUSTER_ID}" -creator "${CREATOR}" -started "true" -unix-nano-time "${UNIX_NANO_TIME}" 2>/dev/null &
+  fi
+  echo -e "CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
+
   tail -f /dev/null
 }
 

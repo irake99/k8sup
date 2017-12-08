@@ -397,6 +397,7 @@ function show_usage(){
 Options:
 -i, --ip=IPADDR                     Host IP address (Required)
 -p, --worker                        Run as k8s worker
+-t, --target-host                   The k8s host need to join
 -a, --apiserver-port=PORT           Apiserver port (Default: 443)
     --apiserver-insecure-port=PORT  Apiserver insecure port (Default: 8080)
 -a, --etcd-port=PORT                etcd client port (Default: 2379)
@@ -415,7 +416,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:r:h"
-  local LONGOPTS="ip-cidr:,apiserver-port:,apiserver-insecure-port:,etcd-port:,creator,worker,version:,registry:,forced-worker,reset-labels,enable-keystone,help"
+  local LONGOPTS="ip-cidr:,target-host:,apiserver-port:,apiserver-insecure-port:,etcd-port:,creator,worker,version:,registry:,forced-worker,reset-labels,enable-keystone,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -434,6 +435,10 @@ function get_options(){
               ;;
              --apiserver-insecure-port)
               export EX_APISERVER_INSECURE_PORT="$2"
+              shift 2
+              ;;
+          -t|--target-host)
+              export EX_TARGET_HOST="$2"
               shift 2
               ;;
           -a|--etcd-port)
@@ -493,6 +498,15 @@ function get_options(){
     exit 1
   fi
 
+  if [[ "${EX_CREATOR}" != "true" ]]; then
+    export EX_CREATOR="false"
+  fi
+
+  if [[ "${EX_CREATOR}" == "false" ]] && [[ -z "${EX_TARGET_HOST}" ]]; then
+    echo "K8s Target host is required for follower, exiting..." 1>&2
+    exit 1
+  fi
+
   if [[ -z "${EX_APISERVER_PORT}" ]]; then
     export EX_APISERVER_PORT="443"
   fi
@@ -515,10 +529,6 @@ function get_options(){
 
   if [[ "${EX_WORKER}" != "true" ]]; then
     export EX_WORKER="false"
-  fi
-
-  if [[ "${EX_CREATOR}" != "true" ]]; then
-    export EX_CREATOR="false"
   fi
 
   if [[ "${EX_ENABLE_KEYSTONE}" != "true" ]]; then
@@ -603,6 +613,7 @@ function main(){
   get_options "$@"
   local IPCIDR="${EX_IPCIDR}" && unset EX_IPCIDR
   local WORKER="${EX_WORKER}" && unset EX_WORKER
+  local TARGET_HOST="${EX_TARGET_HOST}" && unset EX_TARGET_HOST
   local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
   local APISERVER_PORT="${EX_APISERVER_PORT}" && unset EX_APISERVER_PORT
   local APISERVER_INSECURE_PORT="${EX_APISERVER_INSECURE_PORT}" && unset EX_APISERVER_INSECURE_PORT
@@ -644,68 +655,81 @@ function main(){
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
 
   rm -rf "${KUBE_ETC}"/*
-  cp -r /workdir/assets/k8sup/kube-conf/addons "${KUBE_ETC}"/
-  cp -r /workdir/assets/k8sup/kube-conf/abac-policy-file.jsonl "${KUBE_ETC}"/
 
-  local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
-  [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local NTPSERVER_REGISTRY="wcen" || local NTPSERVER_REGISTRY="${REGISTRY}"
-  sed -i "s|\bK8SUP_SUBNET_ID\b|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
-  sed -i "s|\bK8SUP_NTPSERVER_CLUSTER_IP\b|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
-  sed -i "s|\bNTPSERVER_REGISTRY\b|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
-  sed -i "s|\bK8SUP_NTPSERVER_VERSION\b|${K8SUP_NTPSERVER_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+  if [[ "${CREATOR}" == "true" ]]; then
+    APIHOST="127.0.0.1:443"
+
+    cp -r /workdir/assets/k8sup/kube-conf/addons "${KUBE_ETC}"/
+    cp -r /workdir/assets/k8sup/kube-conf/abac-policy-file.jsonl "${KUBE_ETC}"/
+
+    local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
+    [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local NTPSERVER_REGISTRY="wcen" || local NTPSERVER_REGISTRY="${REGISTRY}"
+    sed -i "s|\bK8SUP_SUBNET_ID\b|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+    sed -i "s|\bK8SUP_NTPSERVER_CLUSTER_IP\b|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+    sed -i "s|\bNTPSERVER_REGISTRY\b|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+    sed -i "s|\bK8SUP_NTPSERVER_VERSION\b|${K8SUP_NTPSERVER_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
 
 
-  /workdir/bootkube \
-    render \
-    --asset-dir="/workdir/k8s-assets" \
-    --api-servers="https://${APISERVER_CLUSTER_IP}:443" \
-    --pod-cidr="10.1.0.0/16" \
-    --service-cidr="10.0.0.0/24" \
-    --network-provider="flannel" \
-    --experimental-self-hosted-etcd
+    /workdir/bootkube \
+      render \
+      --asset-dir="/workdir/k8s-assets" \
+      --api-servers="https://${APISERVER_CLUSTER_IP}:443" \
+      --pod-cidr="10.1.0.0/16" \
+      --service-cidr="10.0.0.0/24" \
+      --network-provider="flannel" \
+      --experimental-self-hosted-etcd
 
-  if ! grep -q 'kubelet-preferred-address' "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
-  sed -i 's|    - apiserver|    - apiserver\n    - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
-    "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
-  fi
-  if ! grep -q 'kubelet-preferred-address' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
-  sed -i 's|    - apiserver|    - apiserver\n        - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
-    "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-  fi
-  if ! grep -q 'apiserver-count' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
-  sed -i 's|    - apiserver|    - apiserver\n        - --apiserver-count=3|g' \
-    "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-  fi
-  if ! grep -q 'basic-auth' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
-    sed -i 's|      volumes:$|      volumes:\n      - name: basic-auth\n        secret:\n          secretName: basic-auth|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-    sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/basic_auth\n          name: basic-auth\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-    sed -i 's|        - apiserver|        - apiserver\n        - --basic-auth-file=/etc/kubernetes/basic_auth/basic_auth.csv|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-  fi
-  if ! grep -q 'ABAC' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
-    sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-    sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-    sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-  fi
-  if ! grep -q '"size": 3' "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"; then
-    sed -i 's|"size": 1,|"size": 3,|g' \
-      "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"
-  fi
+    if ! grep -q 'kubelet-preferred-address' "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
+    sed -i 's|    - apiserver|    - apiserver\n    - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
+      "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
+    fi
+    if ! grep -q 'kubelet-preferred-address' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+    sed -i 's|    - apiserver|    - apiserver\n        - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
+      "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    fi
+    if ! grep -q 'apiserver-count' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+    sed -i 's|    - apiserver|    - apiserver\n        - --apiserver-count=3|g' \
+      "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    fi
+    if ! grep -q 'basic-auth' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: basic-auth\n        secret:\n          secretName: basic-auth|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/basic_auth\n          name: basic-auth\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|        - apiserver|        - apiserver\n        - --basic-auth-file=/etc/kubernetes/basic_auth/basic_auth.csv|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    fi
+    if ! grep -q 'ABAC' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    fi
+    if ! grep -q '"size": 3' "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"; then
+      sed -i 's|"size": 1,|"size": 3,|g' \
+        "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"
+    fi
 
-  mkdir -p "${KUBE_ETC}"
-  cp -f "/workdir/k8s-assets/auth/kubeconfig" "${KUBE_ETC}/kubeconfig"
-  cp -f "/workdir/k8s-assets/tls/ca.crt" "${KUBE_ETC}/ca.crt"
+    mkdir -p "${KUBE_ETC}"
+    cp -f "/workdir/k8s-assets/auth/kubeconfig" "${KUBE_ETC}/kubeconfig"
+    cp -f "/workdir/k8s-assets/tls/ca.crt" "${KUBE_ETC}/ca.crt"
+
+  else
+    APIHOST="${TARGET_HOST}"
+
+    TARGET_HOST_IP="$(echo "${TARGET_HOST}" | cut -d ':' -f 1)"
+    until TMP="$(curl -s "${TARGET_HOST_IP}:23555/kubeconfig")"; do
+      echo "Trying to get kubeconfig..." 1>&2
+      sleep 1
+    done
+    echo "${TMP}" | jq -r . | base64 -d > "${KUBE_ETC}/kubeconfig"
+    until TMP="$(curl -s "${TARGET_HOST_IP}:23555/kubeletca")"; do
+      echo "Trying to get kubelet ca.crt..." 1>&2
+      sleep 1
+    done
+    echo "${TMP}" | jq -r . | base64 -d > "${KUBE_ETC}/ca.crt"
+  fi
 
   echo "Copy cni plugins"
   mkdir -p "${KUBE_ETC}/cni/net.d"
   cp -f "/workdir/assets/k8sup/cni-conf"/* "${KUBE_ETC}/cni/net.d"/
   mkdir -p "/var/lib/cni/networks/containernet"; echo "" > "/var/lib/cni/networks/containernet/last_reserved_ip"
-
-  if [[ "${WORKER}" == "false" ]]; then
-    APIHOST="127.0.0.1:443"
-  else
-    APIHOST="$(get_API_Servers "${APISERVER_PORT}" "${ETCD_CLIENT_PORT}" "${KUBELET_VARLIB}" | cut -d ',' -f 1)"
-    APIHOST="${APIHOST:8}"
-  fi
 
   # echo "Cleaning up kube-proxy old iptables rules..." 1>&2
   # cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE_NAME}"
@@ -788,12 +812,14 @@ function main(){
           --cluster-domain=cluster.local \
           --node-labels="${NODE_LABELS}"
 
-  set_basic_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" &
-  set_kube_system_configmap_from_file "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "abac-policy" "abac-policy-file.jsonl" "${KUBE_ETC}/abac-policy-file.jsonl" &
+  if [[ "${CREATOR}" == "true" ]]; then
+    set_basic_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" &
+    set_kube_system_configmap_from_file "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "abac-policy" "abac-policy-file.jsonl" "${KUBE_ETC}/abac-policy-file.jsonl" &
 
-  /workdir/bootkube \
-    start \
-    --asset-dir="/workdir/k8s-assets"
+    /workdir/bootkube \
+      start \
+      --asset-dir="/workdir/k8s-assets"
+  fi
 
   echo "Waiting for kube-proxy connect to apiserver..."
   until [[ "$(test_proxy)" -ge "1" ]]; do
@@ -809,19 +835,23 @@ function main(){
   set_node_schedulable "${NODE_NAME}" "${KUBECONFIG_PATH}" "${HYPERKUBE_IMAGE_NAME}"
   update_node_labels "${NODE_NAME}" "${KUBECONFIG_PATH}" "${HYPERKUBE_IMAGE_NAME}" "${NODE_LABELS}"
 
-  echo "Try to start NTP server..." 1>&2
-  start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "ntp-server"
+  if [[ "${CREATOR}" == "true" ]]; then
+    echo "Try to start NTP server..." 1>&2
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "ntp-server"
 
-  echo "Try to start heapster..." 1>&2
-  start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "heapster"
+    echo "Try to start heapster..." 1>&2
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "heapster"
 
-  # New url: https://<NODE_IP>/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
-  echo "Try to start kubernetes-dashboard..." 1>&2
-  start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "kubernetes-dashboard"
+    # New url: https://<NODE_IP>/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
+    echo "Try to start kubernetes-dashboard..." 1>&2
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "kubernetes-dashboard"
+  fi
+
+  if [[ "${WORKER}" == "false" ]]; then
+    /opt/bin/kubelet-cert-distributor &
+  fi
 
   check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
-
-  /opt/bin/kubelet-cert-distributor &
 
   echo "kubelet started!" 1>&2
 }

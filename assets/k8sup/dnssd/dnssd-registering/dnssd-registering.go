@@ -6,7 +6,6 @@ import (
 	"log"
 	"math/rand"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -17,13 +16,14 @@ import (
 )
 
 var (
-	IPMask      = flag.String("IPMask", "", "IP/mask for listening service, required flag.")
-	Port        = flag.Int("port", 2379, "etcd port.")
-	clusterID   = flag.String("clusterID", "", "Cluster ID, required flag.")
-	etcdProxy   = flag.String("etcdProxy", "false", "Is this node running on etcd proxy node. (default \"false\")")
-	etcdStarted = flag.String("etcdStarted", "false", "Is the etcd service started. (default \"false\")")
-	service     = flag.String("service", "_etcd._tcp", "Set the service type of the new service.")
-	domain      = flag.String("domain", "local.", "Set the network domain.")
+	IPMask       = flag.String("IPMask", "", "IP/mask for listening service, required flag.")
+	Port         = flag.Int("port", 443, "Service port.")
+	clusterID    = flag.String("clusterID", "", "Cluster ID, required flag.")
+	creator      = flag.String("creator", "false", "Is the node first started. (default \"false\")")
+	started      = flag.String("started", "false", "Is the cluster started. (default \"false\")")
+	UnixNanoTime = flag.String("unix-nano-time", "", "User specify the unix nano time")
+	service      = flag.String("service", "_cdxvirt._tcp", "Set the service type of the new service.")
+	domain       = flag.String("domain", "local.", "Set the network domain.")
 )
 
 func getInterfaceByIPNet(Net *net.IPNet) (*net.Interface, error) {
@@ -77,13 +77,16 @@ func main() {
 	if *clusterID != "" {
 		SRVtext = append(SRVtext, "clusterID="+*clusterID)
 	}
+	if *UnixNanoTime == "" {
+		*UnixNanoTime = strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
 	SRVtext = append(SRVtext, "IPAddr="+IPAddr.String())
-	SRVtext = append(SRVtext, "etcdPort="+strconv.Itoa(*Port))
-	SRVtext = append(SRVtext, "etcdProxy="+*etcdProxy)
-	SRVtext = append(SRVtext, "etcdStarted="+*etcdStarted)
+	SRVtext = append(SRVtext, "Port="+strconv.Itoa(*Port))
+	SRVtext = append(SRVtext, "Creator="+*creator)
+	SRVtext = append(SRVtext, "Started="+*started)
 	SRVtext = append(SRVtext, "NetworkID="+Network.String())
 	SRVtext = append(SRVtext, "NodeName="+NodeName)
-	SRVtext = append(SRVtext, "UnixNanoTime="+strconv.FormatInt(time.Now().UnixNano(), 10))
+	SRVtext = append(SRVtext, "UnixNanoTime="+*UnixNanoTime)
 	fmt.Printf("Registering: %s %s:%d %s %s\n", NodeName, IPAddr, *Port, *clusterID, iface.Name)
 
 	// Make a uniq instance name
@@ -96,27 +99,6 @@ func main() {
 		log.Fatalln(err.Error())
 	}
 	defer s.Shutdown()
-
-	// etcd health check (If it down, stop mDNS)
-	if *etcdStarted == "true" {
-		go func() {
-			client := &http.Client{
-				Timeout: time.Duration(5e9),
-			}
-			etcdURL := "http://127.0.0.1:" + strconv.Itoa(*Port) + "/health"
-			for {
-				// Check etcd every 5 seconds
-				time.Sleep(5e9)
-				_, err := client.Get(etcdURL)
-				if err != nil {
-					fmt.Println("mDNS stopped!")
-					s.Shutdown()
-					time.Sleep(1e9)
-					os.Exit(0)
-				}
-			}
-		}()
-	}
 
 	// Ctrl+C handling
 	fmt.Println("Press Ctrl+C to stop...")
