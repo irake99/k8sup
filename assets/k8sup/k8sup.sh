@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+#set -e
 source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting...' >&2 && exit 1 ; }
 trap 'rm -f /.started' SIGINT SIGKILL SIGTERM
 trap 'cleanup $?' EXIT
@@ -489,13 +489,6 @@ function kube_up(){
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
   local ROLE="${EX_ROLE}" && unset EX_ROLE
 
-  bash -c 'docker stop k8sup-certs k8sup-kubelet' &>/dev/null || true
-  bash -c 'docker rm k8sup-certs k8sup-kubelet' &>/dev/null || true
-
-  [[ -n "$(docker ps | grep -w 'k8sup-flannel')" ]] \
-  && curl -sf -m 3 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys &>/dev/null \
-  || { echo "etcd or flannel not ready, exiting..." && return 1; }
-
   echo "Running Kubernetes" 1>&2
   if [[ -n "${REGISTRY}" ]]; then
     local REGISTRY_OPTION="--registry=${REGISTRY}"
@@ -607,7 +600,7 @@ Options:
                                e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                                or \"eth0\"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.7.3)
+    --k8s-version=VERSION      Specify k8s version (Default: 1.8.4)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
@@ -769,7 +762,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.7.3"
+    export EX_K8S_VERSION="1.8.4"
   fi
   if [[ -z "${EX_FLANNEL_VERSION}" ]]; then
     export EX_FLANNEL_VERSION="0.6.2"
@@ -812,7 +805,7 @@ function main(){
   local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_ETCD_ONLY
 
   echo "Checking hyperkube version for the requirement..."
-  check_k8s_major_minor_version_meet_requirement "${K8S_VERSION}" "1.7" && echo "OK" || exit "$?"
+  check_k8s_major_minor_version_meet_requirement "${K8S_VERSION}" "1.8" && echo "OK" || exit "$?"
   echo "Detecting and getting hyperkube image..."
   check_is_image_available "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" && echo "OK" || exit "$?"
 
@@ -864,151 +857,9 @@ function main(){
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
 
-  bash -c 'docker stop k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
-  bash -c 'docker rm k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
-
   local NODE_NAME="$(hostname)"
   local ETCD_CLIENT_PORT="2379"
   local ROLE
-  echo "Starting k8sup..." 1>&2
-  if [[ -d "/var/lib/etcd/member" ]] || [[ -d "/var/lib/etcd/proxy" ]]; then
-    echo "Found etcd data in the local storage (/var/lib/etcd), trying to start etcd with these data." 1>&2
-    etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
-      "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" && ROLE="follower" || exit 1
-  else
-    if [[ "${NEW_CLUSTER}" != "true" ]]; then
-      /workdir/assets/k8sup/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "false" 2>/dev/null &
-      # If do not force to start an etcd cluster, make a discovery.
-      echo "Discovering etcd cluster..."
-      while
-        DISCOVERY_RESULTS="$(/workdir/assets/k8sup/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')" || true
-        echo "${DISCOVERY_RESULTS}"
-
-        # Check if the hostname is duplicate then exit
-        if [[ "$(echo "${DISCOVERY_RESULTS}" \
-                 | sed -n "s/.*NodeName=\([[:alnum:]_-]*\).*/\1/p" \
-                 | grep -w "${NODE_NAME}" \
-                 | wc -l)" -gt "1" ]]; then
-          echo "Hostname: ${NODE_NAME} is duplicate, please rename the hostname and try again, exiting..." 1>&2
-          exit 1
-        fi
-
-        # If find an etcd cluster that user specified or find only one etcd cluster, join it instead of starting a new.
-        local EXISTING_ETCD_NODE_LIST=""
-        local EXISTING_ETCD_NODE=""
-        local CLUSTER_ID_AMOUNT="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p" | uniq | wc -l)"
-
-        if [[ "${PROXY}" == "on" ]] \
-           && [[ "${CLUSTER_ID_AMOUNT}" -eq "0" ]]; then
-          echo "No such any existing cluster for this worker, re-discovering..." 1>&2
-        fi
-
-        if [[ -z "${CLUSTER_ID}" ]]; then
-          if [[ "${CLUSTER_ID_AMOUNT}" -gt "1" ]]; then
-            # I don't have clusterID and found more than one existing cluster.
-            if [[ "${PROXY}" == "off" ]]; then
-              CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
-              echo "Found multiple existing clusters, starting a new cluster using ID: ${CLUSTER_ID}..." 1>&2
-              break
-            else
-              echo "Found more than one existing cluster, please re-run k8sup and specify Cluster ID or turn off other cluster(s) if you don't need, re-discovering..." 1>&2
-              continue
-            fi
-          elif [[ "${CLUSTER_ID_AMOUNT}" -eq "1" ]]; then
-            # I don't have clusterID and found some nodes have the same clusterID (Some nodes may have no clusterID).
-            CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p" | uniq)"
-            EXISTING_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
-                                      | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
-                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
-            EXISTING_ETCD_NODE="$(echo "${EXISTING_ETCD_NODE_LIST}" | head -n 1)"
-            echo "Target etcd member: ${EXISTING_ETCD_NODE} in the existing cluster, try to join it..." 1>&2
-          fi
-        else
-          if [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "etcdStarted=true" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")" ]]; then
-            # I have clusterID and an existing cluster has the same clusterID.
-            EXISTING_ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
-                                      | grep -w "etcdStarted=true" \
-                                      | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
-                                      | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
-            EXISTING_ETCD_NODE="$(echo "${EXISTING_ETCD_NODE_LIST}" | head -n 1)"
-            echo "Target etcd member: ${EXISTING_ETCD_NODE} in the existing cluster, try to join it..." 1>&2
-          elif [[ -n "$(echo "${DISCOVERY_RESULTS}" | grep -w "etcdStarted=false" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")" ]]; then
-            # I have clusterID and other nodes have the same, but all not started yet.
-            DISCOVERY_RESULTS="$(echo "${DISCOVERY_RESULTS}" | grep "\<clusterID=${CLUSTER_ID}\>[^-]")"
-          elif [[ "${PROXY}" == "on" ]]; then
-            echo "No such any existing clusterID that you specified for this worker, re-discovering..." 1>&2
-            continue
-          fi
-        fi
-        if [[ -z "${EXISTING_ETCD_NODE}" ]]; then
-          # If still not found existing node, try to find unstarted etcd creator node
-          local CREATOR_NODE="$(echo "${DISCOVERY_RESULTS}" \
-                                    | grep 'etcdStarted=false' \
-                                    | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*UnixNanoTime=\([[:digit:]]*\).*/\1:\2 \3/p" \
-                                    | sort -k 2,2 \
-                                    | head -n 1 \
-                                    | awk '{print $1}')"
-          if [[ "${CREATOR_NODE}" != "${IPADDR}:${ETCD_CLIENT_PORT}" ]]; then
-            EXISTING_ETCD_NODE_LIST="${CREATOR_NODE}"
-            EXISTING_ETCD_NODE="${EXISTING_ETCD_NODE_LIST}"
-          else
-            echo "This node is creator..." 1>&2
-          fi
-          if [[ -n "${EXISTING_ETCD_NODE}" ]]; then
-            echo "Trying to join the etcd unstarted node: ${EXISTING_ETCD_NODE}..." 1>&2
-          fi
-        fi
-        [[ -z "${EXISTING_ETCD_NODE}" && "${PROXY}" == "on" ]]
-      do :; done
-    fi
-
-    if [[ -n "${EXISTING_ETCD_NODE}" ]]; then
-      ETCD_CLIENT_PORT="$(echo "${EXISTING_ETCD_NODE}" | cut -d ':' -f 2)"
-    fi
-
-    if [[ -z "${EXISTING_ETCD_NODE}" ]] || [[ "${NEW_CLUSTER}" == "true" ]]; then
-      ROLE="creator"
-      if [[ -z "${CLUSTER_ID}" ]]; then
-        CLUSTER_ID="$(uuidgen -r | tr -d '-' | cut -c1-16)"
-      fi
-    else
-      ROLE="follower"
-    fi
-
-    echo "Copy cni plugins"
-    mkdir -p /etc/cni/net.d/
-    cp -f /workdir/assets/k8sup/cni-conf/* /etc/cni/net.d/
-    mkdir -p /var/lib/cni/networks/containernet; echo "" > /var/lib/cni/networks/containernet/last_reserved_ip
-
-    echo "Running etcd"
-    if [[ "${ROLE}" == "creator" ]]; then
-      echo "This is a creator node!" 1>&2
-      etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
-        "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" || exit 1
-    else
-      echo "This is a follower node and try to join other nodes:" 1>&2
-      echo "${EXISTING_ETCD_NODE_LIST}" 1>&2
-      PROXY="$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${EXISTING_ETCD_NODE_LIST}" "${PROXY}")" || exit 1
-    fi
-  fi
-  echo "etcdProxy: ${PROXY}" 1>&2
-
-  until curl -sf 127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys 1>/dev/null 2>&1; do
-    echo "Waiting for etcd ready..."
-    sleep 1
-  done
-
-  wait_etcd_cluster_healthy "${ETCD_CLIENT_PORT}"
-
-  # DNS-SD
-  local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/assets/k8sup/dnssd/registering' | grep -v grep | awk '{print $1}')"
-  [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
-  [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
-  echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  /workdir/assets/k8sup/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
-
-  echo "Running flanneld"
-  flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"
 
   # Write configurations to a file
   echo "export EX_IPADDR=${IPADDR}" > "${CONFIG_FILE}"

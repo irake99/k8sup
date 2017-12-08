@@ -2,8 +2,7 @@
 source "$(dirname "$0")/env.sh" || { echo 'Can not load the env.sh file, exiting...' >&2 && exit 1 ; }
 
 function init(){
-  mv -f "${WORKDIR}/bin"/* "/opt/bin/"
-  rmdir "${WORKDIR}/bin"
+  cp -f "${WORKDIR}/bin"/* "/opt/bin/"
 }
 
 function hold_until_kube_apiserver_started(){

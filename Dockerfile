@@ -57,3 +57,10 @@ RUN mkdir /var/run/sshd \
     && ssh-keygen -q -f /etc/ssh/ssh_host_ed25519_key -N '' -t ed25519
 
 EXPOSE 2222
+
+ADD https://github.com/kubernetes-incubator/bootkube/releases/download/v0.9.0/bootkube.tar.gz /workdir/bootkube.tar.gz
+RUN cd /workdir; \
+  mkdir -p bootkube-dir; \
+  tar xf bootkube.tar.gz -C bootkube-dir/; \
+  mv bootkube-dir/bin/linux/bootkube .; \
+  rm -rf bootkube-dir bootkube.tar.gz
