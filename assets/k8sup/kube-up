@@ -812,6 +812,9 @@ function main(){
   echo "Try to start NTP server..." 1>&2
   start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "ntp-server"
 
+  echo "Try to start heapster..." 1>&2
+  start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "heapster"
+
   # New url: https://<NODE_IP>/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
   echo "Try to start kubernetes-dashboard..." 1>&2
   start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "kubernetes-dashboard"
