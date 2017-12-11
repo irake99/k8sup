@@ -1,0 +1,160 @@
+{
+"apiVersion": "v1",
+"kind": "Pod",
+"metadata": {
+  "name": "k8s-master",
+  "namespace": "kube-system"
+},
+"spec":{
+  "hostNetwork": true,
+  "containers":[
+    {
+      "name": "controller-manager",
+      "image": "REGISTRY/hyperkube-ARCH:VERSION",
+      "command": [
+              "/hyperkube",
+              "controller-manager",
+              "--master=127.0.0.1:8080",
+              "--service-account-private-key-file=/srv/kubernetes/server.key",
+              "--root-ca-file=/srv/kubernetes/ca.crt",
+              "--min-resync-period=3m",
+              "--v=2"
+      ],
+      "volumeMounts": [
+        {
+          "name": "data",
+          "mountPath": "/srv/kubernetes"
+        },
+        {
+          "name": "kubeconfig",
+          "mountPath": "/var/lib/kubelet/kubeconfig"
+        }
+      ]
+    },
+    {
+      "name": "apiserver",
+      "image": "REGISTRY/hyperkube-ARCH:VERSION",
+      "command": [
+              "/hyperkube",
+              "apiserver",
+              "--insecure-port=APISERVER_INSECURE_PORT",
+              "--advertise-address=NODE_IPADDR",
+              "--kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP",
+              "--service-cluster-ip-range=10.0.0.0/24",
+              "--etcd-servers=http://127.0.0.1:2379",
+              "--admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota",
+              "--basic-auth-file=/srv/kubernetes/basic_auth.csv",
+              "--min-request-timeout=300",
+              "--client-ca-file=/srv/kubernetes/ca.crt",
+              "--tls-cert-file=/srv/kubernetes/server.cert",
+              "--tls-private-key-file=/srv/kubernetes/server.key",
+              "--service-account-key-file=/srv/kubernetes/server.key",
+              "--service-account-lookup=false",
+              "--token-auth-file=/srv/kubernetes/known_tokens.csv",
+              "--allow-privileged=true",
+              "--authorization-mode=RBAC,ABAC",
+              "--authorization-policy-file=/srv/kubernetes/abac-policy-file.jsonl",
+              "--anonymous-auth=false",
+              "--apiserver-count=1",
+              "--v=2"
+      ],
+      "volumeMounts": [
+        {
+          "name": "data",
+          "mountPath": "/srv/kubernetes"
+        }
+      ]
+    },
+    {
+      "name": "scheduler",
+      "image": "REGISTRY/hyperkube-ARCH:VERSION",
+      "command": [
+              "/hyperkube",
+              "scheduler",
+              "--master=127.0.0.1:8080",
+              "--v=2"
+        ],
+      "volumeMounts": [
+        {
+          "name": "data",
+          "mountPath": "/srv/kubernetes"
+        },
+        {
+          "name": "kubeconfig",
+          "mountPath": "/var/lib/kubelet/kubeconfig"
+        }
+      ]
+    },
+    {
+      "name": "setup",
+      "image": "REGISTRY/hyperkube-ARCH:VERSION",
+      "command": [
+              "/cp-certs.sh",
+              "DOMAIN_NAME"
+      ],
+      "volumeMounts": [
+        {
+          "name": "data",
+          "mountPath": "/srv/kubernetes"
+        },
+        {
+          "name": "cp-certs",
+          "mountPath": "/cp-certs.sh"
+        },
+        {
+          "name": "setup-files",
+          "mountPath": "/setup-files.sh"
+        },
+        {
+          "name": "make-ca-cert",
+          "mountPath": "/make-ca-cert.sh"
+        },
+        {
+          "name": "etc-k8s",
+          "mountPath": "/etc/kubernetes"
+        },
+        {
+          "name": "kubeconfig",
+          "mountPath": "/var/lib/kubelet/kubeconfig"
+        }
+      ]
+    }
+  ],
+  "volumes": [
+    {
+      "name": "data",
+      "emptyDir": {}
+    },
+    {
+      "name": "cp-certs",
+      "hostPath": {
+        "path": "/etc/kubernetes/cp-certs.sh"
+      }
+    },
+    {
+      "name": "setup-files",
+      "hostPath": {
+        "path": "/etc/kubernetes/setup-files.sh"
+      }
+    },
+    {
+      "name": "make-ca-cert",
+      "hostPath": {
+        "path": "/etc/kubernetes/make-ca-cert.sh"
+      }
+    },
+    {
+      "name": "etc-k8s",
+      "hostPath": {
+        "path": "/etc/kubernetes"
+      }
+    },
+    {
+      "name": "kubeconfig",
+      "hostPath": {
+        "path": "/var/lib/kubelet/kubeconfig"
+      }
+    }
+  ]
+ }
+}

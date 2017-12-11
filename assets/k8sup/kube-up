@@ -1,0 +1,859 @@
+#!/bin/bash
+#set -e
+source "$(dirname "$0")/runcom" || { echo 'Can not load the rumcom file, exiting...' >&2 && exit 1 ; }
+
+#---
+
+function get_node_labels(){
+  local IPADDR="$1"
+  local WORKER="$2"
+  local FORCED_WORKER="$3"
+  local ROLE_LABELS
+  local K8S_MASTER
+  [[ "${WORKER}" == "false" ]] && ROLE="master" || ROLE="worker"
+
+  ROLE_LABELS="node-role.kubernetes.io/${ROLE}=,cdxvirt/k8s_forced_worker=${FORCED_WORKER},cdxvirt/nodeip=${IPADDR}"
+
+  echo "${ROLE_LABELS}"
+}
+
+function start_addon(){
+  local HYPERKUBE_IMAGE_NAME="$1"
+  local KUBE_ETC="$2"
+  local KUBECONFIG_PATH="$3"
+  local ADDON_DIR="$4"
+
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${KUBE_ETC}/addons:/addons:ro" \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig "${KUBECONFIG_PATH}" \
+     create -f "/addons/multinode/${ADDON_DIR}"/; do
+       sleep 1
+  done
+}
+
+function set_basic_auth_secret(){
+  local HYPERKUBE_IMAGE_NAME="$1"
+  local KUBE_ETC="$2"
+  local KUBECONFIG_PATH="$3"
+
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig "${KUBECONFIG_PATH}" \
+     -n kube-system \
+     create secret generic \
+     basic-auth \
+     --from-literal=basic_auth.csv="admin,admin,admin" 2>/dev/null; do
+       sleep 1
+  done
+
+  echo "Set basic auth succeed" 1>&2
+}
+
+function set_kube_system_configmap_from_file(){
+  local HYPERKUBE_IMAGE_NAME="$1"
+  local KUBE_ETC="$2"
+  local KUBECONFIG_PATH="$3"
+  local CM_NAME="$4"
+  local CM_KEY="$5"
+  local CM_DATA_FILE_PATH="$6"
+
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${CM_DATA_FILE_PATH}:${CM_DATA_FILE_PATH}":ro \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig "${KUBECONFIG_PATH}" \
+     -n kube-system \
+     create configmap \
+     "${CM_NAME}" \
+     --from-file="${CM_KEY}"="${CM_DATA_FILE_PATH}" 2>/dev/null; do
+       sleep 1
+  done
+
+  echo "Set configmap ${CM_NAME} succeed" 1>&2
+}
+
+function check_and_run_ntp_update(){
+  K8SUP_NTPSERVER_CLUSTER_IP="$1"
+
+  # If NTP client is not found then start a NTP client
+  if ps aux | grep -v grep | grep -wE "systemd-timesyncd|ntpd" &>/dev/null; then
+    echo "Warning! Found a running NTP client on this node. k8sup will not synchronize system time with other nodes in this cluster." 1>&2
+    echo "Please make sure that the NTP server list and other time settings on all cluster nodes are synchronized!" 1>&2
+  else
+    ntp_updater "${K8SUP_NTPSERVER_CLUSTER_IP}" "300" &
+  fi
+}
+
+function get_container_dirpath_from_host_volumes(){
+  local HOST_DIR_PATH="$1"
+  local VOLUMES="$2"
+  local EXCLUDE_DIR_OPTION
+  local VOL_SRC
+  local VOL_DEST
+  local CONTAINER_DIR_PATH
+  local IFS
+  local IDX
+  local DROP
+  local AVAILABLE_VOLUME
+  local VOL
+  local DIR
+  local PATH_ADD
+  local TEST_FILE
+
+  # Find the volume that include the expected host path
+  [[ -z "${HOST_DIR_PATH}" ]] && return 1
+  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
+  for VOL in ${VOLUMES}; do
+    VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1 | sed "s|/$||g")"
+    VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2 | sed "s|/$||g")"
+
+    [[ "${VOL_SRC}" == "/" ]] && { echo "${VOL_DEST}${HOST_DIR_PATH}" | sed "s|//|/|g" | sed "s|/$||g"; return 0; }
+
+    DROP="false"
+    IDX="1"
+    IFS='/' read -ra DIRS <<< ${VOL_SRC}
+    for DIR in "${DIRS[@]}"; do
+      if [[ "${DIR}" != "$(echo "${HOST_DIR_PATH}" | cut -d '/' -f "${IDX}")" ]]; then
+        DROP="true"
+        break
+      fi
+      ((IDX++))
+    done
+    # Check if it is read-only
+    if [[ "${DROP}" == "false" ]] \
+       && TEST_FILE="$(uuidgen -r)" \
+       && touch "${VOL_DEST}/${TEST_FILE}" 2>/dev/null; then
+      rm "${VOL_DEST}/${TEST_FILE}"
+      AVAILABLE_VOLUME="${VOL}"
+      break
+    fi
+  done
+
+  # Get the container path that equal the expected host path
+  if [[ -n "${AVAILABLE_VOLUME}" ]]; then
+    VOL_SRC="$(echo "${AVAILABLE_VOLUME}" | cut -d ':' -f 1 | sed "s|/$||g")"
+    VOL_DEST="$(echo "${AVAILABLE_VOLUME}" | cut -d ':' -f 2 | sed "s|/$||g")"
+    IDX="1"
+    IFS='/' read -ra DIRS <<< "${HOST_DIR_PATH}"
+    for DIR in "${DIRS[@]}"; do
+      if [[ "${DIR}" != "$(echo "${VOL_SRC}" | cut -d '/' -f "${IDX}")" ]]; then
+        PATH_ADD="${PATH_ADD}/${DIR}"
+      fi
+      ((IDX++))
+    done
+    echo "$(echo "${VOL_DEST}/${PATH_ADD}" | sed "s|//|/|g" | sed "s|/$||g")"
+    return 0
+  fi
+
+  return 1
+}
+
+function get_filepath_from_volumes(){
+  local FILENAME="$1"
+  local VOLUMES="$2"
+  local EXECUTABLE="$3"
+  local EXCLUDE_DIR_OPTION
+  local VOL
+  local VOL_SRC
+  local VOL_DEST
+  local FILEPATH
+
+  [[ "${EXECUTABLE}" == "true" ]] && local EXECUTABLE_OPTION="-executable"
+
+  [[ -z "${VOLUMES}" ]] && VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
+  for VOL in ${VOLUMES}; do
+    VOL_SRC="$(echo "${VOL}" | cut -d ':' -f 1)"
+    VOL_DEST="$(echo "${VOL}" | cut -d ':' -f 2)"
+    [[ -d "${VOL_DEST}/var/lib/docker" ]] && EXCLUDE_DIR_OPTION="-not -path */var/lib/docker/*" || EXCLUDE_DIR_OPTION=""
+    FILEPATH="$(find "${VOL_DEST}" ${EXECUTABLE_OPTION} -type f ${EXCLUDE_DIR_OPTION} ! -size 0 \
+                -name "${FILENAME}" -o -type l -name "${FILENAME}" 2>/dev/null | head -n 1)"
+    if [[ -n "${FILEPATH}" ]]; then
+      if [[ -f "${VOL_DEST}" ]]; then
+        VOL_DEST="$(dirname "${VOL_DEST}")"
+        VOL_SRC="$(dirname "${VOL_SRC}")"
+      fi
+      echo "$(echo "${FILEPATH}" | sed "s|${VOL_DEST}|${VOL_SRC}|g" | sed "s|//|/|g")"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+function update_master_multi_rbd_mount(){
+  local ARGS=("$@")
+  local RBD_CMD_PATH="${ARGS[0]}"
+  local DOCKER_CMD_PATH="${ARGS[3]}"
+  local MASTER_MULTI_JSON_FILE_PATH="${ARGS[4]}"
+  local NEW_MASTER_MULTI_VOLUME_MOUNTS
+  local NEW_MASTER_MULTI_VOLUMES
+  local NEW_MASTER_MULTI_JSON
+  [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
+
+  NEW_MASTER_MULTI_VOLUME_MOUNTS="$(echo '[]' \
+                   | jq ". |= .+ [{\"name\":\"rbd\",\"mountPath\":\"/bin/rbd\"}]" \
+                   | jq ". |= .+ [{\"name\":\"usr-lib\",\"mountPath\":\"/host/lib\"}]" \
+                   | jq ". |= .+ [{\"name\":\"docker\",\"mountPath\":\"/bin/docker\"}]" \
+                   | jq ". |= .+ [{\"name\":\"docker-sock\",\"mountPath\":\"/var/run/docker.sock\"}]")"
+  NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
+             | jq ". |= .+ [{\"name\":\"rbd\",\"hostPath\":{\"path\":\"${RBD_CMD_PATH}\"}}]" \
+             | jq ". |= .+ [{\"name\":\"usr-lib\",\"hostPath\":{\"path\":\"/usr/lib/\"}}]" \
+             | jq ". |= .+ [{\"name\":\"docker\",\"hostPath\":{\"path\":\"${DOCKER_CMD_PATH}\"}}]" \
+             | jq ". |= .+ [{\"name\":\"docker-sock\",\"hostPath\":{\"path\":\"/var/run/docker.sock\"}}]")"
+  NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
+    | jq ".spec.containers[0].volumeMounts |= .+ ${NEW_MASTER_MULTI_VOLUME_MOUNTS}" \
+    | jq ".spec.volumes |= .+ ${NEW_MASTER_MULTI_VOLUMES}" \
+    | jq ".spec.containers[1].command |= .+ [\"--service-node-port-range=1-32767\"]" \
+    | sed "s|\"--admission-control=\(.*\)\",|\"--admission-control=\1,DefaultStorageClass\",|g")"
+  [[ -z "${NEW_MASTER_MULTI_JSON}" ]] || [[ "${NEW_MASTER_MULTI_JSON}" == "null" ]] && return 1
+
+  echo "${NEW_MASTER_MULTI_JSON}" > "${MASTER_MULTI_JSON_FILE_PATH}"
+}
+
+function update_master_multi_keystone(){
+  local MASTER_MULTI_JSON_FILE_PATH="$1"
+  local KEYSTONE_CLUSTER_IP="$2"
+  local NEW_MASTER_MULTI_JSON
+  [[ ! -f "${MASTER_MULTI_JSON_FILE_PATH}" ]] && { echo "Error! could not find master-multi.json!"; return 1; }
+  NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
+    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-url=https://${KEYSTONE_CLUSTER_IP}:35357/v2.0\"]" \
+    | jq ".spec.containers[1].command |= .+ [\"--experimental-keystone-ca-file=/srv/kubernetes/ca.crt\"]")"
+  [[ -z "${NEW_MASTER_MULTI_JSON}" ]] || [[ "${NEW_MASTER_MULTI_JSON}" == "null" ]] && return 1
+
+  echo "${NEW_MASTER_MULTI_JSON}" > "${MASTER_MULTI_JSON_FILE_PATH}"
+}
+
+function make_rbd_docker_option(){
+  local ARGS=("$@")
+  local RBD_CMD_PATH="${ARGS[0]}"
+  local RBD_KO_PATH="${ARGS[1]}"
+  local MODPROBE_CMD_PATH="${ARGS[2]}"
+  local DOCKER_CMD_PATH="${ARGS[3]}"
+  [[ -z "${RBD_CMD_PATH}" ]] && return 1
+
+  local RBD_OPTIONS="--volume=${RBD_CMD_PATH}:/bin/rbd:ro \
+        --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
+        --volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro \
+        --volume=${DOCKER_CMD_PATH}:/bin/docker:ro \
+        --volume=/usr/lib/:/host/lib:ro \
+        --volume=/lib/modules:/lib/modules:ro"
+
+  echo "${RBD_OPTIONS}"
+}
+
+function rbd_env_detector(){
+  local RBD_CMD_PATH
+  local RBD_KO_PATH
+  local MODPROBE_CMD_PATH
+  local DOCKER_CMD_PATH
+  local VOLUMES="$(docker inspect k8sup | jq -r '.[0].HostConfig.Binds[]' 2>/dev/null | cut -d ':' -f 1-2)"
+  local DEFAULT_RBD_CMD_HOST_PATH="/opt/bin"
+  local RBD_CMD_CONTAINER_PATH
+
+  [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
+    && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
+    && RBD_KO_PATH="$(get_filepath_from_volumes "rbd.ko" "${VOLUMES}")" \
+    && MODPROBE_CMD_PATH="$(get_filepath_from_volumes "modprobe" "${VOLUMES}" "true")" \
+    && DOCKER_CMD_PATH="$(get_filepath_from_volumes "docker" "$(echo "${VOLUMES}" | grep "/bin")" "true")" \
+    || { echo "RBD mounting is not available on this host." 1>&2 && return 1; }
+
+    if ! RBD_CMD_PATH="$(get_filepath_from_volumes "rbd" "${VOLUMES}" "true")"; then
+      # If the existing rbd command is not found, touch the empty executable file to the default rbd command host path
+      # and mount into k8s components then let other container to replace it.
+      if RBD_CMD_CONTAINER_PATH="$(get_container_dirpath_from_host_volumes "${DEFAULT_RBD_CMD_HOST_PATH}" "${VOLUMES}")/rbd"; then
+        touch "${RBD_CMD_CONTAINER_PATH}" 2>/dev/null \
+          || { echo "Could not write \"${DEFAULT_RBD_CMD_HOST_PATH}\", RBD mounting is not available on this host."; return 1; }
+        chmod +x "${RBD_CMD_CONTAINER_PATH}"
+        echo "Need somebody to copy RBD command to the host path: \"${DEFAULT_RBD_CMD_HOST_PATH}/rbd\" who needs to use RBD service." 1>&2
+        RBD_CMD_PATH="${DEFAULT_RBD_CMD_HOST_PATH}/rbd"
+      else
+        echo "Could not find any writable volume mount from the host path: \"${DEFAULT_RBD_CMD_HOST_PATH}\", RBD mounting is not available on this host." 1>&2
+        return 1
+      fi
+    fi
+
+  echo "RBD mounting is available on this host." 1>&2
+  echo "${RBD_CMD_PATH}" "${RBD_KO_PATH}" "${MODPROBE_CMD_PATH}" "${DOCKER_CMD_PATH}"
+
+  return 0
+}
+
+# For master nodes only
+function keystone_operation(){
+  local ENABLE_KEYSTONE="$1"
+  local KEYSTONE_CLUSTER_IP="$2"
+  local ETCD_CLIENT_PORT="$3"
+  local KUBE_CONF_PATH="$4"
+  local WORKER="$5"
+
+  # Try to set etcd key to notify every one that the keystone service is enabled or disabled
+  curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/keystone_enabled?prevExist=false" \
+   -XPUT -d value="${ENABLE_KEYSTONE}" &>/dev/null
+  ENABLE_KEYSTONE="$(curl -s "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/keystone_enabled" | jq -r '.node.value')"
+  [[ -z "${ENABLE_KEYSTONE}" ]] && { echo "etcd error, exiting..." 1>&2; return 1; }
+
+  if [[ "${ENABLE_KEYSTONE}" == "true" ]]; then
+    if [[ "${WORKER}" == "false" ]]; then
+      # Update the yaml file of master pods for adding the keystone key maintainer
+      update_master_multi_keystone "${KUBE_CONF_PATH}/master-multi.json" "${KEYSTONE_CLUSTER_IP}"
+      echo "Keystone cluster IP should be '${KEYSTONE_CLUSTER_IP}'"
+      echo "And the keystone certs is in the secret 'keystone-tls-certs' (default namespace)"
+    fi
+  fi
+
+  return 0
+}
+
+function make_resolv_conf(){
+  local KUBE_ETC="$1"
+  local KUBEDNS_CLUSTER_IP="$2"
+  local RESOLV_CONF_FILE_PATH="${KUBE_ETC}/resolv.conf"
+
+  echo "search kube-system.svc.cluster.local svc.cluster.local cluster.local" > "${RESOLV_CONF_FILE_PATH}"
+  echo "nameserver ${KUBEDNS_CLUSTER_IP}" >> "${RESOLV_CONF_FILE_PATH}"
+  echo "options ndots:5" >> "${RESOLV_CONF_FILE_PATH}"
+}
+
+function ntp_updater(){
+  local K8SUP_NTPSERVER_CLUSTER_IP="$1"
+  local TIME_GAP="$2"
+  local RESULT
+
+  if ! ps aux | grep -v grep | grep -q "/etc/chrony/chrony.conf"; then
+    until ntpdate -b "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>/dev/null; do
+      sleep 1
+    done
+    echo "NTP client synchronized!" 1>&2
+    sleep "${TIME_GAP}"
+  else
+    echo "NTP server pod is running on this node, skip time sync at this moment."
+  fi
+
+  while true; do
+    if ! ps aux | grep -v grep | grep -q "/etc/chrony/chrony.conf"; then
+      RESULT="$(ntpdate -b "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>&1)" || true
+      [[ "$-" == *x* ]] && echo "${RESULT}" 1>&2
+    else
+      [[ "$-" == *x* ]] \
+        && echo "NTP server pod is running on this node, skip time sync at this moment." 1>&2
+    fi
+    sleep "${TIME_GAP}"
+  done
+}
+
+# Try to set this node as schedulable
+function set_node_schedulable(){
+  local NODE_NAME="$1"
+  local KUBECONFIG_PATH="$2"
+  local HYPERKUBE_IMAGE_NAME="$3"
+
+  echo "Setting this node schedulable..." 1>&2
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig "${KUBECONFIG_PATH}" \
+     uncordon "${NODE_NAME}" &>/dev/null; do
+       sleep 1
+  done
+}
+
+# Try to set this node as schedulable
+function update_node_labels(){
+  local NODE_NAME="$1"
+  local KUBECONFIG_PATH="$2"
+  local HYPERKUBE_IMAGE_NAME="$3"
+  local NODE_LABELS="$(echo "$4" | sed 's/,/ /g')"
+
+  echo "Update role label for this node..." 1>&2
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig "${KUBECONFIG_PATH}" \
+     label --overwrite node "${NODE_NAME}" ${NODE_LABELS} &>/dev/null; do
+       sleep 1
+  done
+}
+
+function show_usage(){
+  USAGE="Usage: ${0##*/} [options...]
+Options:
+-i, --ip=IPADDR                     Host IP address (Required)
+-p, --worker                        Run as k8s worker
+-t, --target-host                   The k8s host need to join
+-a, --apiserver-port=PORT           Apiserver port (Default: 443)
+    --apiserver-insecure-port=PORT  Apiserver insecure port (Default: 8080)
+-a, --etcd-port=PORT                etcd client port (Default: 2379)
+-v, --version=VERSION               Specify k8s version (Default: 1.8.4)
+-r, --registry=REGISTRY             Registry of docker image (Default: 'gcr.io/google_containers')
+    --creator                       Mark as the first node
+    --forced-worker                 Run as k8s worker persistently
+    --reset-labels                  Reset node labels
+    --enable-keystone               Enable Keystone service (Default: disabled)
+-h, --help                          This help text
+"
+
+  echo "${USAGE}"
+}
+
+function get_options(){
+  local PROGNAME="${0##*/}"
+  local SHORTOPTS="i:wa:v:r:h"
+  local LONGOPTS="ip-cidr:,target-host:,apiserver-port:,apiserver-insecure-port:,etcd-port:,creator,worker,version:,registry:,forced-worker,reset-labels,enable-keystone,help"
+  local PARSED_OPTIONS=""
+
+  PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
+  eval set -- "${PARSED_OPTIONS}"
+
+  # extract options and their arguments into variables.
+  while true ; do
+      case "$1" in
+          -i|--ip-cidr)
+              export EX_IPCIDR="$2"
+              shift 2
+              ;;
+          -a|--apiserver-port)
+              export EX_APISERVER_PORT="$2"
+              shift 2
+              ;;
+             --apiserver-insecure-port)
+              export EX_APISERVER_INSECURE_PORT="$2"
+              shift 2
+              ;;
+          -t|--target-host)
+              export EX_TARGET_HOST="$2"
+              shift 2
+              ;;
+          -a|--etcd-port)
+              export EX_ETCD_CLIENT_PORT="$2"
+              shift 2
+              ;;
+             --creator)
+              export EX_CREATOR="true"
+              shift
+              ;;
+          -p|--worker)
+              export EX_WORKER="true"
+              shift
+              ;;
+          -v|--version)
+              export EX_K8S_VERSION="$2"
+              shift 2
+              ;;
+          -r|--registry)
+              export EX_REGISTRY="$2"
+              shift 2
+              ;;
+             --forced-worker)
+              export EX_FORCED_WORKER="true"
+              export EX_WORKER="true"
+              shift
+              ;;
+             --reset-labels)
+              export EX_RESET_LABELS="true"
+              shift
+              ;;
+             --enable-keystone)
+              export EX_ENABLE_KEYSTONE="true"
+              shift
+              ;;
+          -h|--help)
+              show_usage
+              exit 0
+              shift
+              ;;
+          --)
+              shift
+              break
+              ;;
+          *)
+              echo "Option error!" 1>&2
+              echo $1
+              exit 1
+              ;;
+      esac
+  done
+
+  local IPCIDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  if [[ -z "$(echo "${EX_IPCIDR}" | grep -o "${IPCIDR_PATTERN}")" ]] || \
+   [[ -z "$(ip addr | sed -nr "s/.*inet ([^ ]+) .*/\1/p" | grep -w "${EX_IPCIDR}")" ]]; then
+    echo "IP/CIDR error, exiting..." 1>&2
+    exit 1
+  fi
+
+  if [[ "${EX_CREATOR}" != "true" ]]; then
+    export EX_CREATOR="false"
+  fi
+
+  if [[ "${EX_CREATOR}" == "false" ]] && [[ -z "${EX_TARGET_HOST}" ]]; then
+    echo "K8s Target host is required for follower, exiting..." 1>&2
+    exit 1
+  fi
+
+  if [[ -z "${EX_APISERVER_PORT}" ]]; then
+    export EX_APISERVER_PORT="443"
+  fi
+
+  if [[ -z "${EX_APISERVER_INSECURE_PORT}" ]]; then
+    export EX_APISERVER_INSECURE_PORT="8080"
+  elif [[ -n "$(echo "${EX_APISERVER_INSECURE_PORT}" | grep -o '[^0-9]*')" ]]; then
+    echo "Error: wrong kube-apiserver insecure port, exiting..." 1>&2
+    exit 1
+  fi
+
+  if [[ -z "${EX_ETCD_CLIENT_PORT}" ]]; then
+    export EX_ETCD_CLIENT_PORT="2379"
+  fi
+
+  if [[ "${EX_WORKER}" == "true" ]] && [[ "${EX_CREATOR}" == "true" ]]; then
+    echo "The role only can be either a creator or a worker, exiting..." 1>&2
+    exit 1
+  fi
+
+  if [[ "${EX_WORKER}" != "true" ]]; then
+    export EX_WORKER="false"
+  fi
+
+  if [[ "${EX_ENABLE_KEYSTONE}" != "true" ]]; then
+    export EX_ENABLE_KEYSTONE="false"
+  fi
+
+  if [[ "${EX_FORCED_WORKER}" != "true" ]]; then
+    export EX_FORCED_WORKER="false"
+  fi
+
+  if [[ -z "${EX_K8S_VERSION}" ]]; then
+    export EX_K8S_VERSION="1.8.4"
+  fi
+
+  if [[ -z "${EX_REGISTRY}" ]]; then
+    export EX_REGISTRY="gcr.io/google_containers"
+  fi
+}
+
+# Get test kube-proxy
+function test_proxy(){
+  echo $(grep -o "10.0.0.1/32" <<<"$(iptables -w -S -t nat | grep 10.0.0.1/32 | grep 'KUBE-SERVICES')" | wc -l)
+}
+
+# Get k8s apiservers form the list of etcd members
+function get_API_Servers(){
+  local APISERVER_PORT="$1"
+  local ETCD_CLIENT_PORT="$2"
+  local KUBELET_VARLIB="$3"
+  local APISERVERS=""
+  local APISERVER=""
+  local APIHOST=""
+  local KUBE_NODE_LIST=""
+  local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
+  local CERTS_DIR="${KUBELET_VARLIB}/kubeconfig"
+  local CERT_OPTS="--cert ${CERTS_DIR}/kubecfg.crt \
+                   --key ${CERTS_DIR}/kubecfg.key \
+                   --cacert ${CERTS_DIR}/ca.crt"
+
+  if [[ ! -f "${CERTS_DIR}/kubecfg.crt" ]] \
+    || [[ ! -f "${CERTS_DIR}/kubecfg.key" ]] \
+    || [[ ! -f "${CERTS_DIR}/ca.crt" ]] \
+    || [[ ! -f "${CERTS_DIR}/kubeconfig.yaml" ]]; then
+   echo "Error, no such cert files in ${CERTS_DIR} or kubeconfig file in ${KUBELET_VARLIB}!" 1>&2
+   return 1
+  fi
+
+  # Wait for any apiserver started
+  until [[ -n "${APISERVERS}" ]]; do
+    # Get apiserver list
+    until [[ -n "${KUBE_NODE_LIST}" ]]; do
+      KUBE_NODE_LIST="$(curl -sf --retry 10 "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members" \
+        | jq -r ".members[].clientURLs[0]" \
+        | grep -v 'null' \
+        | grep -o "${IPADDR_PATTERN}")"
+
+      sleep 1
+    done
+
+    # Check accessibilities of apiservers
+    for KUBE_NODE in ${KUBE_NODE_LIST}; do
+      APISERVER="https://${KUBE_NODE}:${APISERVER_PORT}"
+      if curl ${CERT_OPTS} -s -k -m 2 "${APISERVER}/healthz" &>/dev/null; then
+        APISERVERS="${APISERVERS}","${APISERVER}"
+      fi
+    done
+    [[ -z "${APISERVERS}" ]] && sleep 1
+  done
+
+  APISERVERS="$(echo "${APISERVERS}" | cut -c 2-)"
+  [[ -n "${APISERVERS}" ]] && echo "${APISERVERS}" || return 1
+}
+
+function main(){
+  local K8SUP_NTPSERVER_VERSION="0.1"
+  local K8SUP_NTPSERVER_CLUSTER_IP="10.0.0.12"
+  if [[ "${EX_NTP_UPDATE_ONLY}" == "true" ]]; then
+    check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
+    tail -f /dev/null
+  fi
+
+  get_options "$@"
+  local IPCIDR="${EX_IPCIDR}" && unset EX_IPCIDR
+  local WORKER="${EX_WORKER}" && unset EX_WORKER
+  local TARGET_HOST="${EX_TARGET_HOST}" && unset EX_TARGET_HOST
+  local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
+  local APISERVER_PORT="${EX_APISERVER_PORT}" && unset EX_APISERVER_PORT
+  local APISERVER_INSECURE_PORT="${EX_APISERVER_INSECURE_PORT}" && unset EX_APISERVER_INSECURE_PORT
+  local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
+  local RESET_LABELS="${EX_RESET_LABELS}" && unset EX_RESET_LABELS
+  local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
+  local CREATOR="${EX_CREATOR}" && unset EX_CREATOR
+  local IPADDR="$(echo "${IPCIDR}" | cut -d '/' -f 1)"
+  local NODE_NAME="${EX_NODE_NAME:-$(hostname)}" && unset EX_NODE_NAME
+  local ETCD_PROXY=""
+  local APIHOST=""
+  local APISERVER=""
+  local APISERVERS=""
+  local APISERVER_COUNT=5
+  local KUBE_ETC="/etc/kubernetes"
+  local KUBE_CONF_PATH="${KUBE_ETC}/manifests"
+  local KUBE_ADDONS_CONF_PATH="${KUBE_ETC}/addons/multinode"
+  local SERVICE_ADDONS_PATH="${KUBE_ETC}/service-addons"
+  local KUBELET_VARLIB="/var/lib/kubelet"
+  local KUBECONFIG_PATH="${KUBE_ETC}"/kubeconfig
+  local IP_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
+  local APISERVER_CLUSTER_IP="10.0.0.1"
+  local KEYSTONE_CLUSTER_IP="10.0.0.20"
+  local KEYSTONE_DN="keystone-api.openstack.svc.cluster.local"
+  local MASTER_PUB_DN="kubernetes-public.default.svc.cluster.local"
+  local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,IP:${KEYSTONE_CLUSTER_IP},DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN},DNS:${KEYSTONE_DN}"
+  local KUBEDNS_CLUSTER_IP="10.0.0.10"
+  local KUBEDNS
+  local KUBEDNS_OPTION
+  local CERT_DIRS
+  local CERT_DIR
+  local EMPTY_DIRS
+  local MSG
+
+  export REGISTRY="${EX_REGISTRY}"
+  export ARCH="amd64"
+  export K8S_VERSION="${EX_K8S_VERSION}"
+  export ADDON_MGR_VER="v6.4-beta.2"
+  local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
+
+  rm -rf "${KUBE_ETC}"/*
+
+  if [[ "${CREATOR}" == "true" ]]; then
+    APIHOST="127.0.0.1:443"
+
+    cp -r /workdir/assets/k8sup/kube-conf/addons "${KUBE_ETC}"/
+    cp -r /workdir/assets/k8sup/kube-conf/abac-policy-file.jsonl "${KUBE_ETC}"/
+
+    local SUBNET_ID_AND_MASK="$(ip addr show | grep -o -w "${IPADDR}\/[0-9]\{1,2\}" | xargs -n1 -P2 bash -c 'get_subnet_id_and_mask "$@"' _)"
+    [[ "${REGISTRY}" == "gcr.io/google_containers" ]] && local NTPSERVER_REGISTRY="wcen" || local NTPSERVER_REGISTRY="${REGISTRY}"
+    sed -i "s|\bK8SUP_SUBNET_ID\b|${SUBNET_ID_AND_MASK}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+    sed -i "s|\bK8SUP_NTPSERVER_CLUSTER_IP\b|${K8SUP_NTPSERVER_CLUSTER_IP}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+    sed -i "s|\bNTPSERVER_REGISTRY\b|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+    sed -i "s|\bK8SUP_NTPSERVER_VERSION\b|${K8SUP_NTPSERVER_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
+
+
+    /workdir/bootkube \
+      render \
+      --asset-dir="/workdir/k8s-assets" \
+      --api-servers="https://${APISERVER_CLUSTER_IP}:443" \
+      --pod-cidr="10.1.0.0/16" \
+      --service-cidr="10.0.0.0/24" \
+      --network-provider="flannel" \
+      --experimental-self-hosted-etcd
+
+    if ! grep -q 'kubelet-preferred-address' "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
+    sed -i 's|    - apiserver|    - apiserver\n    - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
+      "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
+    fi
+    if ! grep -q 'kubelet-preferred-address' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+    sed -i 's|    - apiserver|    - apiserver\n        - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
+      "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    fi
+    if ! grep -q 'apiserver-count' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+    sed -i 's|    - apiserver|    - apiserver\n        - --apiserver-count=3|g' \
+      "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    fi
+    if ! grep -q 'basic-auth' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: basic-auth\n        secret:\n          secretName: basic-auth|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/basic_auth\n          name: basic-auth\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|        - apiserver|        - apiserver\n        - --basic-auth-file=/etc/kubernetes/basic_auth/basic_auth.csv|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    fi
+    if ! grep -q 'ABAC' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    fi
+    if ! grep -q '"size": 3' "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"; then
+      sed -i 's|"size": 1,|"size": 3,|g' \
+        "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"
+    fi
+
+    mkdir -p "${KUBE_ETC}"
+    cp -f "/workdir/k8s-assets/auth/kubeconfig" "${KUBE_ETC}/kubeconfig"
+    cp -f "/workdir/k8s-assets/tls/ca.crt" "${KUBE_ETC}/ca.crt"
+
+  else
+    APIHOST="${TARGET_HOST}"
+
+    TARGET_HOST_IP="$(echo "${TARGET_HOST}" | cut -d ':' -f 1)"
+    until TMP="$(curl -s "${TARGET_HOST_IP}:23555/kubeconfig")"; do
+      echo "Trying to get kubeconfig..." 1>&2
+      sleep 1
+    done
+    echo "${TMP}" | jq -r . | base64 -d > "${KUBE_ETC}/kubeconfig"
+    until TMP="$(curl -s "${TARGET_HOST_IP}:23555/kubeletca")"; do
+      echo "Trying to get kubelet ca.crt..." 1>&2
+      sleep 1
+    done
+    echo "${TMP}" | jq -r . | base64 -d > "${KUBE_ETC}/ca.crt"
+  fi
+
+  echo "Copy cni plugins"
+  mkdir -p "${KUBE_ETC}/cni/net.d"
+  cp -f "/workdir/assets/k8sup/cni-conf"/* "${KUBE_ETC}/cni/net.d"/
+  mkdir -p "/var/lib/cni/networks/containernet"; echo "" > "/var/lib/cni/networks/containernet/last_reserved_ip"
+
+  # echo "Cleaning up kube-proxy old iptables rules..." 1>&2
+  # cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE_NAME}"
+
+  # echo "Getting or generating certs..." 1>&2
+
+  echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
+  # Remove old/duplicate iptables rules
+  while read -r RM_RULE_CMD; do
+    bash -c "${RM_RULE_CMD}"
+  done < <(iptables-save \
+           | grep 'comment k8sup' \
+           | grep 10.0.0.1/32 \
+           | sed "s/^-A/-D/g" \
+           | sed -n 's|\(^.*$\)|iptables -w -t nat \1|p')
+  # Remove old route rules
+  if ip route | grep -w "^10.0.0.1 dev" 1>/dev/null; then
+    ip route delete "10.0.0.1"
+  fi
+  # Add a new route rule
+  iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 \
+    -m comment --comment "k8sup" -j DNAT --to-dest "${APIHOST}"
+
+  # Make sure that this host will use the right interface while accessing API server
+  local IFACE="$(ip addr | grep -B2 "inet ${IPCIDR}" | sed -n "s|^[0-9]\+: \(.*\): .*|\1|p" | cut -d '@' -f 1)"
+  if [[ -z "${IFACE}" ]] || ! ip addr show "${IFACE}" &>/dev/null; then
+    echo "Could not get network interface which use '${IPCIDR}', exiting..." 1>&2
+    exit 1
+  fi
+  ip route add "10.0.0.0/24" dev "${IFACE}" &>/dev/null || true
+
+  local NODE_LABELS="$(get_node_labels "${IPADDR}" "${WORKER}" "${FORCED_WORKER}")"
+
+  # Make message output level to 5 (--v=5) for all k8s components if debug mode is enabled
+  [[ "$-" == *x* ]] && local K8S_DEBUG_LEVEL="5" || local K8S_DEBUG_LEVEL="2"
+
+  echo "Running Kubernetes ..."
+  docker run \
+      --volume=/:/rootfs:ro \
+      --volume=/sys:/sys:ro \
+      --volume=/var/lib/docker:/var/lib/docker:rw \
+      --volume=${KUBELET_VARLIB}/:${KUBELET_VARLIB}/:rw,rslave \
+      --volume=/var/run:/var/run:rw \
+      --volume=/var/run/dbus:/var/run/dbus:rw \
+      --volume=/run/flannel:/run/flannel:rw \
+      --volume=/dev:/dev:rw \
+      --volume=/var/lib/cni:/var/lib/cni:rw \
+      --volume=${KUBE_ETC}:${KUBE_ETC} \
+      --volume=${KUBE_CONF_PATH}:${KUBE_CONF_PATH} \
+      --volume=/etc/ssl/certs:/etc/ssl/certs:ro \
+      --volume=/usr/share/ca-certificates:/usr/share/ca-certificates:ro \
+      --volume=/usr/lib/os-release:/etc/os-release:ro \
+      --volume=/run:/run \
+      ${KUBEDNS_OPTION} \
+      ${RBD_OPTIONS_KUBELET} \
+      --net=host \
+      --privileged=true \
+      --pid=host \
+      --restart=unless-stopped \
+      --name=k8sup-kubelet \
+      -d \
+      "${HYPERKUBE_IMAGE_NAME}" \
+      /hyperkube kubelet \
+          --allow-privileged=true \
+          --require-kubeconfig=true \
+          --kubeconfig="${KUBECONFIG_PATH}" \
+          --client-ca-file="${KUBE_ETC}/ca.crt" \
+          --v="${K8S_DEBUG_LEVEL}" \
+          --node-ip="${IPADDR}" \
+          --address=0.0.0.0 \
+          --enable-server \
+          --enable-controller-attach-detach \
+          --pod-manifest-path=${KUBE_CONF_PATH} \
+          --containerized \
+          --network-plugin=cni \
+          --cni-bin-dir=/opt/cni/bin \
+          --cni-conf-dir=${KUBE_ETC}/cni/net.d \
+          --pod-infra-container-image=${REGISTRY}/pause-${ARCH}:3.0 \
+          --cluster-dns=${KUBEDNS_CLUSTER_IP} \
+          --cluster-domain=cluster.local \
+          --node-labels="${NODE_LABELS}"
+
+  if [[ "${CREATOR}" == "true" ]]; then
+    set_basic_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" &
+    set_kube_system_configmap_from_file "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "abac-policy" "abac-policy-file.jsonl" "${KUBE_ETC}/abac-policy-file.jsonl" &
+
+    /workdir/bootkube \
+      start \
+      --asset-dir="/workdir/k8s-assets"
+  fi
+
+  echo "Waiting for kube-proxy connect to apiserver..."
+  until [[ "$(test_proxy)" -ge "1" ]]; do
+    sleep 1
+  done
+
+  echo "Removing the temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
+  until iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 \
+         -m comment --comment "k8sup" -j DNAT --to-dest "${APIHOST}"; do
+    sleep 1
+  done
+
+  set_node_schedulable "${NODE_NAME}" "${KUBECONFIG_PATH}" "${HYPERKUBE_IMAGE_NAME}"
+  update_node_labels "${NODE_NAME}" "${KUBECONFIG_PATH}" "${HYPERKUBE_IMAGE_NAME}" "${NODE_LABELS}"
+
+  if [[ "${CREATOR}" == "true" ]]; then
+    echo "Try to start NTP server..." 1>&2
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "ntp-server"
+
+    echo "Try to start heapster..." 1>&2
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "heapster"
+
+    # New url: https://<NODE_IP>/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
+    echo "Try to start kubernetes-dashboard..." 1>&2
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "kubernetes-dashboard"
+  fi
+
+  if [[ "${WORKER}" == "false" ]]; then
+    /opt/bin/kubelet-cert-distributor &
+  fi
+
+  check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
+
+  echo "kubelet started!" 1>&2
+}
+
+main "$@"
