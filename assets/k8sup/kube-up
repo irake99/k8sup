@@ -398,7 +398,7 @@ Options:
 -i, --ip=IPADDR                     Host IP address (Required)
 -p, --worker                        Run as k8s worker
 -t, --target-host                   The k8s host need to join
--a, --apiserver-port=PORT           Apiserver port (Default: 443)
+-a, --apiserver-port=PORT           Apiserver port (Default: 6443)
     --apiserver-insecure-port=PORT  Apiserver insecure port (Default: 8080)
 -a, --etcd-port=PORT                etcd client port (Default: 2379)
 -v, --version=VERSION               Specify k8s version (Default: 1.8.4)
@@ -508,7 +508,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_APISERVER_PORT}" ]]; then
-    export EX_APISERVER_PORT="443"
+    export EX_APISERVER_PORT="6443"
   fi
 
   if [[ -z "${EX_APISERVER_INSECURE_PORT}" ]]; then
@@ -657,7 +657,7 @@ function main(){
   rm -rf "${KUBE_ETC}"/*
 
   if [[ "${CREATOR}" == "true" ]]; then
-    APIHOST="127.0.0.1:443"
+    APIHOST="127.0.0.1:6443"
 
     cp -r /workdir/assets/k8sup/kube-conf/addons "${KUBE_ETC}"/
     cp -r /workdir/assets/k8sup/kube-conf/abac-policy-file.jsonl "${KUBE_ETC}"/
@@ -685,6 +685,14 @@ function main(){
     fi
     if ! grep -q 'kubelet-preferred-address' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
     sed -i 's|    - apiserver|    - apiserver\n        - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
+      "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    fi
+    if ! grep -q '\--secure-port=6443' "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
+    sed -i 's|--secure-port=443|--secure-port=6443|g' \
+      "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
+    fi
+    if ! grep -q '\--secure-port=6443' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+    sed -i 's|--secure-port=443|--secure-port=6443|g' \
       "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
     fi
     if ! grep -q 'apiserver-count' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
