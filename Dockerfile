@@ -14,6 +14,7 @@ RUN apt-get -y update && \
     module-init-tools \
     uuid-runtime \
     ntpdate \
+    libltdl7 \
     openssh-server \
     vim \
     python \
