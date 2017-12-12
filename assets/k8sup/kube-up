@@ -740,7 +740,7 @@ function main(){
   mkdir -p "/var/lib/cni/networks/containernet"; echo "" > "/var/lib/cni/networks/containernet/last_reserved_ip"
 
   # echo "Cleaning up kube-proxy old iptables rules..." 1>&2
-  # cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE_NAME}"
+  cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE_NAME}" 2>/dev/null || true
 
   # echo "Getting or generating certs..." 1>&2
 
