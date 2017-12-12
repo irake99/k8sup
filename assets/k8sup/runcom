@@ -64,7 +64,7 @@ function cleanup_old_kubeproxy_iptables(){
     --volume=/var/run/dbus \
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube proxy \
-      --cleanup-iptables
+      --cleanup
 }
 
 export -f docker
