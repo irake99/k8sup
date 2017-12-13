@@ -740,6 +740,7 @@ function main(){
           --pod-infra-container-image=${REGISTRY}/pause-${ARCH}:3.0 \
           --cluster-dns=${KUBEDNS_CLUSTER_IP} \
           --cluster-domain=cluster.local \
+          --node-status-update-frequency=4s \
           --node-labels="${NODE_LABELS}"
 
   echo "Waiting for kube-proxy connect to apiserver..."

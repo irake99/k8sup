@@ -18,6 +18,9 @@
               "--service-account-private-key-file=/srv/kubernetes/server.key",
               "--root-ca-file=/srv/kubernetes/ca.crt",
               "--min-resync-period=3m",
+              "--node-monitor-period=2s",
+              "--node-monitor-grace-period=16s",
+              "--pod-eviction-timeout=30s",
               "--v=2"
       ],
       "volumeMounts": [
