@@ -808,7 +808,7 @@ function main(){
   export ENV_ETCD_IMAGE="${COREOS_REGISTRY}/etcd:v${ENV_ETCD_VERSION}"
   export ENV_FLANNELD_IMAGE="${COREOS_REGISTRY}/flannel:v${ENV_FLANNELD_VERSION}"
   # Set a config file
-  local CONFIG_FILE="/root/.bashrc"
+  local CONFIG_FILE="/etc/kubernetes/k8sup-conf"
   local REJOIN_ETCD="${EX_REJOIN_ETCD}" && unset EX_REJOIN_ETCD
   local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_ETCD_ONLY
 
@@ -1010,27 +1010,25 @@ function main(){
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"
 
-  # Write configure to file
-  if ! grep "EX_IPADDR" "${CONFIG_FILE}" &>/dev/null; then
-    echo "export EX_IPADDR=${IPADDR}" >> "${CONFIG_FILE}"
-    echo "export EX_NETWORK=${NETWORK}" >> "${CONFIG_FILE}"
-    echo "export EX_ROLE=${ROLE}" >> "${CONFIG_FILE}"
-    echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
-    echo "export EX_FORCED_WORKER=${PROXY}" >> "${CONFIG_FILE}"
-    echo "export EX_ETCD_VERSION=${ENV_ETCD_VERSION}" >> "${CONFIG_FILE}"
-    echo "export EX_FLANNELD_VERSION=${ENV_FLANNELD_VERSION}" >> "${CONFIG_FILE}"
-    echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
-    echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
-    echo "export EX_K8S_INSECURE_PORT=${K8S_INSECURE_PORT}" >> "${CONFIG_FILE}"
-    echo "export EX_NODE_NAME=${NODE_NAME}" >> "${CONFIG_FILE}"
-    echo "export EX_IP_AND_MASK=${IP_AND_MASK}" >> "${CONFIG_FILE}"
-    echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
-    echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
-    echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
-    echo "export EX_START_ETCD_ONLY=${START_ETCD_ONLY}" >> "${CONFIG_FILE}"
-    echo "export EX_ENABLE_KEYSTONE=${ENABLE_KEYSTONE}" >> "${CONFIG_FILE}"
-    echo "export EX_HYPERKUBE_IMAGE=\${EX_REGISTRY}/hyperkube-amd64:v\${EX_K8S_VERSION}" >> "${CONFIG_FILE}"
-  fi
+  # Write configurations to a file
+  echo "export EX_IPADDR=${IPADDR}" > "${CONFIG_FILE}"
+  echo "export EX_NETWORK=${NETWORK}" >> "${CONFIG_FILE}"
+  echo "export EX_ROLE=${ROLE}" >> "${CONFIG_FILE}"
+  echo "export EX_ETCD_CLIENT_PORT=${ETCD_CLIENT_PORT}" >> "${CONFIG_FILE}"
+  echo "export EX_FORCED_WORKER=${PROXY}" >> "${CONFIG_FILE}"
+  echo "export EX_ETCD_VERSION=${ENV_ETCD_VERSION}" >> "${CONFIG_FILE}"
+  echo "export EX_FLANNELD_VERSION=${ENV_FLANNELD_VERSION}" >> "${CONFIG_FILE}"
+  echo "export EX_K8S_VERSION=${K8S_VERSION}" >> "${CONFIG_FILE}"
+  echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
+  echo "export EX_K8S_INSECURE_PORT=${K8S_INSECURE_PORT}" >> "${CONFIG_FILE}"
+  echo "export EX_NODE_NAME=${NODE_NAME}" >> "${CONFIG_FILE}"
+  echo "export EX_IP_AND_MASK=${IP_AND_MASK}" >> "${CONFIG_FILE}"
+  echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
+  echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
+  echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
+  echo "export EX_START_ETCD_ONLY=${START_ETCD_ONLY}" >> "${CONFIG_FILE}"
+  echo "export EX_ENABLE_KEYSTONE=${ENABLE_KEYSTONE}" >> "${CONFIG_FILE}"
+  echo "export EX_HYPERKUBE_IMAGE=\${EX_REGISTRY}/hyperkube-amd64:v\${EX_K8S_VERSION}" >> "${CONFIG_FILE}"
 
   if [[ "${START_ETCD_ONLY}" != "true" ]]; then
     kube_up "${CONFIG_FILE}"
