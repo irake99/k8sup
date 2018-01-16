@@ -117,7 +117,8 @@ function update_master_multi_rbd_mount(){
   local ARGS=("$@")
   local RBD_CMD_PATH="${ARGS[0]}"
   local DOCKER_CMD_PATH="${ARGS[3]}"
-  local MASTER_MULTI_JSON_FILE_PATH="${ARGS[4]}"
+  local DOCKER_LIB_PATH="${ARGS[4]}"
+  local MASTER_MULTI_JSON_FILE_PATH="${ARGS[5]}"
   local NEW_MASTER_MULTI_VOLUME_MOUNTS
   local NEW_MASTER_MULTI_VOLUMES
   local NEW_MASTER_MULTI_JSON
@@ -125,12 +126,12 @@ function update_master_multi_rbd_mount(){
 
   NEW_MASTER_MULTI_VOLUME_MOUNTS="$(echo '[]' \
                    | jq ". |= .+ [{\"name\":\"rbd\",\"mountPath\":\"/bin/rbd\"}]" \
-                   | jq ". |= .+ [{\"name\":\"usr-lib\",\"mountPath\":\"/host/lib\"}]" \
+                   | jq ". |= .+ [{\"name\":\"docker-lib\",\"mountPath\":\"/host/lib\"}]" \
                    | jq ". |= .+ [{\"name\":\"docker\",\"mountPath\":\"/bin/docker\"}]" \
                    | jq ". |= .+ [{\"name\":\"docker-sock\",\"mountPath\":\"/var/run/docker.sock\"}]")"
   NEW_MASTER_MULTI_VOLUMES="$(echo '[]' \
              | jq ". |= .+ [{\"name\":\"rbd\",\"hostPath\":{\"path\":\"${RBD_CMD_PATH}\"}}]" \
-             | jq ". |= .+ [{\"name\":\"usr-lib\",\"hostPath\":{\"path\":\"/usr/lib/\"}}]" \
+             | jq ". |= .+ [{\"name\":\"docker-lib\",\"hostPath\":{\"path\":\"${DOCKER_LIB_PATH}\"}}]" \
              | jq ". |= .+ [{\"name\":\"docker\",\"hostPath\":{\"path\":\"${DOCKER_CMD_PATH}\"}}]" \
              | jq ". |= .+ [{\"name\":\"docker-sock\",\"hostPath\":{\"path\":\"/var/run/docker.sock\"}}]")"
   NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
@@ -162,13 +163,14 @@ function make_rbd_docker_option(){
   local RBD_KO_PATH="${ARGS[1]}"
   local MODPROBE_CMD_PATH="${ARGS[2]}"
   local DOCKER_CMD_PATH="${ARGS[3]}"
+  local DOCKER_LIB_PATH="${ARGS[4]}"
   [[ -z "${RBD_CMD_PATH}" ]] && return 1
 
   local RBD_OPTIONS="--volume=${RBD_CMD_PATH}:/bin/rbd:ro \
         --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
         --volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro \
         --volume=${DOCKER_CMD_PATH}:/bin/docker:ro \
-        --volume=/usr/lib/:/host/lib:ro \
+        --volume=${DOCKER_LIB_PATH}:/host/lib:ro \
         --volume=/lib/modules:/lib/modules:ro"
 
   echo "${RBD_OPTIONS}"
@@ -183,11 +185,13 @@ function rbd_env_detector(){
   local DEFAULT_RBD_CMD_HOST_PATH="/opt/bin"
   local RBD_CMD_CONTAINER_PATH
 
-  [[ -n "$(echo "${VOLUMES}" | grep "/usr/lib")" ]] \
+  [[ -n "$(echo "${VOLUMES}" | grep -E "/usr/lib|/run/torcx/unpack/docker/lib")" ]] \
     && [[ -n "$(echo "${VOLUMES}" | grep "/bin")" ]] \
     && RBD_KO_PATH="$(get_filepath_from_volumes "rbd.ko" "${VOLUMES}")" \
     && MODPROBE_CMD_PATH="$(get_filepath_from_volumes "modprobe" "${VOLUMES}" "true")" \
     && DOCKER_CMD_PATH="$(get_filepath_from_volumes "docker" "$(echo "${VOLUMES}" | grep "/bin")" "true")" \
+    && DOCKER_LIB_PATH="$(echo "${VOLUMES}" | grep ":/host/lib" | cut -d ':' -f 1)" \
+    && [[ -n "${DOCKER_LIB_PATH}" ]] \
     || { echo "RBD mounting is not available on this host." 1>&2 && return 1; }
 
     if ! RBD_CMD_PATH="$(get_filepath_from_volumes "rbd" "${VOLUMES}" "true")"; then
@@ -206,7 +210,7 @@ function rbd_env_detector(){
     fi
 
   echo "RBD mounting is available on this host." 1>&2
-  echo "${RBD_CMD_PATH}" "${RBD_KO_PATH}" "${MODPROBE_CMD_PATH}" "${DOCKER_CMD_PATH}"
+  echo "${RBD_CMD_PATH}" "${RBD_KO_PATH}" "${MODPROBE_CMD_PATH}" "${DOCKER_CMD_PATH}" "${DOCKER_LIB_PATH}"
 
   return 0
 }
