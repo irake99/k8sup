@@ -145,7 +145,7 @@ function update_master_multi_rbd_mount(){
   NEW_MASTER_MULTI_JSON="$(cat "${MASTER_MULTI_JSON_FILE_PATH}" \
     | jq ".spec.containers[0].volumeMounts |= .+ ${NEW_MASTER_MULTI_VOLUME_MOUNTS}" \
     | jq ".spec.volumes |= .+ ${NEW_MASTER_MULTI_VOLUMES}" \
-    | jq ".spec.containers[1].command |= .+ [\"--service-node-port-range=1-32767\"]" \
+    | jq ".spec.containers[1].command |= .+ [\"--service-node-port-range=1-65535\"]" \
     | sed "s|\"--admission-control=\(.*\)\",|\"--admission-control=\1,DefaultStorageClass\",|g")"
   [[ -z "${NEW_MASTER_MULTI_JSON}" ]] || [[ "${NEW_MASTER_MULTI_JSON}" == "null" ]] && return 1
 
