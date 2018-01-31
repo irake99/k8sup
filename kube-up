@@ -10,9 +10,17 @@ function get_node_labels(){
   local FORCED_WORKER="$3"
   local ROLE_LABELS
   local K8S_MASTER
-  [[ "${WORKER}" == "false" ]] && K8S_MASTER="true" || K8S_MASTER="false"
+  local ROLE
 
-  ROLE_LABELS="cdxvirt/k8s_master=${K8S_MASTER},cdxvirt/k8s_forced_worker=${FORCED_WORKER},cdxvirt/nodeip=${IPADDR}"
+  if [[ "${WORKER}" == "false" ]]; then
+    ROLE="master"
+    K8S_MASTER="true"
+  else
+    ROLE="worker"
+    K8S_MASTER="false"
+  fi
+
+  ROLE_LABELS="node-role.kubernetes.io/${ROLE}=,cdxvirt/k8s_master=${K8S_MASTER},cdxvirt/k8s_forced_worker=${FORCED_WORKER},cdxvirt/nodeip=${IPADDR}"
 
   echo "${ROLE_LABELS}"
 }
