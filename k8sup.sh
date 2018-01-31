@@ -610,6 +610,7 @@ Options:
     --k8s-version=VERSION      Specify k8s version (Default: 1.5.8)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
+    --creator-ip=CREATOR_IP    Sepcify corator node IP directly (For follower node and skip node discovery)
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
     --rejoin-etcd              Re-join the same etcd cluster
@@ -641,7 +642,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:r:vh"
-  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,k8s-insecure-port:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
+  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,k8s-insecure-port:,creator-ip:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
   local PARSED_OPTIONS=""
   local K8SUP_VERSION="0.9.0"
 
@@ -673,6 +674,10 @@ function get_options(){
               ;;
              --max-etcd-members)
               export EX_MAX_ETCD_MEMBER_SIZE="$2"
+              shift 2
+              ;;
+             --creator-ip)
+              export EX_CREATOR_IP="$2"
               shift 2
               ;;
              --new)
@@ -749,6 +754,16 @@ function get_options(){
 
   if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
     echo "Error! '--new' can not use specified cluster ID, exiting..." 1>&2
+    exit 1
+  fi
+
+  if [[ -n "${EX_CREATOR_IP}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
+    echo "Error! can not use '--creator-ip' and '--new' a the same time, exiting..." 1>&2
+    exit 1
+  fi
+
+  if [[ -n "${EX_CREATOR_IP}" ]] && [[ -n "${EX_CLUSTER_ID}" ]]; then
+    echo "Error! can not use '--creator-ip' and '--cluster' a the same time, exiting..." 1>&2
     exit 1
   fi
 
@@ -853,6 +868,7 @@ function main(){
   local IP_AND_MASK=""
   IP_AND_MASK="$(get_ipaddr_and_mask_from_netinfo "${NETWORK}")" || exit 1
   local IPADDR="$(echo "${IP_AND_MASK}" | cut -d '/' -f 1)"
+  local CREATOR_IP="${EX_CREATOR_IP}" && unset EX_CREATOR_IP
   local NEW_CLUSTER="${EX_NEW_CLUSTER}" && unset EX_NEW_CLUSTER
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
@@ -862,6 +878,7 @@ function main(){
   local K8S_PORT="6443"
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
+  local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
 
   bash -c 'docker stop k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
   bash -c 'docker rm k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
@@ -875,7 +892,22 @@ function main(){
     etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
       "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" && ROLE="follower" || exit 1
   else
-    if [[ "${NEW_CLUSTER}" != "true" ]]; then
+    if [[ -n "${CREATOR_IP}" ]]; then
+      # Skip node discovery
+      # Validate IP format (1.2.3.4)
+      if echo "${CREATOR_IP}" | grep -q "^${IPADDR_PATTERN}$"; then
+        CREATOR_IP="${CREATOR_IP}:${ETCD_CLIENT_PORT}"
+      fi
+      # Validate IP:PORT format (1.2.3.4:56)
+      if ! echo "${CREATOR_IP}" | grep -q "^${IPPORT_PATTERN}$"; then
+        echo "Error! --creator '${CREATOR_IP}' is not valid format, exiting..." 1>&2
+        exit 1
+      fi
+      echo "Creator IP has been specified, this node will be a follower node and skip node discovery..."
+      EXISTING_ETCD_NODE="${CREATOR_IP}"
+      EXISTING_ETCD_NODE_LIST="${EXISTING_ETCD_NODE}"
+    elif [[ "${NEW_CLUSTER}" != "true" ]]; then
+      # Run node discovery
       /go/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "false" 2>/dev/null &
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
