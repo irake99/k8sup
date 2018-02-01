@@ -378,7 +378,8 @@ function get_options(){
 
 function main(){
   get_options "$@"
-  source "/etc/kubernetes/k8sup-conf"
+  local CONFIG_FILE="/etc/kubernetes/k8sup-conf"
+  source "${CONFIG_FILE}"
 
   if check_if_this_container_is_k8sup; then
     echo "Container named k8sup can not run kube-down by itself, please run another container to do this." 1>&2
@@ -465,6 +466,7 @@ function main(){
     fi
     if [[ "${EXIT}" == "true" ]]; then
       exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${REMOTE_ETCD_IPADDR}"
+      rm -f "${CONFIG_FILE}"
     fi
   fi
 

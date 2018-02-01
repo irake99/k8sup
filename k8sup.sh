@@ -447,7 +447,7 @@ function get_network_by_cluster_id(){
     CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p"| uniq)"
     if [[ "$(echo "${CLUSTER_ID}" | wc -l)" -gt "1" ]]; then
       echo "${DISCOVERY_RESULTS}" 1>&2
-      echo "More than 1 cluster are found, please specify '--network' or '--cluster', exiting..." 1>&2
+      echo "More than 1 cluster are found, please specify '--network', '--cluster' or '--creator-ip', exiting..." 1>&2
       return 1
     fi
   fi
@@ -474,6 +474,40 @@ function get_network_by_cluster_id(){
 
   echo "${NETWORK}"
   return 0
+}
+
+function get_network_by_creator_ip(){
+  local CREATOR_IP="$1"
+  local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
+  local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
+  local IPCIDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  local IPCIDR IPNET CIDR CREATOR_IPNET
+  local NETWORK=""
+
+  if echo "${CREATOR_IP}" | grep -q "^${IPPORT_PATTERN}$"; then
+    # Validate IP:PORT format (1.2.3.4:56)
+    CREATOR_IP="$(echo "${CREATOR_IP}" | cut -d ':' -f 1)"
+  elif ! echo "${CREATOR_IP}" | grep -q "^${IPADDR_PATTERN}$"; then
+    # Validate IP format (1.2.3.4)
+    echo "Error! --creator '${CREATOR_IP}' is empty or not valid format, exiting..." 1>&2
+    return 1
+  fi
+
+  for IPCIDR in $(ip addr show | grep -o "${IPCIDR_PATTERN}"); do
+    CIDR="$(echo "${IPCIDR}" | cut -d '/' -f 2)"
+    IPNET="$(get_subnet_id_and_mask "${IPCIDR}")"
+    CREATOR_IPNET="$(get_subnet_id_and_mask "${CREATOR_IP}/${CIDR}")"
+    if [[ "${IPNET}" == "${CREATOR_IPNET}" ]]; then
+      NETWORK="${IPNET}"
+      break
+    fi
+  done
+  if [[ -n "${NETWORK}" ]]; then
+    echo "${NETWORK}"
+  else
+    echo "Error! No such the right network interface to creator IP, exiting..." 1>&2
+    return 1
+  fi
 }
 
 function kube_up(){
@@ -826,6 +860,7 @@ function main(){
   local CONFIG_FILE="/etc/kubernetes/k8sup-conf"
   local REJOIN_ETCD="${EX_REJOIN_ETCD}" && unset EX_REJOIN_ETCD
   local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_ETCD_ONLY
+  local CREATOR_IP="${EX_CREATOR_IP}" && unset EX_CREATOR_IP
 
   echo "Checking hyperkube version for the requirement..."
   check_k8s_major_minor_version_meet_requirement "${K8S_VERSION}" "1.5" && echo "OK" || exit "$?"
@@ -860,15 +895,18 @@ function main(){
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
   local NETWORK="${EX_NETWORK}" && unset EX_NETWORK
   if [[ -z "${NETWORK}" ]]; then
-    NETWORK="$(sed -n "s|.* EX_NETWORK=\(.*\)$|\1|p" "${CONFIG_FILE}")"
-    if [[ -z "${NETWORK}" ]]; then
+    if [[ -f "${CONFIG_FILE}" ]]; then
+      NETWORK="$(sed -n "s|.* EX_NETWORK=\(.*\)$|\1|p" "${CONFIG_FILE}")"
+    elif [[ -n "${CREATOR_IP}" ]]; then
+      NETWORK="$(get_network_by_creator_ip "${CREATOR_IP}")" || exit 1
+    else
       NETWORK="$(get_network_by_cluster_id "${CLUSTER_ID}")" || exit 1
     fi
   fi
   local IP_AND_MASK=""
   IP_AND_MASK="$(get_ipaddr_and_mask_from_netinfo "${NETWORK}")" || exit 1
+  echo "Use the interface of ${IP_AND_MASK}..."
   local IPADDR="$(echo "${IP_AND_MASK}" | cut -d '/' -f 1)"
-  local CREATOR_IP="${EX_CREATOR_IP}" && unset EX_CREATOR_IP
   local NEW_CLUSTER="${EX_NEW_CLUSTER}" && unset EX_NEW_CLUSTER
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
