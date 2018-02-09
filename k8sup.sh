@@ -644,7 +644,7 @@ Options:
     --k8s-version=VERSION      Specify k8s version (Default: 1.5.8)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
-    --creator-ip=CREATOR_IP    Sepcify corator node IP directly (For follower node and skip node discovery)
+    --creator-ip=CREATOR_IP    Sepcify corator node IP directly (Skip node discovery)
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
     --rejoin-etcd              Re-join the same etcd cluster
@@ -791,16 +791,6 @@ function get_options(){
     exit 1
   fi
 
-  if [[ -n "${EX_CREATOR_IP}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
-    echo "Error! can not use '--creator-ip' and '--new' a the same time, exiting..." 1>&2
-    exit 1
-  fi
-
-  if [[ -n "${EX_CREATOR_IP}" ]] && [[ -n "${EX_CLUSTER_ID}" ]]; then
-    echo "Error! can not use '--creator-ip' and '--cluster' a the same time, exiting..." 1>&2
-    exit 1
-  fi
-
   if [[ "${EX_RESTORE_ETCD}" == "true" ]]; then
     export EX_NEW_CLUSTER="true"
   fi
@@ -941,9 +931,21 @@ function main(){
         echo "Error! --creator '${CREATOR_IP}' is not valid format, exiting..." 1>&2
         exit 1
       fi
-      echo "Creator IP has been specified, this node will be a follower node and skip node discovery..."
-      EXISTING_ETCD_NODE="${CREATOR_IP}"
-      EXISTING_ETCD_NODE_LIST="${EXISTING_ETCD_NODE}"
+
+      local FOR_IPADDR
+      for FOR_IPADDR in $(ip addr show | grep -o "${IPADDR_PATTERN}"); do
+        if [[ "${CREATOR_IP}" == "${FOR_IPADDR}:${ETCD_CLIENT_PORT}" ]]; then
+          ROLE="creator"
+          break
+        fi
+      done
+      if [[ "${ROLE}" == "creator" ]]; then
+        echo "Creator IP has been specified, this node will be a creator node and skip node discovery..."
+      else
+        echo "Creator IP has been specified, this node will be a follower node and skip node discovery..."
+        EXISTING_ETCD_NODE="${CREATOR_IP}"
+        EXISTING_ETCD_NODE_LIST="${EXISTING_ETCD_NODE}"
+      fi
     elif [[ "${NEW_CLUSTER}" != "true" ]]; then
       # Run node discovery
       /go/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "false" 2>/dev/null &
