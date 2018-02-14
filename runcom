@@ -1,6 +1,16 @@
 #!/bin/bash
 # run commands
 
+export IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
+export IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
+export IPCIDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+export HEX_IPADDR_PATTERN="0x[0-9A-Fa-f]\{8\}"
+
+function fatal_err_format_invalid(){
+  echo "Got invalid $1, exiting..." 2>&1
+  exit 1
+}
+
 export LIB_DOCKER_PATH="$(dirname $(find $(readlink -f /lib) -iname libc.so.6))"
 
 function docker(){
@@ -37,23 +47,71 @@ function addr2hex(){
   echo "0x$(printf '%02X' ${IPADDR//./ } ; echo)"
 }
 
-# Convert IP/Mask to SubnetID/Mask. e.g. 192.168.1.200/24 => 192.168.1.0/24
-function get_subnet_id_and_mask(){
-  local ADDR_AND_MASK="$1"
-  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
-  echo "${ADDR_AND_MASK}" | grep -o "${IPMASK_PATTERN}" &>/dev/null || { echo "Wrong Address/Mask pattern, exiting..." 1>&2; exit 1; }
+# Convert IP address from heximal to decimal. e.g. 0xC0A801C8 => 192.168.1.200
+function hex2addr(){
+  local HEX_IPADDR="$1"
+  if [[ "${HEX_IPADDR:0:2}" != "0x" ]]; then
+    HEX_IPADDR="0x${HEX_IPADDR}"
+  fi
+  local DEC_IPADDR=$(printf '%d.' 0x${HEX_IPADDR:2:2} 0x${HEX_IPADDR:4:2} 0x${HEX_IPADDR:6:2} 0x${HEX_IPADDR:8:2})
 
-  local ADDR="$(echo "${ADDR_AND_MASK}" | cut -d '/' -f 1)"
-  local MASK="$(echo "${ADDR_AND_MASK}" | cut -d '/' -f 2)"
+  echo "${DEC_IPADDR:0:-1}"
+}
 
-  local HEX_ADDR=$(addr2hex "${ADDR}")
-  local HEX_MASK=$(addr2hex $(cidr2mask "${MASK}"))
-  local HEX_NETWORK=$(printf '%08X' $((${HEX_ADDR} & ${HEX_MASK})))
+# Convert IP/CIDR to SubnetID/CIDR. e.g. 192.168.1.200/24 => 192.168.1.0/24
+function get_netcidr_by_ipcidr(){
+  local IPCIDR="$1"
+  echo "${IPCIDR}" | grep -o "${IPCIDR_PATTERN}" &>/dev/null || { echo "Wrong IP/CIDR pattern, exiting..." 1>&2; exit 1; }
 
-  local NETWORK=$(printf '%d.' 0x${HEX_NETWORK:0:2} 0x${HEX_NETWORK:2:2} 0x${HEX_NETWORK:4:2} 0x${HEX_NETWORK:6:2})
-  SUBNET_ID="${NETWORK:0:-1}"
-  echo "${SUBNET_ID}/${MASK}"
+  local ADDR="$(echo "${IPCIDR}" | cut -d '/' -f 1)"
+  local CIDR="$(echo "${IPCIDR}" | cut -d '/' -f 2)"
+
+  local HEX_ADDR="$(addr2hex "${ADDR}")"
+  local HEX_MASK="$(addr2hex $(cidr2mask "${CIDR}"))"
+  local HEX_NETWORK="0x$(printf '%08X' $((${HEX_ADDR} & ${HEX_MASK})))"
+
+  local SUBNET_ID=$(hex2addr "${HEX_NETWORK}")
+  echo "${SUBNET_ID}/${CIDR}"
+}
+
+# Input IP/CIDR e.g. 192.168.34.12/26 and output first/last
+# addresses in the network as hex. e.g. 0xC0A82201 0xC0A8223F
+function get_net_range_by_ipcidr(){
+  local IPCIDR
+  IPCIDR="$(echo "$1" | grep -w "^${IPCIDR_PATTERN}$")" || fatal_err_format_invalid "IP/CIDR"
+  local IPNET="$(get_netcidr_by_ipcidr "${IPCIDR}")"
+  local IPADDR="$(echo "${IPNET}" | cut -d '/' -f 1)"
+  local CIDR="$(echo "${IPNET}" | cut -d '/' -f 2)"
+  local HEX_IPADDR="$(addr2hex "${IPADDR}")"
+  local HEX_HOST_AMOUNT="0x$(printf '%02X' $((2**((32-${CIDR})))))"
+  local HEX_FIRST_IPADDR="${HEX_IPADDR}"
+  local HEX_LAST_IPADDR="0x$(printf '%02X' $((${HEX_IPADDR}+${HEX_HOST_AMOUNT}-1)))"
+
+  if [[ -z "${HEX_FIRST_IPADDR}" || -z "${HEX_LAST_IPADDR}" ]]; then
+    echo "Error! getting network range by IP/CIDR failed, exiting..." 2>&1
+    return 1
+  fi
+  echo "${HEX_FIRST_IPADDR} ${HEX_LAST_IPADDR}"
+}
+
+# Get the available IP from the hex ip range
+function get_first_available_ip_by_net_range(){
+  local HEX_FIRST_IPADDR HEX_LAST_IPADDR HEX_FIRST_AVAILABLE_IPADDR DEC_FIRST_AVAILABLE_IPADDR
+  HEX_FIRST_IPADDR="$(echo "$1" | grep -w "^${HEX_IPADDR_PATTERN}$")" || fatal_err_format_invalid "Hex IP address"
+  HEX_LAST_IPADDR="$(echo "$2" | grep -w "^${HEX_IPADDR_PATTERN}$")" || fatal_err_format_invalid "Hex IP address"
+  if [[ "${HEX_FIRST_IPADDR: -2}" == "00" ]] && [[ "${HEX_LAST_IPADDR}" -gt "${HEX_FIRST_IPADDR}" ]]; then
+    HEX_FIRST_AVAILABLE_IPADDR="0x$(printf '%02X' $((${HEX_FIRST_IPADDR}+1)))"
+  else
+    HEX_FIRST_AVAILABLE_IPADDR="${HEX_FIRST_IPADDR}"
+  fi
+
+  DEC_FIRST_AVAILABLE_IPADDR="$(hex2addr "${HEX_FIRST_AVAILABLE_IPADDR}")"
+  if [[ -z "${DEC_FIRST_AVAILABLE_IPADDR}" ]]; then
+    echo "Error! getting first available IP by network range failed, exiting..." 2>&1
+    return 1
+  fi
+  echo "${DEC_FIRST_AVAILABLE_IPADDR}"
 }
 
 export -f docker
-export -f cidr2mask addr2hex get_subnet_id_and_mask
+export -f cidr2mask addr2hex hex2addr get_netcidr_by_ipcidr

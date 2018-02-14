@@ -342,10 +342,10 @@ function flanneld(){
       --iface="${IPADDR}"
 }
 
-function get_ipaddr_and_mask_from_netinfo(){
+function get_ipcidr_from_netinfo(){
   local NETINFO="$1"
-  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
-  local IP_AND_MASK=""
+  local IPCIDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  local IPCIDR=""
 
   if [[ -z "${NETINFO}" ]]; then
     echo "Getting network info error, exiting..." 1>&2
@@ -353,37 +353,37 @@ function get_ipaddr_and_mask_from_netinfo(){
   fi
 
   # If NETINFO is NIC name
-  IP_AND_MASK="$(ip addr show "${NETINFO}" 2>/dev/null | grep -o "${IPMASK_PATTERN}" 2>/dev/null | head -n 1)"
-  if [[ -n "${IP_AND_MASK}" ]] ; then
-    echo "${IP_AND_MASK}"
+  IPCIDR="$(ip addr show "${NETINFO}" 2>/dev/null | grep -o "${IPCIDR_PATTERN}" 2>/dev/null | head -n 1)"
+  if [[ -n "${IPCIDR}" ]] ; then
+    echo "${IPCIDR}"
     return 0
   fi
 
   # If NETINFO is an IP address
-  IP_AND_MASK="$(ip addr | grep -o "${NETINFO}\/[0-9]\{1,2\}" 2>/dev/null)"
-  if [[ -n "${IP_AND_MASK}" ]] ; then
-    echo "${IP_AND_MASK}"
+  IPCIDR="$(ip addr | grep -o "${NETINFO}\/[0-9]\{1,2\}" 2>/dev/null)"
+  if [[ -n "${IPCIDR}" ]] ; then
+    echo "${IPCIDR}"
     return 0
   fi
 
-  # If NETINFO is SubnetID/MASK
-  echo "${NETINFO}" | grep -o "${IPMASK_PATTERN}" &>/dev/null || { echo "Wrong NETINFO, exiting..." 1>&2 && exit 1; }
-  local HOST_NET_LIST="$(ip addr show | grep -o "${IPMASK_PATTERN}")"
+  # If NETINFO is SubnetID/CIDR
+  echo "${NETINFO}" | grep -o "${IPCIDR_PATTERN}" &>/dev/null || { echo "Wrong NETINFO, exiting..." 1>&2 && exit 1; }
+  local HOST_NET_LIST="$(ip addr show | grep -o "${IPCIDR_PATTERN}")"
   local HOST_NET=""
   for NET in ${HOST_NET_LIST}; do
-    HOST_NET="$(get_subnet_id_and_mask "${NET}")"
+    HOST_NET="$(get_netcidr_by_ipcidr "${NET}")"
     if [[ "${NETINFO}" == "${HOST_NET}" ]]; then
-      IP_AND_MASK="${NET}"
+      IPCIDR="${NET}"
       break
     fi
   done
 
-  if [[ -z "${IP_AND_MASK}" ]]; then
+  if [[ -z "${IPCIDR}" ]]; then
     echo "No such host IP address, exiting..." 1>&2
     exit 1
   fi
 
-  echo "${IP_AND_MASK}"
+  echo "${IPCIDR}"
 }
 
 function check_is_image_available(){
@@ -435,7 +435,7 @@ function check_k8s_new_version_changeable(){
 
 function get_network_by_cluster_id(){
   local CLUSTER_ID="$1"
-  local IPMASK_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
+  local IPCIDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
   local NETWORK
   local NetworkID
   local DISCOVERY_RESULTS
@@ -451,17 +451,17 @@ function get_network_by_cluster_id(){
       return 1
     fi
   fi
-  NetworkID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*NetworkID=\(${IPMASK_PATTERN}\).*/\1/p" | uniq)"
+  NetworkID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*NetworkID=\(${IPCIDR_PATTERN}\).*/\1/p" | uniq)"
   if [[ "$(echo "${NetworkID}" | wc -l)" -gt "1" ]]; then
     echo "${DISCOVERY_RESULTS}" 1>&2
     echo "Same cluster ID: ${CLUSTER_ID} in different network, please specify '--network', exiting..." 1>&2
     return 1
   fi
-  local HOST_NET_LIST="$(ip addr show | grep -o "${IPMASK_PATTERN}")"
+  local HOST_NET_LIST="$(ip addr show | grep -o "${IPCIDR_PATTERN}")"
   local HOST_NET=""
   local NET=""
   for NET in ${HOST_NET_LIST}; do
-    HOST_NET="$(get_subnet_id_and_mask "${NET}")"
+    HOST_NET="$(get_netcidr_by_ipcidr "${NET}")"
     if [[ "${NetworkID}" == "${HOST_NET}" ]]; then
       NETWORK="${NetworkID}"
       break
@@ -495,8 +495,8 @@ function get_network_by_master_ip(){
 
   for IPCIDR in $(ip addr show | grep -o "${IPCIDR_PATTERN}"); do
     CIDR="$(echo "${IPCIDR}" | cut -d '/' -f 2)"
-    IPNET="$(get_subnet_id_and_mask "${IPCIDR}")"
-    MASTER_IPNET="$(get_subnet_id_and_mask "${MASTER_IP}/${CIDR}")"
+    IPNET="$(get_netcidr_by_ipcidr "${IPCIDR}")"
+    MASTER_IPNET="$(get_netcidr_by_ipcidr "${MASTER_IP}/${CIDR}")"
     if [[ "${IPNET}" == "${MASTER_IPNET}" ]]; then
       NETWORK="${IPNET}"
       break
@@ -514,7 +514,7 @@ function kube_up(){
   local CONFIG_FILE="$1"
   source "${CONFIG_FILE}" || exit 1
 
-  local IP_AND_MASK="${EX_IP_AND_MASK}" && unset EX_IP_AND_MASK
+  local IPCIDR="${EX_IPCIDR}" && unset EX_IPCIDR
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   local REGISTRY="${EX_REGISTRY}" && unset EX_REGISTRY
   local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
@@ -546,7 +546,7 @@ function kube_up(){
   if [[ "${K8S_INSECURE_PORT}" != "8080" ]]; then
     local K8S_INSECURE_PORT_OPT="--apiserver-insecure-port=${K8S_INSECURE_PORT}"
   fi
-  /go/kube-up --ip-cidr="${IP_AND_MASK}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT} ${K8S_INSECURE_PORT_OPT}
+  /go/kube-up --ip-cidr="${IPCIDR}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT} ${K8S_INSECURE_PORT_OPT}
 }
 
 function restart_flannel(){
@@ -570,9 +570,9 @@ function rejoin_etcd(){
   local K8S_VERSION="${EX_K8S_VERSION}" && unset EX_K8S_VERSION
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local NODE_NAME="${EX_NODE_NAME}" && unset EX_NODE_NAME
-  local IP_AND_MASK="${EX_IP_AND_MASK}" && unset EX_IP_AND_MASK
+  local IPCIDR="${EX_IPCIDR}" && unset EX_IPCIDR
   local CLUSTER_ID="${EX_CLUSTER_ID}" && unset EX_CLUSTER_ID
-  local SUBNET_ID_AND_MASK="${EX_SUBNET_ID_AND_MASK}" && unset EX_SUBNET_ID_AND_MASK
+  local NETCIDR="${EX_NETCIDR}" && unset EX_NETCIDR
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
   local ETCD_MEMBER_LIST="$(curl -sf http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/members)"
@@ -602,7 +602,7 @@ function rejoin_etcd(){
     return 0
   fi
 
-  DISCOVERY_RESULTS="$(/go/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')"
+  DISCOVERY_RESULTS="$(/go/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${NETCIDR}" | grep -w 'etcdProxy=off')"
   ETCD_NODE_LIST="$(echo "${DISCOVERY_RESULTS}" \
                     | grep "\<clusterID=${CLUSTER_ID}\>[^-]" \
                     | sed -n "s/.*IPAddr=\(${IPADDR_PATTERN}\).*etcdPort=\([[:digit:]]*\).*/\1:\2/p")"
@@ -631,13 +631,13 @@ function rejoin_etcd(){
   local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/go/dnssd/registering' | grep -v grep | awk '{print $1}')"
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/k8sup/cluster/clusterid" | jq -r '.node.value')"
-  /go/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
+  /go/dnssd/registering -IPMask "${IPCIDR}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
 }
 
 function show_usage(){
   local USAGE="Usage: ${0##*/} [options...]
 Options:
--n, --network=NETINFO          SubnetID/Mask or Host IP address or NIC name
+-n, --network=NETINFO          SubnetID/CIDR or Host IP address or NIC name
                                e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                                or \"eth0\"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
@@ -795,10 +795,13 @@ function get_options(){
     export EX_NO_NODE_DISCOVERY="false"
   fi
 
-  if [[ "${EX_NO_NODE_DISCOVERY}" == "true" ]] && [[ -z "${EX_MASTER_IP}" ]]; then
-    echo "Error! '--no-node-discovery' requires '--master-ip', exiting..." 1>&2
+  if [[ "${EX_NO_NODE_DISCOVERY}" == "true" ]] \
+    && [[ -z "${EX_NETWORK}" && -z "${EX_MASTER_IP}" ]]; then
+    echo "Error! '--no-discovery' requires either '--network' or '--master-ip', exiting..." 2>&1
     exit 1
-  elif [[ "${EX_NO_NODE_DISCOVERY}" == "false" ]] && [[ -n "${EX_MASTER_IP}" ]]; then
+  fi
+
+  if [[ "${EX_NO_NODE_DISCOVERY}" == "false" ]] && [[ -n "${EX_MASTER_IP}" ]]; then
     echo "Error! '--master-ip' requires '--no-node-discovery', exiting..." 1>&2
     exit 1
   fi
@@ -907,14 +910,19 @@ function main(){
       NETWORK="$(sed -n "s|.* EX_NETWORK=\(.*\)$|\1|p" "${CONFIG_FILE}")"
     elif [[ -n "${MASTER_IP}" ]]; then
       NETWORK="$(get_network_by_master_ip "${MASTER_IP}")" || exit 1
-    else
+    elif [[ -n "${CLUSTER_ID}" ]]; then
       NETWORK="$(get_network_by_cluster_id "${CLUSTER_ID}")" || exit 1
     fi
   fi
-  local IP_AND_MASK=""
-  IP_AND_MASK="$(get_ipaddr_and_mask_from_netinfo "${NETWORK}")" || exit 1
-  echo "Use the interface of ${IP_AND_MASK}..."
-  local IPADDR="$(echo "${IP_AND_MASK}" | cut -d '/' -f 1)"
+  local IPCIDR=""
+  IPCIDR="$(get_ipcidr_from_netinfo "${NETWORK}")" || exit 1
+  echo "Use the interface of ${IPCIDR}..."
+  if [[ "${NO_NODE_DISCOVERY}" == "true" ]] && [[ -z "${MASTER_IP}" ]]; then
+    echo "User skips node discovery but doesn't specify master node IP, "
+    echo "use the first IP address in the sub network as master node IP!"
+    MASTER_IP="$(get_first_available_ip_by_net_range $(get_net_range_by_ipcidr "${IPCIDR}"))" || exit 1
+  fi
+  local IPADDR="$(echo "${IPCIDR}" | cut -d '/' -f 1)"
   local NEW_CLUSTER="${EX_NEW_CLUSTER}" && unset EX_NEW_CLUSTER
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
@@ -922,7 +930,7 @@ function main(){
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
   local ETCD_PATH="k8sup/cluster"
   local K8S_PORT="6443"
-  local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
+  local NETCIDR="$(get_netcidr_by_ipcidr "${IPCIDR}")"
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
 
@@ -958,19 +966,19 @@ function main(){
         fi
       done
       if [[ "${ROLE}" == "creator" ]]; then
-        echo "Master IP has been specified, this node will be a creator node and skip node discovery..."
+        echo "This node will be a creator node and skip node discovery..."
       else
-        echo "Master IP has been specified, this node will be a follower node and skip node discovery..."
+        echo "This node will be a follower node and skip node discovery..."
         EXISTING_ETCD_NODE="${MASTER_IP}"
         EXISTING_ETCD_NODE_LIST="${EXISTING_ETCD_NODE}"
       fi
     elif [[ "${NEW_CLUSTER}" != "true" ]]; then
       # Run node discovery
-      /go/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "false" 2>/dev/null &
+      /go/dnssd/registering -IPMask "${IPCIDR}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "false" 2>/dev/null &
       # If do not force to start an etcd cluster, make a discovery.
       echo "Discovering etcd cluster..."
       while
-        DISCOVERY_RESULTS="$(/go/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${SUBNET_ID_AND_MASK}" | grep -w 'etcdProxy=off')" || true
+        DISCOVERY_RESULTS="$(/go/dnssd/browsing 2>/dev/null | grep -w "NetworkID=${NETCIDR}" | grep -w 'etcdProxy=off')" || true
         echo "${DISCOVERY_RESULTS}"
 
         # Check if the hostname is duplicate then exit
@@ -1095,7 +1103,7 @@ function main(){
   [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
   [[ -z "${CLUSTER_ID}" ]] && CLUSTER_ID="$(curl -sf "http://127.0.0.1:${ETCD_CLIENT_PORT}/v2/keys/${ETCD_PATH}/clusterid" | jq -r '.node.value')"
   echo -e "etcd CLUSTER_ID: \033[1;31m${CLUSTER_ID}\033[0m"
-  /go/dnssd/registering -IPMask "${IP_AND_MASK}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
+  /go/dnssd/registering -IPMask "${IPCIDR}" -port "${ETCD_CLIENT_PORT}" -clusterID "${CLUSTER_ID}" -etcdProxy "${PROXY}" -etcdStarted "true" 2>/dev/null &
 
   echo "Running flanneld"
   flanneld "${IPADDR}" "${ETCD_CLIENT_PORT}" "${ROLE}"
@@ -1112,10 +1120,10 @@ function main(){
   echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_INSECURE_PORT=${K8S_INSECURE_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_NODE_NAME=${NODE_NAME}" >> "${CONFIG_FILE}"
-  echo "export EX_IP_AND_MASK=${IP_AND_MASK}" >> "${CONFIG_FILE}"
+  echo "export EX_IPCIDR=${IPCIDR}" >> "${CONFIG_FILE}"
   echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
   echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
-  echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
+  echo "export EX_NETCIDR=${NETCIDR}" >> "${CONFIG_FILE}"
   echo "export EX_START_ETCD_ONLY=${START_ETCD_ONLY}" >> "${CONFIG_FILE}"
   echo "export EX_ENABLE_KEYSTONE=${ENABLE_KEYSTONE}" >> "${CONFIG_FILE}"
   echo "export EX_HYPERKUBE_IMAGE=\${EX_REGISTRY}/hyperkube-amd64:v\${EX_K8S_VERSION}" >> "${CONFIG_FILE}"
