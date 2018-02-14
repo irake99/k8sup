@@ -447,7 +447,7 @@ function get_network_by_cluster_id(){
     CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p"| uniq)"
     if [[ "$(echo "${CLUSTER_ID}" | wc -l)" -gt "1" ]]; then
       echo "${DISCOVERY_RESULTS}" 1>&2
-      echo "More than 1 cluster are found, please specify '--network', '--cluster' or '--creator-ip', exiting..." 1>&2
+      echo "More than 1 clusters are found, please specify '--network', '--cluster' or '--master-ip', exiting..." 1>&2
       return 1
     fi
   fi
@@ -476,28 +476,28 @@ function get_network_by_cluster_id(){
   return 0
 }
 
-function get_network_by_creator_ip(){
-  local CREATOR_IP="$1"
+function get_network_by_master_ip(){
+  local MASTER_IP="$1"
   local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
   local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
   local IPCIDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
-  local IPCIDR IPNET CIDR CREATOR_IPNET
+  local IPCIDR IPNET CIDR MASTER_IPNET
   local NETWORK=""
 
-  if echo "${CREATOR_IP}" | grep -q "^${IPPORT_PATTERN}$"; then
+  if echo "${MASTER_IP}" | grep -q "^${IPPORT_PATTERN}$"; then
     # Validate IP:PORT format (1.2.3.4:56)
-    CREATOR_IP="$(echo "${CREATOR_IP}" | cut -d ':' -f 1)"
-  elif ! echo "${CREATOR_IP}" | grep -q "^${IPADDR_PATTERN}$"; then
+    MASTER_IP="$(echo "${MASTER_IP}" | cut -d ':' -f 1)"
+  elif ! echo "${MASTER_IP}" | grep -q "^${IPADDR_PATTERN}$"; then
     # Validate IP format (1.2.3.4)
-    echo "Error! --creator '${CREATOR_IP}' is empty or not valid format, exiting..." 1>&2
+    echo "Error! '--master-ip=${MASTER_IP}' is not valid format, exiting..." 1>&2
     return 1
   fi
 
   for IPCIDR in $(ip addr show | grep -o "${IPCIDR_PATTERN}"); do
     CIDR="$(echo "${IPCIDR}" | cut -d '/' -f 2)"
     IPNET="$(get_subnet_id_and_mask "${IPCIDR}")"
-    CREATOR_IPNET="$(get_subnet_id_and_mask "${CREATOR_IP}/${CIDR}")"
-    if [[ "${IPNET}" == "${CREATOR_IPNET}" ]]; then
+    MASTER_IPNET="$(get_subnet_id_and_mask "${MASTER_IP}/${CIDR}")"
+    if [[ "${IPNET}" == "${MASTER_IPNET}" ]]; then
       NETWORK="${IPNET}"
       break
     fi
@@ -505,7 +505,7 @@ function get_network_by_creator_ip(){
   if [[ -n "${NETWORK}" ]]; then
     echo "${NETWORK}"
   else
-    echo "Error! No such the right network interface to creator IP, exiting..." 1>&2
+    echo "Error! No such the right network interface to master IP, exiting..." 1>&2
     return 1
   fi
 }
@@ -644,7 +644,8 @@ Options:
     --k8s-version=VERSION      Specify k8s version (Default: 1.5.8)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
-    --creator-ip=CREATOR_IP    Sepcify corator node IP directly (Skip node discovery)
+    --no-node-discovery        Skip discovering other nodes in the same network (Default behavior is to do discovery)
+    --master-ip=MASTER_IP      Sepcify master node IP directly to join (Requires when not to discover nodes)
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
     --rejoin-etcd              Re-join the same etcd cluster
@@ -676,7 +677,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:r:vh"
-  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,k8s-insecure-port:,creator-ip:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
+  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,k8s-insecure-port:,new,no-node-discovery,master-ip:,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
   local PARSED_OPTIONS=""
   local K8SUP_VERSION="0.9.0"
 
@@ -710,9 +711,13 @@ function get_options(){
               export EX_MAX_ETCD_MEMBER_SIZE="$2"
               shift 2
               ;;
-             --creator-ip)
-              export EX_CREATOR_IP="$2"
+             --master-ip)
+              export EX_MASTER_IP="$2"
               shift 2
+              ;;
+             --no-node-discovery)
+              export EX_NO_NODE_DISCOVERY="true"
+              shift
               ;;
              --new)
               export EX_NEW_CLUSTER="true"
@@ -786,6 +791,18 @@ function get_options(){
     export EX_PROXY="off"
   fi
 
+  if [[ "${EX_NO_NODE_DISCOVERY}" != "true" ]]; then
+    export EX_NO_NODE_DISCOVERY="false"
+  fi
+
+  if [[ "${EX_NO_NODE_DISCOVERY}" == "true" ]] && [[ -z "${EX_MASTER_IP}" ]]; then
+    echo "Error! '--no-node-discovery' requires '--master-ip', exiting..." 1>&2
+    exit 1
+  elif [[ "${EX_NO_NODE_DISCOVERY}" == "false" ]] && [[ -n "${EX_MASTER_IP}" ]]; then
+    echo "Error! '--master-ip' requires '--no-node-discovery', exiting..." 1>&2
+    exit 1
+  fi
+
   if [[ -n "${EX_CLUSTER_ID}" ]] && [[ "${EX_NEW_CLUSTER}" == "true" ]]; then
     echo "Error! '--new' can not use specified cluster ID, exiting..." 1>&2
     exit 1
@@ -850,7 +867,8 @@ function main(){
   local CONFIG_FILE="/etc/kubernetes/k8sup-conf"
   local REJOIN_ETCD="${EX_REJOIN_ETCD}" && unset EX_REJOIN_ETCD
   local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_ETCD_ONLY
-  local CREATOR_IP="${EX_CREATOR_IP}" && unset EX_CREATOR_IP
+  local NO_NODE_DISCOVERY="${EX_NO_NODE_DISCOVERY}" && unset EX_NO_NODE_DISCOVERY
+  local MASTER_IP="${EX_MASTER_IP}" && unset EX_MASTER_IP
 
   echo "Checking hyperkube version for the requirement..."
   check_k8s_major_minor_version_meet_requirement "${K8S_VERSION}" "1.5" && echo "OK" || exit "$?"
@@ -887,8 +905,8 @@ function main(){
   if [[ -z "${NETWORK}" ]]; then
     if [[ -f "${CONFIG_FILE}" ]]; then
       NETWORK="$(sed -n "s|.* EX_NETWORK=\(.*\)$|\1|p" "${CONFIG_FILE}")"
-    elif [[ -n "${CREATOR_IP}" ]]; then
-      NETWORK="$(get_network_by_creator_ip "${CREATOR_IP}")" || exit 1
+    elif [[ -n "${MASTER_IP}" ]]; then
+      NETWORK="$(get_network_by_master_ip "${MASTER_IP}")" || exit 1
     else
       NETWORK="$(get_network_by_cluster_id "${CLUSTER_ID}")" || exit 1
     fi
@@ -920,30 +938,30 @@ function main(){
     etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
       "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" && ROLE="follower" || exit 1
   else
-    if [[ -n "${CREATOR_IP}" ]]; then
+    if [[ "${NO_NODE_DISCOVERY}" == "true" ]]; then
       # Skip node discovery
       # Validate IP format (1.2.3.4)
-      if echo "${CREATOR_IP}" | grep -q "^${IPADDR_PATTERN}$"; then
-        CREATOR_IP="${CREATOR_IP}:${ETCD_CLIENT_PORT}"
+      if echo "${MASTER_IP}" | grep -q "^${IPADDR_PATTERN}$"; then
+        MASTER_IP="${MASTER_IP}:${ETCD_CLIENT_PORT}"
       fi
       # Validate IP:PORT format (1.2.3.4:56)
-      if ! echo "${CREATOR_IP}" | grep -q "^${IPPORT_PATTERN}$"; then
-        echo "Error! --creator '${CREATOR_IP}' is not valid format, exiting..." 1>&2
+      if ! echo "${MASTER_IP}" | grep -q "^${IPPORT_PATTERN}$"; then
+        echo "Error! '--master-ip=${MASTER_IP}' is not valid format, exiting..." 1>&2
         exit 1
       fi
 
       local FOR_IPADDR
       for FOR_IPADDR in $(ip addr show | grep -o "${IPADDR_PATTERN}"); do
-        if [[ "${CREATOR_IP}" == "${FOR_IPADDR}:${ETCD_CLIENT_PORT}" ]]; then
+        if [[ "${MASTER_IP}" == "${FOR_IPADDR}:${ETCD_CLIENT_PORT}" ]]; then
           ROLE="creator"
           break
         fi
       done
       if [[ "${ROLE}" == "creator" ]]; then
-        echo "Creator IP has been specified, this node will be a creator node and skip node discovery..."
+        echo "Master IP has been specified, this node will be a creator node and skip node discovery..."
       else
-        echo "Creator IP has been specified, this node will be a follower node and skip node discovery..."
-        EXISTING_ETCD_NODE="${CREATOR_IP}"
+        echo "Master IP has been specified, this node will be a follower node and skip node discovery..."
+        EXISTING_ETCD_NODE="${MASTER_IP}"
         EXISTING_ETCD_NODE_LIST="${EXISTING_ETCD_NODE}"
       fi
     elif [[ "${NEW_CLUSTER}" != "true" ]]; then
