@@ -919,8 +919,8 @@ function main(){
   echo "Use the interface of ${IPCIDR}..."
   if [[ "${NO_NODE_DISCOVERY}" == "true" ]] && [[ -z "${MASTER_IP}" ]]; then
     echo "User skips node discovery but doesn't specify master node IP, "
-    echo "use the first IP address in the sub network as master node IP!"
-    MASTER_IP="$(get_first_available_ip_by_net_range $(get_net_range_by_ipcidr "${IPCIDR}"))" || exit 1
+    echo "use the first IP address in this IP range as master node IP!"
+    MASTER_IP="$(get_nth_available_ip_by_ipcidr "${IPCIDR}" "1")" || exit 1
   fi
   local IPADDR="$(echo "${IPCIDR}" | cut -d '/' -f 1)"
   local NEW_CLUSTER="${EX_NEW_CLUSTER}" && unset EX_NEW_CLUSTER
@@ -948,23 +948,39 @@ function main(){
   else
     if [[ "${NO_NODE_DISCOVERY}" == "true" ]]; then
       # Skip node discovery
-      # Validate IP format (1.2.3.4)
+      # Validate IP format (e.g. 1.2.3.4)
       if echo "${MASTER_IP}" | grep -q "^${IPADDR_PATTERN}$"; then
         MASTER_IP="${MASTER_IP}:${ETCD_CLIENT_PORT}"
       fi
-      # Validate IP:PORT format (1.2.3.4:56)
+      # Validate IP:PORT format (e.g. 1.2.3.4:56)
       if ! echo "${MASTER_IP}" | grep -q "^${IPPORT_PATTERN}$"; then
         echo "Error! '--master-ip=${MASTER_IP}' is not valid format, exiting..." 1>&2
         exit 1
       fi
 
+      # Check if this node has the master IP, this node will be the creator node
       local FOR_IPADDR
-      for FOR_IPADDR in $(ip addr show | grep -o "${IPADDR_PATTERN}"); do
+      local HOST_IP_LIST="$(ip addr show | grep -o "${IPCIDR_PATTERN}" | cut -d '/' -f 1)"
+      for FOR_IPADDR in ${HOST_IP_LIST}; do
         if [[ "${MASTER_IP}" == "${FOR_IPADDR}:${ETCD_CLIENT_PORT}" ]]; then
+          IPADDR="${FOR_IPADDR}"
           ROLE="creator"
           break
         fi
       done
+      if [[ "${ROLE}" != "creator" ]]; then
+        # Check if this node has the expected creator node IP, this node will be the creater node
+        # Expected creator node IP is the 2nd available IP in this IP range
+        local EXPECTED_CREATOR_IP
+        EXPECTED_CREATOR_IP="$(get_nth_available_ip_by_ipcidr "${IPCIDR}" "2")" || exit 1
+        for FOR_IPADDR in ${HOST_IP_LIST}; do
+          if [[ "${EXPECTED_CREATOR_IP}" == "${FOR_IPADDR}" ]]; then
+            IPADDR="${FOR_IPADDR}"
+            ROLE="creator"
+            break
+          fi
+        done
+      fi
       if [[ "${ROLE}" == "creator" ]]; then
         echo "This node will be a creator node and skip node discovery..."
       else

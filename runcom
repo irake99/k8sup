@@ -94,24 +94,28 @@ function get_net_range_by_ipcidr(){
   echo "${HEX_FIRST_IPADDR} ${HEX_LAST_IPADDR}"
 }
 
-# Get the available IP from the hex ip range
-function get_first_available_ip_by_net_range(){
-  local HEX_FIRST_IPADDR HEX_LAST_IPADDR HEX_FIRST_AVAILABLE_IPADDR DEC_FIRST_AVAILABLE_IPADDR
-  HEX_FIRST_IPADDR="$(echo "$1" | grep -w "^${HEX_IPADDR_PATTERN}$")" || fatal_err_format_invalid "Hex IP address"
-  HEX_LAST_IPADDR="$(echo "$2" | grep -w "^${HEX_IPADDR_PATTERN}$")" || fatal_err_format_invalid "Hex IP address"
-  if [[ "${HEX_FIRST_IPADDR: -2}" == "00" ]] && [[ "${HEX_LAST_IPADDR}" -gt "${HEX_FIRST_IPADDR}" ]]; then
-    HEX_FIRST_AVAILABLE_IPADDR="0x$(printf '%02X' $((${HEX_FIRST_IPADDR}+1)))"
-  else
-    HEX_FIRST_AVAILABLE_IPADDR="${HEX_FIRST_IPADDR}"
-  fi
-
-  DEC_FIRST_AVAILABLE_IPADDR="$(hex2addr "${HEX_FIRST_AVAILABLE_IPADDR}")"
-  if [[ -z "${DEC_FIRST_AVAILABLE_IPADDR}" ]]; then
-    echo "Error! getting first available IP by network range failed, exiting..." 2>&1
+# Get the N-th available IP from the IP range
+function get_nth_available_ip_by_ipcidr(){
+  local IPCIDR NET_RANGE HEX_FIRST_IPADDR HEX_LAST_IPADDR HEX_N_TH_AVAILABLE_IPADDR \
+        DEC_N_TH_AVAILABLE_IPADDR N_TH HEX_ADDED_IPADDR
+  IPCIDR="$(echo "$1" | grep -w "^${IPCIDR_PATTERN}$")" || fatal_err_format_invalid "IP/CIDR"
+  N_TH="$(echo "$2" | grep -E '^[0-9]+$')" || fatal_err_format_invalid "Digits"
+  NET_RANGE=($(get_net_range_by_ipcidr "${IPCIDR}"))
+  HEX_FIRST_IPADDR="$(echo "${NET_RANGE[0]}" | grep -w "^${HEX_IPADDR_PATTERN}$")" || fatal_err_format_invalid "Hex IP address"
+  HEX_LAST_IPADDR="$(echo "${NET_RANGE[1]}" | grep -w "^${HEX_IPADDR_PATTERN}$")" || fatal_err_format_invalid "Hex IP address"
+  HEX_ADDED_IPADDR="0x$(printf '%02X' $((${HEX_FIRST_IPADDR}+${N_TH})))"
+  if [[ "${HEX_ADDED_IPADDR: -2}" == "00" ]] || [[ "${HEX_ADDED_IPADDR}" -ge "${HEX_LAST_IPADDR}" ]]; then
+    echo "Error! Invalid IP address, exiting..." 2>&1
     return 1
   fi
-  echo "${DEC_FIRST_AVAILABLE_IPADDR}"
+
+  DEC_N_TH_AVAILABLE_IPADDR="$(hex2addr "${HEX_ADDED_IPADDR}")"
+  if [[ -z "${DEC_N_TH_AVAILABLE_IPADDR}" ]]; then
+    echo "Error! Getting the N-th available IP from the IP range failed, exiting..." 2>&1
+    return 1
+  fi
+  echo "${DEC_N_TH_AVAILABLE_IPADDR}"
 }
 
 export -f docker
-export -f cidr2mask addr2hex hex2addr get_netcidr_by_ipcidr
+export -f cidr2mask addr2hex hex2addr get_netcidr_by_ipcidr get_nth_available_ip_by_ipcidr
