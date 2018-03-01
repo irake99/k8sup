@@ -14,8 +14,10 @@ Options:
                                e. g. "192.168.11.0/24" or "192.168.11.1"
                                or "eth0"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.5.7)
+    --k8s-version=VERSION      Specify k8s version (Default: 1.5.8)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
+    --no-node-discovery        Skip discovering other nodes in the same network (Default behavior is to do discovery)
+    --master=MASTER_HOSTS      Sepcify k8s master node directly to join (Requires when not to discover nodes)
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
     --rejoin-etcd              Re-join the same etcd cluster

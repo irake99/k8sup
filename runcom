@@ -117,5 +117,16 @@ function get_nth_available_ip_by_ipcidr(){
   echo "${DEC_N_TH_AVAILABLE_IPADDR}"
 }
 
+# Translate all domain names to IP addresses, the argument accepts both domain name and ip address formats
+function domain_names2ipaddrs(){
+  local IPADDRS HOSTS HOST
+  HOSTS="$(echo "$1" | sed "s/,/ /g")"
+  IPADDRS=""
+  for HOST in ${HOSTS}; do
+    IPADDRS="$(getent ahostsv4 "${HOST}" | cut -d ' ' -f 1 | uniq | tr '\n' ' ') ${IPADDRS}" || true
+  done
+  echo "${IPADDRS}" | sed 's/\s\+/ /g; s/\(^\s\|\s$\)//g'
+}
+
 export -f docker
-export -f cidr2mask addr2hex hex2addr get_netcidr_by_ipcidr get_nth_available_ip_by_ipcidr
+export -f cidr2mask addr2hex hex2addr get_netcidr_by_ipcidr get_nth_available_ip_by_ipcidr domain_names2ipaddrs

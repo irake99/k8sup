@@ -447,7 +447,7 @@ function get_network_by_cluster_id(){
     CLUSTER_ID="$(echo "${DISCOVERY_RESULTS}" | sed -n "s/.*clusterID=\([[:alnum:]_-]*\).*/\1/p"| uniq)"
     if [[ "$(echo "${CLUSTER_ID}" | wc -l)" -gt "1" ]]; then
       echo "${DISCOVERY_RESULTS}" 1>&2
-      echo "More than 1 clusters are found, please specify '--network', '--cluster' or '--master-ip', exiting..." 1>&2
+      echo "More than 1 clusters are found, please specify '--network', '--cluster' or '--master', exiting..." 1>&2
       return 1
     fi
   fi
@@ -489,7 +489,7 @@ function get_network_by_master_ip(){
     MASTER_IP="$(echo "${MASTER_IP}" | cut -d ':' -f 1)"
   elif ! echo "${MASTER_IP}" | grep -q "^${IPADDR_PATTERN}$"; then
     # Validate IP format (1.2.3.4)
-    echo "Error! '--master-ip=${MASTER_IP}' is not valid format, exiting..." 1>&2
+    echo "Error! '--master=${MASTER_IP}' is not valid format, exiting..." 1>&2
     return 1
   fi
 
@@ -645,7 +645,7 @@ Options:
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
     --no-node-discovery        Skip discovering other nodes in the same network (Default behavior is to do discovery)
-    --master-ip=MASTER_IP      Sepcify master node IP directly to join (Requires when not to discover nodes)
+    --master=MASTER_HOSTS      Sepcify k8s master node directly to join (Requires when not to discover nodes)
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
     --rejoin-etcd              Re-join the same etcd cluster
@@ -677,7 +677,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:r:vh"
-  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,k8s-insecure-port:,new,no-node-discovery,master-ip:,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
+  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,k8s-insecure-port:,new,no-node-discovery,master:,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
   local PARSED_OPTIONS=""
   local K8SUP_VERSION="0.9.0"
 
@@ -711,8 +711,8 @@ function get_options(){
               export EX_MAX_ETCD_MEMBER_SIZE="$2"
               shift 2
               ;;
-             --master-ip)
-              export EX_MASTER_IP="$2"
+             --master)
+              export EX_MASTER_HOSTS="$(echo "$2" | sed "s|,| |g")"
               shift 2
               ;;
              --no-node-discovery)
@@ -795,14 +795,13 @@ function get_options(){
     export EX_NO_NODE_DISCOVERY="false"
   fi
 
-  if [[ "${EX_NO_NODE_DISCOVERY}" == "true" ]] \
-    && [[ -z "${EX_NETWORK}" && -z "${EX_MASTER_IP}" ]]; then
-    echo "Error! '--no-discovery' requires either '--network' or '--master-ip', exiting..." 2>&1
+  if [[ "${EX_NO_NODE_DISCOVERY}" == "true" ]] && [[ -z "${EX_MASTER_HOSTS}" ]]; then
+    echo "Error! '--no-discovery' requires '--master', exiting..." 2>&1
     exit 1
   fi
 
-  if [[ "${EX_NO_NODE_DISCOVERY}" == "false" ]] && [[ -n "${EX_MASTER_IP}" ]]; then
-    echo "Error! '--master-ip' requires '--no-node-discovery', exiting..." 1>&2
+  if [[ "${EX_NO_NODE_DISCOVERY}" == "false" ]] && [[ -n "${EX_MASTER_HOSTS}" ]]; then
+    echo "Error! '--master' requires '--no-node-discovery', exiting..." 1>&2
     exit 1
   fi
 
@@ -871,7 +870,7 @@ function main(){
   local REJOIN_ETCD="${EX_REJOIN_ETCD}" && unset EX_REJOIN_ETCD
   local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_ETCD_ONLY
   local NO_NODE_DISCOVERY="${EX_NO_NODE_DISCOVERY}" && unset EX_NO_NODE_DISCOVERY
-  local MASTER_IP="${EX_MASTER_IP}" && unset EX_MASTER_IP
+  local MASTER_HOSTS="${EX_MASTER_HOSTS}" && unset EX_MASTER_HOSTS
 
   echo "Checking hyperkube version for the requirement..."
   check_k8s_major_minor_version_meet_requirement "${K8S_VERSION}" "1.5" && echo "OK" || exit "$?"
@@ -908,20 +907,25 @@ function main(){
   if [[ -z "${NETWORK}" ]]; then
     if [[ -f "${CONFIG_FILE}" ]]; then
       NETWORK="$(sed -n "s|.* EX_NETWORK=\(.*\)$|\1|p" "${CONFIG_FILE}")"
-    elif [[ -n "${MASTER_IP}" ]]; then
-      NETWORK="$(get_network_by_master_ip "${MASTER_IP}")" || exit 1
+    elif [[ "${NO_NODE_DISCOVERY}" == "true" ]] && [[ -n "${MASTER_HOSTS}" ]]; then
+      local MASTER_IP MASTER_IPS="$(domain_names2ipaddrs "${MASTER_HOSTS}")"
+      for MASTER_IP in ${MASTER_IPS}; do
+        NETWORK="$(get_network_by_master_ip "${MASTER_IP}")" && break
+      done
+      if [[ -z "${NETWORK}" ]]; then
+        echo "Could not get IP/CIDR of this node from '--master', exiting..." 2>&1
+        exit 1
+      fi
     elif [[ -n "${CLUSTER_ID}" ]]; then
       NETWORK="$(get_network_by_cluster_id "${CLUSTER_ID}")" || exit 1
+    else
+      echo "Please use '--network' option, exiting..." 2>&1
+      exit 1
     fi
   fi
   local IPCIDR=""
   IPCIDR="$(get_ipcidr_from_netinfo "${NETWORK}")" || exit 1
   echo "Use the interface of ${IPCIDR}..."
-  if [[ "${NO_NODE_DISCOVERY}" == "true" ]] && [[ -z "${MASTER_IP}" ]]; then
-    echo "User skips node discovery but doesn't specify master node IP, "
-    echo "use the first IP address in this IP range as master node IP!"
-    MASTER_IP="$(get_nth_available_ip_by_ipcidr "${IPCIDR}" "1")" || exit 1
-  fi
   local IPADDR="$(echo "${IPCIDR}" | cut -d '/' -f 1)"
   local NEW_CLUSTER="${EX_NEW_CLUSTER}" && unset EX_NEW_CLUSTER
   local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
@@ -931,8 +935,6 @@ function main(){
   local ETCD_PATH="k8sup/cluster"
   local K8S_PORT="6443"
   local NETCIDR="$(get_netcidr_by_ipcidr "${IPCIDR}")"
-  local IPADDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
-  local IPPORT_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\{1,5\}"
 
   bash -c 'docker stop k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
   bash -c 'docker rm k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
@@ -946,47 +948,46 @@ function main(){
     etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
       "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" && ROLE="follower" || exit 1
   else
+    # Skip node discovery
     if [[ "${NO_NODE_DISCOVERY}" == "true" ]]; then
-      # Skip node discovery
-      # Validate IP format (e.g. 1.2.3.4)
-      if echo "${MASTER_IP}" | grep -q "^${IPADDR_PATTERN}$"; then
-        MASTER_IP="${MASTER_IP}:${ETCD_CLIENT_PORT}"
-      fi
-      # Validate IP:PORT format (e.g. 1.2.3.4:56)
-      if ! echo "${MASTER_IP}" | grep -q "^${IPPORT_PATTERN}$"; then
-        echo "Error! '--master-ip=${MASTER_IP}' is not valid format, exiting..." 1>&2
-        exit 1
-      fi
-
-      # Check if this node has the master IP, this node will be the creator node
-      local FOR_IPADDR
-      local HOST_IP_LIST="$(ip addr show | grep -o "${IPCIDR_PATTERN}" | cut -d '/' -f 1)"
-      for FOR_IPADDR in ${HOST_IP_LIST}; do
-        if [[ "${MASTER_IP}" == "${FOR_IPADDR}:${ETCD_CLIENT_PORT}" ]]; then
-          IPADDR="${FOR_IPADDR}"
-          ROLE="creator"
+      # Try to connect any remote master node before checking local IP to avoid cluster splitting
+      local HOST
+      for HOST in ${MASTER_HOSTS}; do
+        if curl -s "${HOST}:${ETCD_CLIENT_PORT}" &>/dev/null; then
+          EXISTING_ETCD_NODE="${HOST}:${ETCD_CLIENT_PORT}"
+          EXISTING_ETCD_NODE_LIST="${EXISTING_ETCD_NODE}"
+          ROLE="follower"
+          echo "Found existing master node, this node will be a follower node and skip node discovery..."
           break
         fi
       done
-      if [[ "${ROLE}" != "creator" ]]; then
-        # Check if this node has the expected creator node IP, this node will be the creater node
-        # Expected creator node IP is the 2nd available IP in this IP range
-        local EXPECTED_CREATOR_IP
-        EXPECTED_CREATOR_IP="$(get_nth_available_ip_by_ipcidr "${IPCIDR}" "2")" || exit 1
-        for FOR_IPADDR in ${HOST_IP_LIST}; do
-          if [[ "${EXPECTED_CREATOR_IP}" == "${FOR_IPADDR}" ]]; then
-            IPADDR="${FOR_IPADDR}"
-            ROLE="creator"
-            break
-          fi
+
+      # If there is not any remote master node can be connected...
+      # Check if this node has one of the master IP addresses, this node will be the creator node
+      if [[ "${ROLE}" != "follower" ]]; then
+        local MASTER_IP MASTER_IPS="$(domain_names2ipaddrs "${MASTER_HOSTS}")"
+        local HOST_IPADDR HOST_IP_LIST="$(ip addr show | grep -o "${IPCIDR_PATTERN}" | cut -d '/' -f 1)"
+        for MASTER_IP in ${MASTER_IPS}; do
+          for HOST_IPADDR in ${HOST_IP_LIST}; do
+            if [[ "${MASTER_IP}" == "${HOST_IPADDR}" ]]; then
+              IPADDR="${HOST_IPADDR}"
+              ROLE="creator"
+              break
+            fi
+          done
         done
       fi
+
       if [[ "${ROLE}" == "creator" ]]; then
         echo "This node will be a creator node and skip node discovery..."
-      else
+      elif [[ "${ROLE}" != "follower" ]]; then
+        # There is no existing remote master node can be connected for now,
+        # and this node does not have any of the master IP addresses.
+        # k8sup will try to wait all remote master nodes until any one to be ready
         echo "This node will be a follower node and skip node discovery..."
-        EXISTING_ETCD_NODE="${MASTER_IP}"
-        EXISTING_ETCD_NODE_LIST="${EXISTING_ETCD_NODE}"
+        ROLE="follower"
+        EXISTING_ETCD_NODE_LIST="$(echo "${MASTER_HOSTS}" | sed "s/\( \|$\)/:${ETCD_CLIENT_PORT} /g; s/\s$//g")"
+        EXISTING_ETCD_NODE="$(echo "${EXISTING_ETCD_NODE_LIST}" | cut -d ' ' -f 1)"
       fi
     elif [[ "${NEW_CLUSTER}" != "true" ]]; then
       # Run node discovery
