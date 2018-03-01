@@ -165,6 +165,18 @@ function update_master_multi_keystone(){
   echo "${NEW_MASTER_MULTI_JSON}" > "${MASTER_MULTI_JSON_FILE_PATH}"
 }
 
+function check_cmd_in_container_image(){
+  local CMD="$1"
+  local IMAGE="$2"
+  if [[ -z "${CMD}" || -z "${IMAGE}" ]]; then
+    echo "Missing cmd or hyperkube image name in cmd check function, exiting..." 1>&2
+    exit 1
+  fi
+
+  docker run --rm "${IMAGE}" /bin/sh -c "type '${CMD}'" &>/dev/null
+  return "$?"
+}
+
 function make_rbd_docker_option(){
   local ARGS=("$@")
   local RBD_CMD_PATH="${ARGS[0]}"
@@ -172,11 +184,16 @@ function make_rbd_docker_option(){
   local MODPROBE_CMD_PATH="${ARGS[2]}"
   local DOCKER_CMD_PATH="${ARGS[3]}"
   local DOCKER_LIB_PATH="${ARGS[4]}"
+  local HYPERKUBE_IMAGE_NAME="${ARGS[5]}"
+  local MODPROBE_OPT=""
   [[ -z "${RBD_CMD_PATH}" ]] && return 1
+
+  check_cmd_in_container_image "modprobe" "${HYPERKUBE_IMAGE_NAME}" \
+    || MODPROBE_OPT="--volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro"
 
   local RBD_OPTIONS="--volume=${RBD_CMD_PATH}:/bin/rbd:ro \
         --volume=${RBD_KO_PATH}:${RBD_KO_PATH}:ro \
-        --volume=${MODPROBE_CMD_PATH}:/sbin/modprobe:ro \
+        ${MODPROBE_OPT} \
         --volume=${DOCKER_CMD_PATH}:/bin/docker:ro \
         --volume=${DOCKER_LIB_PATH}:/host/lib:ro \
         --volume=/lib/modules:/lib/modules:ro"
@@ -679,7 +696,7 @@ function main(){
 
   local RBD_PATHS
   if RBD_PATHS=($(rbd_env_detector)); then
-    local RBD_OPTIONS_KUBELET="$(make_rbd_docker_option "${RBD_PATHS[@]}")"
+    local RBD_OPTIONS_KUBELET="$(make_rbd_docker_option "${RBD_PATHS[@]}" "${HYPERKUBE_IMAGE_NAME}")"
     update_master_multi_rbd_mount "${RBD_PATHS[@]}" "${KUBE_CONF_PATH}/master-multi.json"
   fi
 
