@@ -16,19 +16,13 @@ Options:
 -c, --cluster=CLUSTER_ID       Join a specified cluster
     --k8s-version=VERSION      Specify k8s version (Default: 1.5.8)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
-    --no-node-discovery        Skip discovering other nodes in the same network (Default behavior is to do discovery)
-    --master=MASTER_HOSTS      Sepcify k8s master node directly to join (Requires when not to discover nodes)
     --restore                  Try to restore etcd data and start a new cluster
-    --restart                  Restart etcd and k8s services
-    --rejoin-etcd              Re-join the same etcd cluster
-    --start-kube-svcs-only     Try to start kubernetes services (Assume etcd and flannel are ready)
-    --start-etcd-only          Start etcd and flannel but don't start kubernetes services
+    --k8s-insecure-port=PORT   Kube-apiserver insecure port (Default: 8080)
     --worker                   Force to run as k8s worker and etcd proxy
     --debug                    Enable debug mode
-    --enable-keystone          Enable Keystone service (Default: disabled)
 -r, --registry=REGISTRY        Registry of docker image
                                (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
--v, --version                  Show k8sup version                               
+-v, --version                  Show k8sup version
 -h, --help                     This help text
 ```
 
