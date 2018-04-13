@@ -723,6 +723,12 @@ function main(){
 
   # Make sure that this host will use the right interface while accessing API server
   local IFACE="$(ip addr | grep -B2 "inet ${IPCIDR}" | sed -n "s|^[0-9]\+: \(.*\): .*|\1|p" | cut -d '@' -f 1)"
+  local IFACE IFACE_LIST="$(ls /sys/class/net/ | grep -v "lo\|bonding_masters\|docker0\|flannel.1\|cni0\|veth")"
+  for IFACE in ${IFACE_LIST}; do
+    if ip addr show "${IFACE}" 2>/dev/null | grep -q "\b${IPCIDR}\b"; then
+      break
+    fi
+  done
   if [[ -z "${IFACE}" ]] || ! ip addr show "${IFACE}" &>/dev/null; then
     echo "Could not get network interface which use '${IPCIDR}', exiting..." 1>&2
     exit 1
