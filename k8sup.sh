@@ -939,7 +939,7 @@ function main(){
   bash -c 'docker stop k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
   bash -c 'docker rm k8sup-etcd k8sup-flannel k8sup-kubelet k8sup-certs' &>/dev/null || true
 
-  local NODE_NAME="$(hostname)"
+  local NODE_NAME="$(hostname | tr '[:upper:]' '[:lower:]')"
   local ETCD_CLIENT_PORT="2379"
   local ROLE
   echo "Starting k8sup..." 1>&2
