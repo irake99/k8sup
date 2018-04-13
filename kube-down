@@ -378,8 +378,14 @@ function get_options(){
 
 function main(){
   get_options "$@"
+  local FORCE="${EX_FORCE}"
   local CONFIG_FILE="/etc/kubernetes/k8sup-conf"
-  source "${CONFIG_FILE}"
+  if [[ -f "${CONFIG_FILE}" ]]; then
+    source "${CONFIG_FILE}"
+  elif [[ "${FORCE}" != "true" ]]; then
+    echo "Error: No such ${CONFIG_FILE}, exiting..." 1>&2
+    exit 1
+  fi
 
   if check_if_this_container_is_k8sup; then
     echo "Container named k8sup can not run kube-down by itself, please run another container to do this." 1>&2
@@ -402,10 +408,14 @@ function main(){
   local REMOTE_K8S_NODE_NAME="${EX_REMOTE_K8S_NODE_NAME}"
   local REMOTE_K8S_IPADDR
   local NODE_NAME="${EX_NODE_NAME}"
-  local FORCE="${EX_FORCE}"
   local KUBELET_VARLIB="/var/lib/kubelet"
   local APISERVER
   local ENDPOINT_AMOUNT
+
+  if ! docker inspect 'k8sup' &>/dev/null; then
+    echo "No such k8sup container, exiting..."
+    exit 1
+  fi
 
   if [[ "${FORCE}" != "true" ]]; then
     echo "Check the etcd status..." 1<&2
