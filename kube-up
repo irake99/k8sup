@@ -646,7 +646,8 @@ function main(){
     --volume=/var/run/dbus \
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube proxy \
-      --cleanup-iptables
+      --cleanup-iptables \
+    || true
 
   echo "Getting or generating certs..." 1>&2
   [[ "$-" == *x* ]] && local DEBUG_CMD="bash -x"
