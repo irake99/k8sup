@@ -682,43 +682,21 @@ function main(){
       --service-cidr="10.0.0.0/24" \
       --network-provider="flannel"
 
-    if ! grep -q 'kubelet-preferred-address' "${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
-    sed -i 's|    - apiserver|    - apiserver\n    - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
-      "${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
-    fi
-    if ! grep -q 'kubelet-preferred-address' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
-    sed -i 's|    - apiserver|    - apiserver\n        - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
-      "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-    fi
-    if ! grep -q '\--secure-port=6443' "${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
-    sed -i 's|--secure-port=443|--secure-port=6443|g' \
-      "${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
-    fi
-    if ! grep -q '\--secure-port=6443' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
-    sed -i 's|--secure-port=443|--secure-port=6443|g' \
-      "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-    fi
-    if ! grep -q 'apiserver-count' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
-    sed -i 's|    - apiserver|    - apiserver\n        - --apiserver-count=3|g' \
-      "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-    fi
-    if ! grep -q 'basic-auth' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
-      sed -i 's|      volumes:$|      volumes:\n      - name: basic-auth\n        secret:\n          secretName: basic-auth|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/basic_auth\n          name: basic-auth\n          readOnly: true|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-      sed -i 's|        - apiserver|        - apiserver\n        - --basic-auth-file=/etc/kubernetes/basic_auth/basic_auth.csv|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-    fi
-    if ! grep -q 'ABAC' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
-      sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-      sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-    fi
-    APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
+    local APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
     if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
       sed -i '/--etcd-cafile=/d' "${APISERVER_YAML_FILE}"
       sed -i '/--etcd-certfile=/d' "${APISERVER_YAML_FILE}"
       sed -i '/--etcd-keyfile=/d' "${APISERVER_YAML_FILE}"
       sed -i '/--etcd-quorum-read=/d' "${APISERVER_YAML_FILE}"
       sed -i 's/--etcd-servers=https:\/\/.*:2379/--etcd-servers=http:\/\/127.0.0.1:2379/g' "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q 'kubelet-preferred-address' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|    - apiserver|    - apiserver\n    - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
+        "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q '\--secure-port=6443' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|--secure-port=443|--secure-port=6443|g' \
+        "${APISERVER_YAML_FILE}"
     fi
     APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
     if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
@@ -727,6 +705,47 @@ function main(){
       sed -i '/--etcd-keyfile=/d' "${APISERVER_YAML_FILE}"
       sed -i '/--etcd-quorum-read=/d' "${APISERVER_YAML_FILE}"
       sed -i 's/--etcd-servers=https:\/\/.*:2379/--etcd-servers=http:\/\/127.0.0.1:2379/g' "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q 'kubelet-preferred-address' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|    - apiserver|    - apiserver\n        - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
+        "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q '\--secure-port=6443' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|--secure-port=443|--secure-port=6443|g' \
+        "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q 'apiserver-count' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|    - apiserver|    - apiserver\n        - --apiserver-count=3|g' \
+        "${APISERVER_YAML_FILE}"
+    fi
+    # TODO: Use dedicated ca, cert, and key
+    if ! grep -q 'requestheader-client-ca-file' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|    - apiserver|    - apiserver\n        - --proxy-client-key-file=/etc/kubernetes/secrets/apiserver.key|g' \
+        "${APISERVER_YAML_FILE}"
+      sed -i 's|    - apiserver|    - apiserver\n        - --proxy-client-cert-file=/etc/kubernetes/secrets/apiserver.crt|g' \
+        "${APISERVER_YAML_FILE}"
+      sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-username-headers=X-Remote-User|g' \
+        "${APISERVER_YAML_FILE}"
+      sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-group-headers=X-Remote-Group|g' \
+        "${APISERVER_YAML_FILE}"
+      sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-extra-headers-prefix=X-Remote-Extra-|g' \
+        "${APISERVER_YAML_FILE}"
+      sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-allowed-names=aggregator|g' \
+        "${APISERVER_YAML_FILE}"
+      sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-client-ca-file=/etc/kubernetes/secrets/ca.crt|g' \
+        "${APISERVER_YAML_FILE}"
+      sed -i 's|    - apiserver|    - apiserver\n        - --enable-aggregator-routing=true|g' \
+        "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q 'basic-auth' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: basic-auth\n        secret:\n          secretName: basic-auth|g' "${APISERVER_YAML_FILE}"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/basic_auth\n          name: basic-auth\n          readOnly: true|g' "${APISERVER_YAML_FILE}"
+      sed -i 's|        - apiserver|        - apiserver\n        - --basic-auth-file=/etc/kubernetes/basic_auth/basic_auth.csv|g' "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q 'ABAC' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "${APISERVER_YAML_FILE}"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "${APISERVER_YAML_FILE}"
+      sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "${APISERVER_YAML_FILE}"
     fi
 
     mkdir -p "${KUBE_ETC}"
@@ -871,8 +890,11 @@ function main(){
     echo "Try to start NTP server..." 1>&2
     start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "ntp-server"
 
-    echo "Try to start heapster..." 1>&2
-    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "heapster"
+    echo "Try to start metrics-server..." 1>&2
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "metrics-server"
+
+    echo "Try to start prometheus-operator..." 1>&2
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "prometheus-operator"
 
     # New url: https://<NODE_IP>/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
     echo "Try to start kubernetes-dashboard..." 1>&2
