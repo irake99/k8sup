@@ -8,11 +8,9 @@ LoginGraceTime 120
 PermitRootLogin yes
 StrictModes yes
 
-RSAAuthentication yes
 PubkeyAuthentication yes
 
 IgnoreRhosts yes
-RhostsRSAAuthentication no
 HostbasedAuthentication no
 
 PermitEmptyPasswords no
