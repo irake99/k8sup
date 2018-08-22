@@ -1,5 +1,6 @@
 FROM golang:1.7.5
 MAINTAINER hsfeng@gmail.com
+MAINTAINER irake99@gmail.com
 
 ENV WORKDIR /workdir
 WORKDIR /workdir
@@ -11,7 +12,7 @@ RUN apt-get -y update && \
     jq \
     iptables \
     bc \
-    module-init-tools \
+    kmod \
     uuid-runtime \
     ntpdate \
     libltdl7 \
@@ -58,13 +59,6 @@ RUN mkdir /var/run/sshd \
     && ssh-keygen -q -f /etc/ssh/ssh_host_ed25519_key -N '' -t ed25519
 
 EXPOSE 2222
-
-ADD https://github.com/kubernetes-incubator/bootkube/releases/download/v0.9.0/bootkube.tar.gz /workdir/bootkube.tar.gz
-RUN cd /workdir; \
-  mkdir -p bootkube-dir; \
-  tar xf bootkube.tar.gz -C bootkube-dir/; \
-  mv bootkube-dir/bin/linux/bootkube .; \
-  rm -rf bootkube-dir bootkube.tar.gz
 
 RUN mkdir -p /go/src \
     && ln -s /workdir/assets/k8sup/kubelet-cert-distributor /go/src/kubelet-cert-distributor \

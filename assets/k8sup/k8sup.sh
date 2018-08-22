@@ -126,6 +126,7 @@ function etcd_follower(){
   local ETCD_EXISTING_MEMBER_SIZE
   local NODE
 
+  ETCD_NODE_LIST="$(echo "${ETCD_NODE_LIST}" | sed 's/6443/2379/g')"
   # Get an existing etcd member
   until [[ -n "${ETCD_NODE}" ]] && [[ -n "${CLIENT_PORT}" ]]; do
     for NODE in ${ETCD_NODE_LIST}; do
@@ -604,7 +605,7 @@ Options:
                                e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
                                or \"eth0\"
 -c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.8.4)
+    --k8s-version=VERSION      Specify k8s version (Default: 1.11.2)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
@@ -628,7 +629,7 @@ Options:
 function shwo_debug_usage(){
   local USAGE="Usage: ${0##*/} [options...]
 Options:
-    --etcd-version=VERSION     Specify etcd version (Default: 3.0.17)
+    --etcd-version=VERSION     Specify etcd version (Default: 3.2.18)
     --flannel-version=VERSION  Specify flannel version (Default: 0.6.2)
 "
 
@@ -766,13 +767,13 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.8.4"
+    export EX_K8S_VERSION="1.11.2"
   fi
   if [[ -z "${EX_FLANNEL_VERSION}" ]]; then
     export EX_FLANNEL_VERSION="0.6.2"
   fi
   if [[ -z "${EX_ETCD_VERSION}" ]]; then
-    export EX_ETCD_VERSION="3.0.17"
+    export EX_ETCD_VERSION="3.2.18"
   fi
 
   if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
@@ -815,7 +816,7 @@ function main(){
   local START_ETCD_ONLY="${EX_START_ETCD_ONLY}" && unset EX_START_ETCD_ONLY
 
   echo "Checking hyperkube version for the requirement..."
-  check_k8s_major_minor_version_meet_requirement "${K8S_VERSION}" "1.8" && echo "OK" || exit "$?"
+  check_k8s_major_minor_version_meet_requirement "${K8S_VERSION}" "1.11" && echo "OK" || exit "$?"
   echo "Detecting and getting hyperkube image..."
   check_is_image_available "${K8S_REGISTRY}/hyperkube-amd64:v${K8S_VERSION}" && echo "OK" || exit "$?"
 
@@ -856,6 +857,7 @@ function main(){
   local UNIX_NANO_TIME
 
   local NODE_NAME="$(hostname)"
+  local ETCD_CLIENT_PORT="2379"
   local CREATOR="false"
   local ROLE
   [[ "${WORKER}" == "false" ]] && ROLE="master" || ROLE="worker"
@@ -982,17 +984,38 @@ function main(){
   fi
 
   # Update DNS-SD info
+  echo "Running etcd"
+  docker stop k8sup-etcd k8sup-kubelet k8sup-certs &>/dev/null || true
+  docker rm -v k8sup-etcd k8sup-kubelet k8sup-certs &>/dev/null || true
   if [[ "${CREATOR}" == "true" ]]; then
+    etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
+    "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" || exit 1
+
     local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/bin/dnssd-registering' | grep -v grep | awk '{print $1}')"
     [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
     [[ -z "${CLUSTER_ID}" ]] && { echo "Error: No such cluster ID!" 1>&2; exit 1; }
     /workdir/bin/dnssd-registering -IPMask "${IP_AND_MASK}" -port "${K8S_PORT}" -clusterID "${CLUSTER_ID}" -creator "${CREATOR}" -started "false" -unix-nano-time "${UNIX_NANO_TIME}" 2>/dev/null &
   else
+    echo "This is a follower node and try to join other nodes:" 1>&2
+    echo "${TARGET_HOST_LIST}" 1>&2
+    if [[ "${WORKER}" == "true" ]]; then
+      local PROXY="on"
+    else
+      local PROXY="off"
+    fi
+    PROXY="$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${TARGET_HOST_LIST}" "${PROXY}")" || exit 1
+
     until curl -s -m 1 "${TARGET_HOST_IP}:23555" &>/dev/null; do
       echo "Waiting for creator ${TARGET_HOST_IP} started..." 1>&2
       sleep 10
     done
   fi
+  if [[ "${PROXY}" == "on" ]]; then
+    WORKER="true"
+  else
+    WORKER="false"
+  fi
+  echo "K8S worker node: ${WORKER}" 1>&2
 
   # Write configurations to a file
   echo "export EX_IPADDR=${IPADDR}" > "${CONFIG_FILE}"

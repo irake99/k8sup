@@ -31,7 +31,7 @@ function start_addon(){
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl \
      --kubeconfig "${KUBECONFIG_PATH}" \
-     create -f "/addons/multinode/${ADDON_DIR}"/; do
+     apply -f "/addons/multinode/${ADDON_DIR}"/; do
        sleep 1
   done
 }
@@ -401,7 +401,7 @@ Options:
 -a, --apiserver-port=PORT           Apiserver port (Default: 6443)
     --apiserver-insecure-port=PORT  Apiserver insecure port (Default: 8080)
 -a, --etcd-port=PORT                etcd client port (Default: 2379)
--v, --version=VERSION               Specify k8s version (Default: 1.8.4)
+-v, --version=VERSION               Specify k8s version (Default: 1.11.2)
 -r, --registry=REGISTRY             Registry of docker image (Default: 'gcr.io/google_containers')
     --creator                       Mark as the first node
     --forced-worker                 Run as k8s worker persistently
@@ -540,7 +540,7 @@ function get_options(){
   fi
 
   if [[ -z "${EX_K8S_VERSION}" ]]; then
-    export EX_K8S_VERSION="1.8.4"
+    export EX_K8S_VERSION="1.11.2"
   fi
 
   if [[ -z "${EX_REGISTRY}" ]]; then
@@ -641,6 +641,7 @@ function main(){
   local MASTER_PUB_DN="kubernetes-public.default.svc.cluster.local"
   local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,IP:${KEYSTONE_CLUSTER_IP},DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN},DNS:${KEYSTONE_DN}"
   local KUBEDNS_CLUSTER_IP="10.0.0.10"
+  local BOOTKUBE_IMG="irake/bootkube:k8s-v1.11.2"
   local KUBEDNS
   local KUBEDNS_OPTION
   local CERT_DIRS
@@ -669,54 +670,68 @@ function main(){
     sed -i "s|\bNTPSERVER_REGISTRY\b|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
     sed -i "s|\bK8SUP_NTPSERVER_VERSION\b|${K8SUP_NTPSERVER_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
 
-
-    /workdir/bootkube \
+    docker run \
+    --rm=true \
+    -v /etc/kubernetes:/etc/kubernetes:rw \
+    "${BOOTKUBE_IMG}" \
+    /bootkube \
       render \
-      --asset-dir="/workdir/k8s-assets" \
+      --asset-dir="${KUBE_ETC}/k8s-assets" \
       --api-servers="https://${APISERVER_CLUSTER_IP}:443" \
       --pod-cidr="10.1.0.0/16" \
       --service-cidr="10.0.0.0/24" \
-      --network-provider="flannel" \
-      --experimental-self-hosted-etcd
+      --network-provider="flannel"
 
-    if ! grep -q 'kubelet-preferred-address' "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
+    if ! grep -q 'kubelet-preferred-address' "${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
     sed -i 's|    - apiserver|    - apiserver\n    - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
-      "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
+      "${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
     fi
-    if ! grep -q 'kubelet-preferred-address' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+    if ! grep -q 'kubelet-preferred-address' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
     sed -i 's|    - apiserver|    - apiserver\n        - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
-      "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
     fi
-    if ! grep -q '\--secure-port=6443' "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
+    if ! grep -q '\--secure-port=6443' "${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"; then
     sed -i 's|--secure-port=443|--secure-port=6443|g' \
-      "/workdir/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
+      "${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
     fi
-    if ! grep -q '\--secure-port=6443' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+    if ! grep -q '\--secure-port=6443' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
     sed -i 's|--secure-port=443|--secure-port=6443|g' \
-      "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
     fi
-    if ! grep -q 'apiserver-count' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
+    if ! grep -q 'apiserver-count' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
     sed -i 's|    - apiserver|    - apiserver\n        - --apiserver-count=3|g' \
-      "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+      "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
     fi
-    if ! grep -q 'basic-auth' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
-      sed -i 's|      volumes:$|      volumes:\n      - name: basic-auth\n        secret:\n          secretName: basic-auth|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/basic_auth\n          name: basic-auth\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-      sed -i 's|        - apiserver|        - apiserver\n        - --basic-auth-file=/etc/kubernetes/basic_auth/basic_auth.csv|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    if ! grep -q 'basic-auth' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: basic-auth\n        secret:\n          secretName: basic-auth|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/basic_auth\n          name: basic-auth\n          readOnly: true|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|        - apiserver|        - apiserver\n        - --basic-auth-file=/etc/kubernetes/basic_auth/basic_auth.csv|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
     fi
-    if ! grep -q 'ABAC' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"; then
-      sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
-      sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "/workdir/k8s-assets/manifests/kube-apiserver.yaml"
+    if ! grep -q 'ABAC' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
+      sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
     fi
-    if ! grep -q '"size": 3' "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"; then
-      sed -i 's|"size": 1,|"size": 3,|g' \
-        "/workdir/k8s-assets/etcd/migrate-etcd-cluster.json"
+    APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
+    if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
+      sed -i '/--etcd-cafile=/d' "${APISERVER_YAML_FILE}"
+      sed -i '/--etcd-certfile=/d' "${APISERVER_YAML_FILE}"
+      sed -i '/--etcd-keyfile=/d' "${APISERVER_YAML_FILE}"
+      sed -i '/--etcd-quorum-read=/d' "${APISERVER_YAML_FILE}"
+      sed -i 's/--etcd-servers=https:\/\/.*:2379/--etcd-servers=http:\/\/127.0.0.1:2379/g' "${APISERVER_YAML_FILE}"
+    fi
+    APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
+    if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
+      sed -i '/--etcd-cafile=/d' "${APISERVER_YAML_FILE}"
+      sed -i '/--etcd-certfile=/d' "${APISERVER_YAML_FILE}"
+      sed -i '/--etcd-keyfile=/d' "${APISERVER_YAML_FILE}"
+      sed -i '/--etcd-quorum-read=/d' "${APISERVER_YAML_FILE}"
+      sed -i 's/--etcd-servers=https:\/\/.*:2379/--etcd-servers=http:\/\/127.0.0.1:2379/g' "${APISERVER_YAML_FILE}"
     fi
 
     mkdir -p "${KUBE_ETC}"
-    cp -f "/workdir/k8s-assets/auth/kubeconfig" "${KUBE_ETC}/kubeconfig"
-    cp -f "/workdir/k8s-assets/tls/ca.crt" "${KUBE_ETC}/ca.crt"
+    cp -f "${KUBE_ETC}/k8s-assets/auth/kubeconfig" "${KUBE_ETC}/kubeconfig"
+    cp -f "${KUBE_ETC}/k8s-assets/tls/ca.crt" "${KUBE_ETC}/ca.crt"
 
   else
     APIHOST="${TARGET_HOST}"
@@ -785,6 +800,7 @@ function main(){
       --volume=/run/flannel:/run/flannel:rw \
       --volume=/dev:/dev:rw \
       --volume=/var/lib/cni:/var/lib/cni:rw \
+      --volume=/var/run/lock:/var/run/lock:rw \
       --volume=${KUBE_ETC}:${KUBE_ETC} \
       --volume=${KUBE_CONF_PATH}:${KUBE_CONF_PATH} \
       --volume=/etc/ssl/certs:/etc/ssl/certs:ro \
@@ -802,7 +818,6 @@ function main(){
       "${HYPERKUBE_IMAGE_NAME}" \
       /hyperkube kubelet \
           --allow-privileged=true \
-          --require-kubeconfig=true \
           --kubeconfig="${KUBECONFIG_PATH}" \
           --client-ca-file="${KUBE_ETC}/ca.crt" \
           --v="${K8S_DEBUG_LEVEL}" \
@@ -810,6 +825,8 @@ function main(){
           --address=0.0.0.0 \
           --enable-server \
           --enable-controller-attach-detach \
+          --exit-on-lock-contention \
+          --lock-file=/var/run/lock/kubelet.lock \
           --pod-manifest-path=${KUBE_CONF_PATH} \
           --containerized \
           --network-plugin=cni \
@@ -824,9 +841,16 @@ function main(){
     set_basic_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" &
     set_kube_system_configmap_from_file "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "abac-policy" "abac-policy-file.jsonl" "${KUBE_ETC}/abac-policy-file.jsonl" &
 
-    /workdir/bootkube \
+    docker run \
+    --rm=true \
+    --net=host \
+    --privileged=true \
+    --pid=host \
+    -v /etc/kubernetes:/etc/kubernetes:rw \
+    "${BOOTKUBE_IMG}" \
+    /bootkube \
       start \
-      --asset-dir="/workdir/k8s-assets"
+      --asset-dir="${KUBE_ETC}/k8s-assets"
   fi
 
   echo "Waiting for kube-proxy connect to apiserver..."
