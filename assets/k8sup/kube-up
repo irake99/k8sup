@@ -699,6 +699,27 @@ function main(){
       --service-cidr="10.0.0.0/24" \
       --network-provider="${CNI_PLUGIN}"
 
+    # Generate ca, certs, and keys
+    OPENSSL_CONF_FILE_PATH="/etc/ssl/openssl.cnf"
+    openssl genrsa -out "${KUBE_ETC}/front-proxy-ca.key" 2048
+    openssl req -x509 -new -nodes -key "${KUBE_ETC}/front-proxy-ca.key" \
+      -days 36500 -out "${KUBE_ETC}/front-proxy-ca.crt" -subj "/CN=front-proxy-ca"
+
+    openssl genrsa -out "${KUBE_ETC}/front-proxy-client.key" 2048
+    openssl req -new -key "${KUBE_ETC}/front-proxy-client.key" \
+      -out "${KUBE_ETC}/front-proxy-client.csr" -subj "/CN=front-proxy-client" \
+      -config ${OPENSSL_CONF_FILE_PATH}
+    openssl x509 -req -in "${KUBE_ETC}/front-proxy-client.csr" \
+      -CA "${KUBE_ETC}/front-proxy-ca.crt" -CAkey "${KUBE_ETC}/front-proxy-ca.key" \
+      -CAcreateserial -out "${KUBE_ETC}/front-proxy-client.crt" -days 36500 \
+      -extensions v3_req -extfile ${OPENSSL_CONF_FILE_PATH}
+
+    openssl genrsa -out "${KUBE_ETC}/sa.key" 2048
+    openssl rsa -in "${KUBE_ETC}/sa.key" -pubout -out "${KUBE_ETC}/sa.pub"
+
+    rm ${KUBE_ETC}/{front-proxy-ca.srl,front-proxy-client.csr}
+    #---
+
     local APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
     if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
       sed -i '/--etcd-cafile=/d' "${APISERVER_YAML_FILE}"
@@ -735,11 +756,14 @@ function main(){
       sed -i 's|    - apiserver|    - apiserver\n        - --apiserver-count=3|g' \
         "${APISERVER_YAML_FILE}"
     fi
-    # TODO: Use dedicated ca, cert, and key
-    if ! grep -q 'requestheader-client-ca-file' "${APISERVER_YAML_FILE}"; then
-      sed -i 's|    - apiserver|    - apiserver\n        - --proxy-client-key-file=/etc/kubernetes/secrets/apiserver.key|g' \
+    if ! grep -q 'bootstrap-token' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|    - apiserver|    - apiserver\n        - --enable-bootstrap-token-auth|g' \
         "${APISERVER_YAML_FILE}"
-      sed -i 's|    - apiserver|    - apiserver\n        - --proxy-client-cert-file=/etc/kubernetes/secrets/apiserver.crt|g' \
+    fi
+    if ! grep -q 'requestheader-client-ca-file' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|    - apiserver|    - apiserver\n        - --proxy-client-key-file=/etc/kubernetes/secrets/front-proxy-client.key|g' \
+        "${APISERVER_YAML_FILE}"
+      sed -i 's|    - apiserver|    - apiserver\n        - --proxy-client-cert-file=/etc/kubernetes/secrets/front-proxy-client.crt|g' \
         "${APISERVER_YAML_FILE}"
       sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-username-headers=X-Remote-User|g' \
         "${APISERVER_YAML_FILE}"
@@ -747,11 +771,15 @@ function main(){
         "${APISERVER_YAML_FILE}"
       sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-extra-headers-prefix=X-Remote-Extra-|g' \
         "${APISERVER_YAML_FILE}"
-      sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-allowed-names=aggregator|g' \
+      sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-allowed-names=front-proxy-client|g' \
         "${APISERVER_YAML_FILE}"
-      sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-client-ca-file=/etc/kubernetes/secrets/ca.crt|g' \
+      sed -i 's|    - apiserver|    - apiserver\n        - --requestheader-client-ca-file=/etc/kubernetes/secrets/front-proxy-ca.crt|g' \
         "${APISERVER_YAML_FILE}"
       sed -i 's|    - apiserver|    - apiserver\n        - --enable-aggregator-routing=true|g' \
+        "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q 'service-account-key-file' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|    - apiserver|    - apiserver\n        - --service-account-key-file=/etc/kubernetes/secrets/sa.pub|g' \
         "${APISERVER_YAML_FILE}"
     fi
     if ! grep -q 'basic-auth' "${APISERVER_YAML_FILE}"; then
@@ -764,6 +792,29 @@ function main(){
       sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "${APISERVER_YAML_FILE}"
       sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "${APISERVER_YAML_FILE}"
     fi
+    CONTROLLER_MANAGER_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/kube-controller-manager.yaml"
+    if ! grep -q 'tokencleaner' "${CONTROLLER_MANAGER_YAML_FILE}"; then
+      sed -i 's|        - controller-manager|        - controller-manager\n        - --controllers=*,tokencleaner|g' \
+        "${CONTROLLER_MANAGER_YAML_FILE}"
+    fi
+    if ! grep -q 'service-account-private-key-file' "${CONTROLLER_MANAGER_YAML_FILE}"; then
+      sed -i 's|        - controller-manager|        - controller-manager\n        - --service-account-private-key-file=/etc/kubernetes/secrets/sa.key|g' \
+        "${CONTROLLER_MANAGER_YAML_FILE}"
+    fi
+
+    # Add front-proxy secrets
+    KUBE_APISERVER_SECRET_FILE_PATH="${KUBE_ETC}/k8s-assets/manifests/kube-apiserver-secret.yaml"
+    sed -i "s/^data:$/data:\n  front-proxy-client.key: $(cat "${KUBE_ETC}/front-proxy-client.key" | base64 -w 0)/g" \
+      "${KUBE_APISERVER_SECRET_FILE_PATH}"
+    sed -i "s/^data:$/data:\n  front-proxy-client.crt: $(cat "${KUBE_ETC}/front-proxy-client.crt" | base64 -w 0)/g" \
+      "${KUBE_APISERVER_SECRET_FILE_PATH}"
+    sed -i "s/^data:$/data:\n  front-proxy-ca.crt: $(cat "${KUBE_ETC}/front-proxy-ca.crt" | base64 -w 0)/g" \
+      "${KUBE_APISERVER_SECRET_FILE_PATH}"
+    sed -i "s/^data:$/data:\n  sa.pub: $(cat "${KUBE_ETC}/sa.pub" | base64 -w 0)/g" \
+      "${KUBE_APISERVER_SECRET_FILE_PATH}"
+    KUBE_CONTROLL_MANAGER_SECRET_FILE_PATH="${KUBE_ETC}/k8s-assets/manifests/kube-controller-manager-secret.yaml"
+    sed -i "s/^data:$/data:\n  sa.key: $(cat "${KUBE_ETC}/sa.key" | base64 -w 0)/g" \
+      "${KUBE_CONTROLL_MANAGER_SECRET_FILE_PATH}"
 
     mkdir -p "${KUBE_ETC}"
     cp -f "${KUBE_ETC}/k8s-assets/auth/kubeconfig" "${KUBE_ETC}/kubeconfig"
