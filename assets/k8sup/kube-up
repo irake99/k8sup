@@ -402,6 +402,7 @@ Options:
     --apiserver-insecure-port=PORT  Apiserver insecure port (Default: 8080)
 -a, --etcd-port=PORT                etcd client port (Default: 2379)
 -v, --version=VERSION               Specify k8s version (Default: 1.11.2)
+    --cni-plugin=CNI_PLUGIN         CNI plugin (flannel or canal). (default \"flannel\")
 -r, --registry=REGISTRY             Registry of docker image (Default: 'gcr.io/google_containers')
     --creator                       Mark as the first node
     --forced-worker                 Run as k8s worker persistently
@@ -416,7 +417,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:r:h"
-  local LONGOPTS="ip-cidr:,target-host:,apiserver-port:,apiserver-insecure-port:,etcd-port:,creator,worker,version:,registry:,forced-worker,reset-labels,enable-keystone,help"
+  local LONGOPTS="ip-cidr:,target-host:,apiserver-port:,apiserver-insecure-port:,etcd-port:,creator,worker,version:,cni-plugin:,registry:,forced-worker,reset-labels,enable-keystone,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -455,6 +456,10 @@ function get_options(){
               ;;
           -v|--version)
               export EX_K8S_VERSION="$2"
+              shift 2
+              ;;
+             --cni-plugin)
+              export EX_CNI_PLUGIN="$2"
               shift 2
               ;;
           -r|--registry)
@@ -520,6 +525,11 @@ function get_options(){
 
   if [[ -z "${EX_ETCD_CLIENT_PORT}" ]]; then
     export EX_ETCD_CLIENT_PORT="2379"
+  fi
+
+  if [[ "${EX_CNI_PLUGIN}" != "flannel" ]] \
+    && [[ "${EX_CNI_PLUGIN}" != "canal" ]]; then
+    export EX_CNI_PLUGIN="flannel"
   fi
 
   if [[ "${EX_WORKER}" == "true" ]] && [[ "${EX_CREATOR}" == "true" ]]; then
@@ -623,6 +633,7 @@ function main(){
   local CREATOR="${EX_CREATOR}" && unset EX_CREATOR
   local IPADDR="$(echo "${IPCIDR}" | cut -d '/' -f 1)"
   local NODE_NAME="${EX_NODE_NAME:-$(hostname)}" && unset EX_NODE_NAME
+  local CNI_PLUGIN="${EX_CNI_PLUGIN}" && unset EX_CNI_PLUGIN
   local ETCD_PROXY=""
   local APIHOST=""
   local APISERVER=""
@@ -670,6 +681,9 @@ function main(){
     sed -i "s|\bNTPSERVER_REGISTRY\b|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
     sed -i "s|\bK8SUP_NTPSERVER_VERSION\b|${K8SUP_NTPSERVER_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
 
+    if [[ "${CNI_PLUGIN}" == "canal" ]]; then
+      CNI_PLUGIN="experimental-canal"
+    fi
     docker run \
     --rm=true \
     -v /etc/kubernetes:/etc/kubernetes:rw \
@@ -680,7 +694,7 @@ function main(){
       --api-servers="https://${APISERVER_CLUSTER_IP}:443" \
       --pod-cidr="10.1.0.0/16" \
       --service-cidr="10.0.0.0/24" \
-      --network-provider="flannel"
+      --network-provider="${CNI_PLUGIN}"
 
     local APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
     if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
@@ -768,11 +782,6 @@ function main(){
     echo "${TMP}" | jq -r . | base64 -d > "${KUBE_ETC}/ca.crt"
   fi
 
-  echo "Copy cni plugins"
-  mkdir -p "${KUBE_ETC}/cni/net.d"
-  cp -f "/workdir/assets/k8sup/cni-conf"/* "${KUBE_ETC}/cni/net.d"/
-  mkdir -p "/var/lib/cni/networks/containernet"; echo "" > "/var/lib/cni/networks/containernet/last_reserved_ip"
-
   # echo "Cleaning up kube-proxy old iptables rules..." 1>&2
   cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE_NAME}" 2>/dev/null || true
 
@@ -808,6 +817,14 @@ function main(){
   # Make message output level to 5 (--v=5) for all k8s components if debug mode is enabled
   [[ "$-" == *x* ]] && local K8S_DEBUG_LEVEL="5" || local K8S_DEBUG_LEVEL="2"
 
+  echo "Install CNI common binaries"
+  docker run \
+    --rm=true \
+    --volume=/opt/cni/bin:/host/opt/cni/bin:rw \
+    "${HYPERKUBE_IMAGE_NAME}" \
+      cp -rf /opt/cni/bin/. \
+        /host/opt/cni/bin
+
   echo "Running Kubernetes ..."
   docker run \
       --volume=/:/rootfs:ro \
@@ -822,6 +839,7 @@ function main(){
       --volume=/var/run/lock:/var/run/lock:rw \
       --volume=${KUBE_ETC}:${KUBE_ETC} \
       --volume=${KUBE_CONF_PATH}:${KUBE_CONF_PATH} \
+      --volume=/opt/cni/bin:/opt/cni/bin:rw \
       --volume=/etc/ssl/certs:/etc/ssl/certs:ro \
       --volume=/usr/share/ca-certificates:/usr/share/ca-certificates:ro \
       --volume=/usr/lib/os-release:/etc/os-release:ro \

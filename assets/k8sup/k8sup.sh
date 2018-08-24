@@ -489,6 +489,7 @@ function kube_up(){
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
+  local CNI_PLUGIN="${EX_CNI_PLUGIN}" && unset EX_CNI_PLUGIN
   local CREATOR="${EX_CREATOR}" && unset EX_CREATOR
 
   echo "Running Kubernetes" 1>&2
@@ -507,10 +508,21 @@ function kube_up(){
   if [[ -n "${TARGET_HOST}" ]]; then
     local TARGET_HOST_OPT="--target-host=${TARGET_HOST}"
   fi
+  if [[ -n "${CNI_PLUGIN}" ]]; then
+    local CNI_PLUGIN_OPT="--cni-plugin=${CNI_PLUGIN}"
+  fi
   if [[ "${K8S_INSECURE_PORT}" != "8080" ]]; then
     local K8S_INSECURE_PORT_OPT="--apiserver-insecure-port=${K8S_INSECURE_PORT}"
   fi
-  /workdir/assets/k8sup/kube-up --ip-cidr="${IP_AND_MASK}" "${TARGET_HOST_OPT}" --version="${K8S_VERSION}" ${REGISTRY_OPTION} ${FORCED_WORKER_OPT} ${ENABLE_KEYSTONE_OPT} ${CREATOR_OPT} ${K8S_INSECURE_PORT_OPT}
+  /workdir/assets/k8sup/kube-up --ip-cidr="${IP_AND_MASK}" \
+    "${TARGET_HOST_OPT}" \
+    --version="${K8S_VERSION}" \
+    ${CNI_PLUGIN_OPT} \
+    ${REGISTRY_OPTION} \
+    ${FORCED_WORKER_OPT} \
+    ${ENABLE_KEYSTONE_OPT} \
+    ${CREATOR_OPT} \
+    ${K8S_INSECURE_PORT_OPT}
 }
 
 function restart_flannel(){
@@ -607,6 +619,7 @@ Options:
 -c, --cluster=CLUSTER_ID       Join a specified cluster
     --k8s-version=VERSION      Specify k8s version (Default: 1.11.2)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
+    --cni-plugin=CNI_PLUGIN    CNI plugin (flannel or canal). (default \"flannel\")
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
@@ -639,7 +652,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:r:vh"
-  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,k8s-insecure-port:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
+  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,cni-plugin:,k8s-insecure-port:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
   local PARSED_OPTIONS=""
   local K8SUP_VERSION="0.9.0"
 
@@ -663,6 +676,10 @@ function get_options(){
               ;;
              --flannel-version)
               export EX_FLANNEL_VERSION="$2"
+              shift 2
+              ;;
+             --cni-plugin)
+              export EX_CNI_PLUGIN="$2"
               shift 2
               ;;
              --etcd-version)
@@ -776,6 +793,11 @@ function get_options(){
     export EX_ETCD_VERSION="3.2.18"
   fi
 
+  if [[ "${EX_CNI_PLUGIN}" != "flannel" ]] \
+    && [[ "${EX_CNI_PLUGIN}" != "canal" ]]; then
+    export EX_CNI_PLUGIN="flannel"
+  fi
+
   if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
     export EX_MAX_ETCD_MEMBER_SIZE="3"
   fi
@@ -849,6 +871,7 @@ function main(){
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
+  local CNI_PLUGIN="${EX_CNI_PLUGIN}" && unset EX_CNI_PLUGIN
   local ETCD_PATH="k8sup/cluster"
   local K8S_PORT="6443"
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
@@ -1023,6 +1046,7 @@ function main(){
   echo "export EX_CREATOR=${CREATOR}" >> "${CONFIG_FILE}"
   echo "export EX_ROLE=${ROLE}" >> "${CONFIG_FILE}"
   echo "export EX_TARGET_HOST=${TARGET_HOST}" >> "${CONFIG_FILE}"
+  echo "export EX_CNI_PLUGIN=${CNI_PLUGIN}" >> "${CONFIG_FILE}"
   echo "export EX_K8S_PORT=${K8S_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_FORCED_WORKER=${WORKER}" >> "${CONFIG_FILE}"
   echo "export EX_ETCD_VERSION=${ENV_ETCD_VERSION}" >> "${CONFIG_FILE}"
