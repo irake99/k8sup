@@ -619,7 +619,7 @@ Options:
 -c, --cluster=CLUSTER_ID       Join a specified cluster
     --k8s-version=VERSION      Specify k8s version (Default: 1.11.2)
     --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
-    --cni-plugin=CNI_PLUGIN    CNI plugin (flannel or canal). (default \"flannel\")
+    --cni-plugin=CNI_PLUGIN    CNI plugin (flannel, calico, or canal). (default \"flannel\")
     --new                      Force to start a new cluster
     --restore                  Try to restore etcd data and start a new cluster
     --restart                  Restart etcd and k8s services
@@ -794,6 +794,7 @@ function get_options(){
   fi
 
   if [[ "${EX_CNI_PLUGIN}" != "flannel" ]] \
+    && [[ "${EX_CNI_PLUGIN}" != "calico" ]] \
     && [[ "${EX_CNI_PLUGIN}" != "canal" ]]; then
     export EX_CNI_PLUGIN="flannel"
   fi

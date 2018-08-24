@@ -402,7 +402,7 @@ Options:
     --apiserver-insecure-port=PORT  Apiserver insecure port (Default: 8080)
 -a, --etcd-port=PORT                etcd client port (Default: 2379)
 -v, --version=VERSION               Specify k8s version (Default: 1.11.2)
-    --cni-plugin=CNI_PLUGIN         CNI plugin (flannel or canal). (default \"flannel\")
+    --cni-plugin=CNI_PLUGIN         CNI plugin (flannel, calico, or canal). (default \"flannel\")
 -r, --registry=REGISTRY             Registry of docker image (Default: 'gcr.io/google_containers')
     --creator                       Mark as the first node
     --forced-worker                 Run as k8s worker persistently
@@ -528,6 +528,7 @@ function get_options(){
   fi
 
   if [[ "${EX_CNI_PLUGIN}" != "flannel" ]] \
+    && [[ "${EX_CNI_PLUGIN}" != "calico" ]] \
     && [[ "${EX_CNI_PLUGIN}" != "canal" ]]; then
     export EX_CNI_PLUGIN="flannel"
   fi
@@ -681,7 +682,9 @@ function main(){
     sed -i "s|\bNTPSERVER_REGISTRY\b|${NTPSERVER_REGISTRY}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
     sed -i "s|\bK8SUP_NTPSERVER_VERSION\b|${K8SUP_NTPSERVER_VERSION}|g" "${KUBE_ADDONS_CONF_PATH/}"/ntp-server/*.yaml
 
-    if [[ "${CNI_PLUGIN}" == "canal" ]]; then
+    if [[ "${CNI_PLUGIN}" == "calico" ]]; then
+      CNI_PLUGIN="experimental-calico"
+    elif [[ "${CNI_PLUGIN}" == "canal" ]]; then
       CNI_PLUGIN="experimental-canal"
     fi
     docker run \
