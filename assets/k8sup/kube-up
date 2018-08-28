@@ -796,7 +796,7 @@ function main(){
     fi
     CONTROLLER_MANAGER_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/kube-controller-manager.yaml"
     if ! grep -q 'tokencleaner' "${CONTROLLER_MANAGER_YAML_FILE}"; then
-      sed -i 's|        - controller-manager|        - controller-manager\n        - --controllers=*,tokencleaner|g' \
+      sed -i 's|        - controller-manager|        - controller-manager\n        - --controllers=*,bootstrapsigner,tokencleaner|g' \
         "${CONTROLLER_MANAGER_YAML_FILE}"
     fi
     if ! grep -q 'service-account-private-key-file' "${CONTROLLER_MANAGER_YAML_FILE}"; then
