@@ -752,6 +752,8 @@ function main(){
       sed -i 's|--secure-port=443|--secure-port=6443|g' \
         "${APISERVER_YAML_FILE}"
     fi
+    sed -i "s|--anonymous-auth=false|--anonymous-auth=true|g" \
+      "${APISERVER_YAML_FILE}"
     if ! grep -q 'apiserver-count' "${APISERVER_YAML_FILE}"; then
       sed -i 's|    - apiserver|    - apiserver\n        - --apiserver-count=3|g' \
         "${APISERVER_YAML_FILE}"
