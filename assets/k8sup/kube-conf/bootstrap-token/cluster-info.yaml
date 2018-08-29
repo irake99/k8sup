@@ -1,0 +1,18 @@
+apiVersion: v1
+data:
+  kubeconfig: |
+    apiVersion: v1
+    clusters:
+    - cluster:
+        certificate-authority-data: {{ CA_CERT_BASE64 }}
+        server: https://{{ HTTPS_KUBE_APISERVER_IP_PORT }}
+      name: ""
+    contexts: []
+    current-context: ""
+    kind: Config
+    preferences: {}
+    users: []
+kind: ConfigMap
+metadata:
+  name: cluster-info
+  namespace: kube-public

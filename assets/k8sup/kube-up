@@ -17,6 +17,25 @@ function get_node_labels(){
   echo "${ROLE_LABELS}"
 }
 
+function run_kubectl(){
+  local HYPERKUBE_IMAGE_NAME="$1"
+  local KUBECONFIG_PATH="$2"
+  local VOLUME="$3"
+  local CMD="$4"
+
+  until docker run \
+    --net=host \
+    --rm=true \
+    --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${VOLUME}" \
+    "${HYPERKUBE_IMAGE_NAME}" \
+    /hyperkube kubectl \
+     --kubeconfig "${KUBECONFIG_PATH}" \
+     "${CMD}"; do
+       sleep 1
+  done
+}
+
 function start_addon(){
   local HYPERKUBE_IMAGE_NAME="$1"
   local KUBE_ETC="$2"
@@ -656,6 +675,8 @@ function main(){
   local DOMAIN_NAME="IP:127.0.0.1,IP:10.0.0.1,IP:${KEYSTONE_CLUSTER_IP},DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:${MASTER_PUB_DN},DNS:${KEYSTONE_DN}"
   local KUBEDNS_CLUSTER_IP="10.0.0.10"
   local BOOTKUBE_IMG="irake/bootkube:k8s-v1.11.2"
+  local BT_LOCAL_DIR="/workdir/assets/k8sup/kube-conf/bootstrap-token"
+  local BT_DIR="${KUBE_ETC}/bootstrap-token"
   local KUBEDNS
   local KUBEDNS_OPTION
   local CERT_DIRS
@@ -668,6 +689,7 @@ function main(){
   export K8S_VERSION="${EX_K8S_VERSION}"
   export ADDON_MGR_VER="v6.4-beta.2"
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
+  local K8S_VER_MAJOR_MINOR="$(echo "${K8S_VERSION}" | grep -o '^[0-9]\+.[0-9]\+')"
 
   if [[ "${CREATOR}" == "true" ]]; then
     APIHOST="127.0.0.1:6443"
@@ -719,6 +741,25 @@ function main(){
 
     rm ${KUBE_ETC}/{front-proxy-ca.srl,front-proxy-client.csr}
     #---
+
+    mkdir -p "${BT_DIR}"
+    cp -rf "${BT_LOCAL_DIR}"/. "${BT_DIR}"
+    local BOOTSTRAP_TOKEN_ID="$(head -c 3 /dev/urandom | od -An -t x | tail -c 7)"
+    local BOOTSTRAP_TOKEN_SECRET="$(head -c 8 /dev/urandom | od -An -t x | tr -d ' ')"
+    local BOOTSTRAP_TOKEN="${BOOTSTRAP_TOKEN_ID}.${BOOTSTRAP_TOKEN_SECRET}"
+    local BOOTSTRAP_TOKEN_ID_BASE64="$(echo -n "${BOOTSTRAP_TOKEN_ID}" | base64 -w 0)"
+    local BOOTSTRAP_TOKEN_SECRET_BASE64="$(echo -n "${BOOTSTRAP_TOKEN_SECRET}" | base64 -w 0)"
+    local CA_CERT_BASE64="$(base64 -w 0 ${KUBE_ETC}/k8s-assets/tls/ca.crt)"
+    local EXPIRATION_RFC3339_BASE64="$(date -d '+ +24 hour' "+%Y-%m-%dT%TZ" | tr -d '\n' | base64 -w 0)"
+    local HTTPS_KUBE_APISERVER_IP_PORT="${APISERVER_CLUSTER_IP}:443"
+    sed -i "s|{{ K8S_VER_MAJOR_MINOR }}|${K8S_VER_MAJOR_MINOR}|g" "${BT_DIR}/kubelet-config.yaml"
+    sed -i "s|{{ KUBEDNS_CLUSTER_IP }}|${KUBEDNS_CLUSTER_IP}|g" "${BT_DIR}/kubelet-config.yaml"
+    sed -i "s|{{ EXPIRATION_RFC3339_BASE64 }}|${EXPIRATION_RFC3339_BASE64}|g" "${BT_DIR}/bootstrap-token-srcret.yaml"
+    sed -i "s|{{ BOOTSTRAP_TOKEN_ID_BASE64 }}|${BOOTSTRAP_TOKEN_ID_BASE64}|g" "${BT_DIR}/bootstrap-token-srcret.yaml"
+    sed -i "s|{{ BOOTSTRAP_TOKEN_SECRET_BASE64 }}|${BOOTSTRAP_TOKEN_SECRET_BASE64}|g" "${BT_DIR}/bootstrap-token-srcret.yaml"
+    sed -i "s|{{ BOOTSTRAP_TOKEN_ID }}|${BOOTSTRAP_TOKEN_ID}|g" "${BT_DIR}/bootstrap-token-srcret.yaml"
+    sed -i "s|{{ CA_CERT_BASE64 }}|${CA_CERT_BASE64}|g" "${BT_DIR}/cluster-info.yaml"
+    sed -i "s|{{ HTTPS_KUBE_APISERVER_IP_PORT }}|${HTTPS_KUBE_APISERVER_IP_PORT}|g" "${BT_DIR}/cluster-info.yaml"
 
     local APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
     if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
@@ -967,6 +1008,9 @@ function main(){
     # New url: https://<NODE_IP>/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
     echo "Try to start kubernetes-dashboard..." 1>&2
     start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "kubernetes-dashboard"
+
+    echo "Try to set the bootstrap token up" 1>&2
+    run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${BT_DIR}:/yaml" "create -f /yaml"
   fi
 
   if [[ "${WORKER}" == "false" ]]; then

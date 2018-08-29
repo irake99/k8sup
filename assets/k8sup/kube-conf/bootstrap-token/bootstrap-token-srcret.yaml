@@ -1,0 +1,14 @@
+apiVersion: v1
+data:
+  auth-extra-groups: c3lzdGVtOmJvb3RzdHJhcHBlcnM6a3ViZWFkbTpkZWZhdWx0LW5vZGUtdG9rZW4=
+  description: VGhlIGRlZmF1bHQgYm9vdHN0cmFwIHRva2VuIGdlbmVyYXRlZCBieSBrOHN1cAo=
+  expiration: {{ EXPIRATION_RFC3339_BASE64 }}
+  token-id: {{ BOOTSTRAP_TOKEN_ID_BASE64 }}
+  token-secret: {{ BOOTSTRAP_TOKEN_SECRET_BASE64 }}
+  usage-bootstrap-authentication: dHJ1ZQ==
+  usage-bootstrap-signing: dHJ1ZQ==
+kind: Secret
+metadata:
+  name: bootstrap-token-{{ BOOTSTRAP_TOKEN_ID }}
+  namespace: kube-system
+type: bootstrap.kubernetes.io/token
