@@ -669,8 +669,6 @@ function main(){
   export ADDON_MGR_VER="v6.4-beta.2"
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
 
-  rm -rf "${KUBE_ETC}"/*
-
   if [[ "${CREATOR}" == "true" ]]; then
     APIHOST="127.0.0.1:6443"
 
