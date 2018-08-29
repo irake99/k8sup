@@ -335,6 +335,7 @@ function ntp_updater(){
     until ntpdate -b "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>/dev/null; do
       sleep 1
     done
+    hwclock -w || true
     echo "NTP client synchronized!" 1>&2
     sleep "${TIME_GAP}"
   else
@@ -344,6 +345,7 @@ function ntp_updater(){
   while true; do
     if ! ps aux | grep -v grep | grep -q "/etc/chrony/chrony.conf"; then
       RESULT="$(ntpdate -b "${K8SUP_NTPSERVER_CLUSTER_IP}" 2>&1)" || true
+      hwclock -w || true
       [[ "$-" == *x* ]] && echo "${RESULT}" 1>&2
     else
       [[ "$-" == *x* ]] \
