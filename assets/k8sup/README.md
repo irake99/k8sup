@@ -195,6 +195,7 @@ If you want to delete etcd data:
 $ sudo rm -rf /var/lib/etcd/*
 ```
 
+<!---TODO: Need to update--->
 To access the dashboard:
 ```
 Browse https://<your-master-node-ip>:6443/ui
