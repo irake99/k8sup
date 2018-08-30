@@ -41,7 +41,7 @@ Deploy method 1:
 
 Put the token and CA hash and run k8s on the seed host:
 ```
-$ docker pull cdxvirt/k8sup:v2.0
+$ docker pull cdxvirt/k8sup:k8s-1.11
 $ docker run -d \
     --privileged \
     --net=host \
@@ -60,7 +60,7 @@ $ docker run -d \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     --name=k8sup \
-    cdxvirt/k8sup:v2.0 \
+    cdxvirt/k8sup:k8s-1.11 \
     --network={your-subnet-id/mask}
 ```
 And you will get the prompt of boostrap token and seed host CA hash like this:
@@ -71,7 +71,7 @@ Seed host CA hash: aa1f1751d09e231d9705b9ba513d380ee83f5087d0a5dbd8cd0f1d49432de
 
 Then run k8s on all other hosts:
 ```
-$ docker pull cdxvirt/k8sup:v2.0
+$ docker pull cdxvirt/k8sup:k8s-1.11
 $ docker run -d \
     --privileged \
     --net=host \
@@ -90,7 +90,7 @@ $ docker run -d \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     --name=k8sup \
-    cdxvirt/k8sup:v2.0 \
+    cdxvirt/k8sup:k8s-1.11 \
     --token={your-token} \
     --ca-hash={your-ca-hash} \
     --network={your-subnet-id/mask}
@@ -107,7 +107,7 @@ TOKEN="$(od -An -t x -N 12 /dev/urandom | tr -d ' ' | tail -c 23 | sed 's/./&./6
 
 Run k8s on all hosts at the same time:
 ```
-$ docker pull cdxvirt/k8sup:v2.0
+$ docker pull cdxvirt/k8sup:k8s-1.11
 $ docker run -d \
     --privileged \
     --net=host \
@@ -126,7 +126,7 @@ $ docker run -d \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     --name=k8sup \
-    cdxvirt/k8sup:v2.0 \
+    cdxvirt/k8sup:k8s-1.11 \
     --token=${TOKEN} \
     --unsafe-skip-ca-verification \
     --network={your-subnet-id/mask}
@@ -156,7 +156,7 @@ $ docker run \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     --entrypoint=/workdir/assets/k8sup/kube-down \
-    cdxvirt/k8sup:v2.0
+    cdxvirt/k8sup:k8s-1.11
 ```
 
 Remove k8s from node:
@@ -181,7 +181,7 @@ $ docker run \
     -v /var/lib/kubelet:/var/lib/kubelet \
     -v /etc/kubernetes:/etc/kubernetes \
     --entrypoint=/workdir/assets/k8sup/kube-down \
-    cdxvirt/k8sup:v2.0 \
+    cdxvirt/k8sup:k8s-1.11 \
     --remove
 ```
 
