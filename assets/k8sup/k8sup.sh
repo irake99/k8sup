@@ -491,6 +491,9 @@ function kube_up(){
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
   local CNI_PLUGIN="${EX_CNI_PLUGIN}" && unset EX_CNI_PLUGIN
   local CREATOR="${EX_CREATOR}" && unset EX_CREATOR
+  local TOKEN="${EX_TOKEN}" && unset EX_TOKEN
+  local CA_HASH="${EX_CA_HASH}" && unset EX_CA_HASH
+  local UNSAFE_SKIP_CA_VERIFICATION="${EX_UNSAFE_SKIP_CA_VERIFICATION}" && unset EX_UNSAFE_SKIP_CA_VERIFICATION
 
   echo "Running Kubernetes" 1>&2
   if [[ -n "${REGISTRY}" ]]; then
@@ -514,6 +517,16 @@ function kube_up(){
   if [[ "${K8S_INSECURE_PORT}" != "8080" ]]; then
     local K8S_INSECURE_PORT_OPT="--apiserver-insecure-port=${K8S_INSECURE_PORT}"
   fi
+  if [[ -n "${TOKEN}" ]]; then
+    local TOKEN_OPT="--token=${TOKEN}"
+  fi
+  if [[ -n "${CA_HASH}" ]]; then
+    local CA_HASH_OPT="--ca-hash=${CA_HASH}"
+  fi
+  if [[ -n "${UNSAFE_SKIP_CA_VERIFICATION}" ]]; then
+    local UNSAFE_SKIP_CA_VERIFICATION_OPT="--unsafe-skip-ca-verification"
+  fi
+
   /workdir/assets/k8sup/kube-up --ip-cidr="${IP_AND_MASK}" \
     "${TARGET_HOST_OPT}" \
     --version="${K8S_VERSION}" \
@@ -522,7 +535,10 @@ function kube_up(){
     ${FORCED_WORKER_OPT} \
     ${ENABLE_KEYSTONE_OPT} \
     ${CREATOR_OPT} \
-    ${K8S_INSECURE_PORT_OPT}
+    ${K8S_INSECURE_PORT_OPT} \
+    ${TOKEN_OPT} \
+    ${CA_HASH_OPT} \
+    ${UNSAFE_SKIP_CA_VERIFICATION_OPT}
 }
 
 function restart_flannel(){
@@ -613,27 +629,30 @@ function rejoin_etcd(){
 function show_usage(){
   local USAGE="Usage: ${0##*/} [options...]
 Options:
--n, --network=NETINFO          SubnetID/Mask or Host IP address or NIC name
-                               e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
-                               or \"eth0\"
--c, --cluster=CLUSTER_ID       Join a specified cluster
-    --k8s-version=VERSION      Specify k8s version (Default: 1.11.2)
-    --max-etcd-members=NUM     Maximum etcd member size (Default: 3)
-    --cni-plugin=CNI_PLUGIN    CNI plugin (flannel, calico, or canal). (default \"flannel\")
-    --new                      Force to start a new cluster
-    --restore                  Try to restore etcd data and start a new cluster
-    --restart                  Restart etcd and k8s services
-    --rejoin-etcd              Re-join the same etcd cluster
-    --k8s-insecure-port=PORT   Kube-apiserver insecure port (Default: 8080)
-    --start-kube-svcs-only     Try to start kubernetes services (Assume etcd and flannel are ready)
-    --start-etcd-only          Start etcd and flannel but don't start kubernetes services
-    --worker                   Force to run as k8s worker
-    --debug                    Enable debug mode
-    --enable-keystone          Enable Keystone service (Default: disabled)
--r, --registry=REGISTRY        Registry of docker image
-                               (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
--v, --version                  Show k8sup version
--h, --help                     This help text
+-n, --network=NETINFO              SubnetID/Mask or Host IP address or NIC name
+                                   e. g. \"192.168.11.0/24\" or \"192.168.11.1\"
+                                   or \"eth0\"
+-c, --cluster=CLUSTER_ID           Join a specified cluster
+    --token=TOKEN                  Boostrap token
+    --ca-hash=CA_HASH              To verify the TLS boostrap seed host CA cert
+    --unsafe-skip-ca-verification  Skip valid the hash of TLS boostrap seed host CA cert
+    --k8s-version=VERSION          Specify k8s version (Default: 1.11.2)
+    --max-etcd-members=NUM         Maximum etcd member size (Default: 3)
+    --cni-plugin=CNI_PLUGIN        CNI plugin (flannel, calico, or canal). (default \"flannel\")
+    --new                          Force to start a new cluster
+    --restore                      Try to restore etcd data and start a new cluster
+    --restart                      Restart etcd and k8s services
+    --rejoin-etcd                  Re-join the same etcd cluster
+    --k8s-insecure-port=PORT       Kube-apiserver insecure port (Default: 8080)
+    --start-kube-svcs-only         Try to start kubernetes services (Assume etcd and flannel are ready)
+    --start-etcd-only              Start etcd and flannel but don't start kubernetes services
+    --worker                       Force to run as k8s worker
+    --debug                        Enable debug mode
+    --enable-keystone              Enable Keystone service (Default: disabled)
+-r, --registry=REGISTRY            Registry of docker image
+                                   (Default: 'quay.io/coreos' and 'gcr.io/google_containers')
+-v, --version                      Show k8sup version
+-h, --help                         This help text
 "
 
   echo "${USAGE}"
@@ -652,7 +671,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:r:vh"
-  local LONGOPTS="network:,cluster:,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,cni-plugin:,k8s-insecure-port:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
+  local LONGOPTS="network:,cluster:,token:,ca-hash:,unsafe-skip-ca-verification,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,cni-plugin:,k8s-insecure-port:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
   local PARSED_OPTIONS=""
   local K8SUP_VERSION="0.9.0"
 
@@ -669,6 +688,18 @@ function get_options(){
           -c|--cluster)
               export EX_CLUSTER_ID="$2"
               shift 2
+              ;;
+             --token)
+              export EX_TOKEN="$2"
+              shift 2
+              ;;
+             --ca-hash)
+              export EX_CA_HASH="$2"
+              shift 2
+              ;;
+             --unsafe-skip-ca-verification)
+              export EX_UNSAFE_SKIP_CA_VERIFICATION="true"
+              shift
               ;;
              --k8s-version)
               export EX_K8S_VERSION="$2"
@@ -757,6 +788,18 @@ function get_options(){
               ;;
       esac
   done
+
+  if [[ -n "${EX_TOKEN}" ]] \
+    && ! echo "${EX_TOKEN}" | grep -q '^[a-z0-9]\{6\}\.[a-z0-9]\{16\}$'; then
+    echo "wrong boostrap token: ${EX_TOKEN}" 1>&2
+    exit 1
+  fi
+  if [[ -n "${EX_TOKEN}" ]] \
+    && [[ -z "${EX_CA_HASH}" ]] \
+    && [[ "${EX_UNSAFE_SKIP_CA_VERIFICATION}" != "true" ]]; then
+    echo "use '--ca-hash=CA_HASH' or '--unsafe-skip-ca-verification'" 1>&2
+    exit 1
+  fi
 
   if [[ "${EX_WORKER}" != "true" ]]; then
     export EX_WORKER="false"
@@ -873,6 +916,9 @@ function main(){
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
   local CNI_PLUGIN="${EX_CNI_PLUGIN}" && unset EX_CNI_PLUGIN
+  local TOKEN="${EX_TOKEN}" && unset EX_TOKEN
+  local CA_HASH="${EX_CA_HASH}" && unset EX_CA_HASH
+  local UNSAFE_SKIP_CA_VERIFICATION="${EX_UNSAFE_SKIP_CA_VERIFICATION}" && unset EX_UNSAFE_SKIP_CA_VERIFICATION
   local ETCD_PATH="k8sup/cluster"
   local K8S_PORT="6443"
   local SUBNET_ID_AND_MASK="$(get_subnet_id_and_mask "${IP_AND_MASK}")"
@@ -1022,17 +1068,16 @@ function main(){
   else
     echo "This is a follower node and try to join other nodes:" 1>&2
     echo "${TARGET_HOST_LIST}" 1>&2
+    if [[ -z "${TOKEN}" ]]; then
+      echo "require bootstrap token" 1>&2
+      exit 1
+    fi
     if [[ "${WORKER}" == "true" ]]; then
       local PROXY="on"
     else
       local PROXY="off"
     fi
     PROXY="$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${TARGET_HOST_LIST}" "${PROXY}")" || exit 1
-
-    until curl -s -m 1 "${TARGET_HOST_IP}:23555" &>/dev/null; do
-      echo "Waiting for creator ${TARGET_HOST_IP} started..." 1>&2
-      sleep 10
-    done
   fi
   if [[ "${PROXY}" == "on" ]]; then
     WORKER="true"
@@ -1062,10 +1107,13 @@ function main(){
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"
   echo "export EX_START_ETCD_ONLY=${START_ETCD_ONLY}" >> "${CONFIG_FILE}"
   echo "export EX_ENABLE_KEYSTONE=${ENABLE_KEYSTONE}" >> "${CONFIG_FILE}"
+  echo "export EX_TOKEN=${TOKEN}" >> "${CONFIG_FILE}"
+  echo "export EX_CA_HASH=${CA_HASH}" >> "${CONFIG_FILE}"
+  echo "export EX_UNSAFE_SKIP_CA_VERIFICATION=${UNSAFE_SKIP_CA_VERIFICATION}" >> "${CONFIG_FILE}"
   echo "export EX_HYPERKUBE_IMAGE=\${EX_REGISTRY}/hyperkube-amd64:v\${EX_K8S_VERSION}" >> "${CONFIG_FILE}"
 
   if [[ "${START_ETCD_ONLY}" != "true" ]]; then
-    kube_up "${CONFIG_FILE}"
+    kube_up "${CONFIG_FILE}" || exit 1
     echo "Kubernetes started, hold..." 1>&2
   else
     echo "etcd started, hold..." 1>&2

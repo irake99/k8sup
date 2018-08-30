@@ -268,20 +268,14 @@ function stop_k8s(){
     echo '{}' | tee /etc/kubernetes/manifests-multi/addon-manager-multinode.json &>/dev/null
 
     # Stop kubelet, kube-addon-manager
-    docker stop k8sup-kubelet 1>/dev/null || true
-    CONTAINER_IDS="$(docker ps | grep -E "k8s_.*(k8s-proxy).*_kube-system" | awk '{print $1}')"
-    [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
+    until ! docker ps | grep -w 'k8sup-kubelet'; do
+      docker stop k8sup-kubelet 1>/dev/null || true
+      docker rm k8sup-kubelet 1>/dev/null || true
+    done
     CONTAINER_IDS="$(docker ps | grep -E "k8s_.*(kube-addon-manager-|setup).*_kube-system" | awk '{print $1}')"
     [[ -n "${CONTAINER_IDS}" ]] && docker kill ${CONTAINER_IDS} 1>/dev/null || true
-    CONTAINER_IDS="$(docker ps | grep -E "k8s_.*(k8s-master).*_kube-system" | awk '{print $1}')"
-    [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
-    [[ -n "${CONTAINER_IDS}" ]] && docker rm -v ${CONTAINER_IDS} 1>/dev/null || true
-    # Stop other k8s component services
-    CONTAINER_IDS="$(docker ps | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}')"
-    [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
-    CONTAINER_IDS="$(docker ps -a | grep -E "k8s_([[:alnum:]]|-)+\.[[:alnum:]]{7,8}_.*_kube-system" | awk '{print $1}')"
-    [[ -n "${CONTAINER_IDS}" ]] && docker rm -v ${CONTAINER_IDS} 1>/dev/null || true
-
+    docker stop $(docker ps -a --filter name=k8s_ -q) || true
+    docker rm -v $(docker ps -a --filter name=k8s_ -q) || true
     echo -n "Waiting for all k8s pods stopped..." 1>&2
     until [[ "$(docker ps | grep "${HYPERKUBE_IMAGE}" | wc -l)" -le "2" ]]; do
       echo -n "." 1>&2
@@ -289,10 +283,8 @@ function stop_k8s(){
     done
     echo 1>&2
 
-    until ! docker ps | grep -w 'k8sup-kubelet'; do
-      docker stop k8sup-kubelet 1>/dev/null || true
-      docker rm k8sup-kubelet 1>/dev/null || true
-    done
+    echo "Unmount all kubelet volumes"
+    awk '$2 ~ path {print $2}' "path=/var/lib/kubelet" "/proc/mounts" | xargs -r umount || true
 
     if [[ -n "$(iptables -w -S -t nat | grep 10.0.0.1/32 | grep "${APIHOST}")" ]]; then
       iptables -w -t nat -D OUTPUT --dest 10.0.0.1 -p tcp --dport 443 -j DNAT --to-dest "${APIHOST}"
@@ -433,6 +425,7 @@ function main(){
   local NODE_NAME="${EX_NODE_NAME}"
   local FORCE="${EX_FORCE}"
   local KUBELET_VARLIB="/var/lib/kubelet"
+  local KUBECONFIG_PATH="/etc/kubernetes/kubeconfig"
   local APISERVER
   local ENDPOINT_AMOUNT
 
@@ -465,10 +458,9 @@ function main(){
     echo "Trying to kill k8s containers..." 1>&2
     CONTAINER_IDS="$(docker ps -a | grep -E "k8sup-kubelet" | awk '{print $1}')"
     [[ -n "${CONTAINER_IDS}" ]] && docker stop ${CONTAINER_IDS} 1>/dev/null || true
-    CONTAINER_IDS="$(docker ps -a \
-      | grep "k8s_.*_[[:alnum:]]" \
-      | awk '{print $1}')"
-    [[ -n "${CONTAINER_IDS}" ]] && docker rm -f -v ${CONTAINER_IDS} 1>/dev/null || true
+    docker rm -fv $(docker ps -a --filter name=k8s_ -q) || true
+    echo "Unmount all kubelet volumes"
+    awk '$2 ~ path {print $2}' "path=/var/lib/kubelet" "/proc/mounts" | xargs -r umount || true
     if [[ "${EXIT}" == "true" ]]; then
       exit_etcd "${IPADDR}" "${ETCD_CLIENT_PORT}" "${REMOTE_ETCD_IPADDR}"
     fi

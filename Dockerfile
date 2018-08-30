@@ -59,10 +59,3 @@ RUN mkdir -p /go/src \
     && govendor sync \
     && go build -o /workdir/bin/dnssd-registering /go/src/dnssd/dnssd-registering/dnssd-registering.go \
     && go build -o /workdir/bin/dnssd-browsing /go/src/dnssd/dnssd-browsing/dnssd-browsing.go
-
-RUN mkdir -p /go/src \
-    && ln -s /workdir/assets/k8sup/kubelet-cert-distributor /go/src/kubelet-cert-distributor \
-    && cd /go/src/kubelet-cert-distributor \
-    && govendor sync \
-    && go build -o /workdir/bin/kubelet-cert-distributor \
-       /go/src/kubelet-cert-distributor/kubelet-cert-distributor.go

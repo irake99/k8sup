@@ -20,13 +20,15 @@ function get_node_labels(){
 function run_kubectl(){
   local HYPERKUBE_IMAGE_NAME="$1"
   local KUBECONFIG_PATH="$2"
-  local VOLUME="$3"
-  local CMD="$4"
+  local KUBELET_VARLIB="$3"
+  local VOLUME="$4"
+  local CMD="$5"
 
   until docker run \
     --net=host \
     --rm=true \
     --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${KUBELET_VARLIB}":"${KUBELET_VARLIB}":ro \
     --volume="${VOLUME}" \
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl \
@@ -40,12 +42,14 @@ function start_addon(){
   local HYPERKUBE_IMAGE_NAME="$1"
   local KUBE_ETC="$2"
   local KUBECONFIG_PATH="$3"
-  local ADDON_DIR="$4"
+  local KUBELET_VARLIB="$4"
+  local ADDON_DIR="$5"
 
   until docker run \
     --net=host \
     --rm=true \
     --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${KUBELET_VARLIB}":"${KUBELET_VARLIB}":ro \
     --volume="${KUBE_ETC}/addons:/addons:ro" \
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl \
@@ -59,11 +63,13 @@ function set_basic_auth_secret(){
   local HYPERKUBE_IMAGE_NAME="$1"
   local KUBE_ETC="$2"
   local KUBECONFIG_PATH="$3"
+  local KUBELET_VARLIB="$4"
 
   until docker run \
     --net=host \
     --rm=true \
     --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${KUBELET_VARLIB}":"${KUBELET_VARLIB}":ro \
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl \
      --kubeconfig "${KUBECONFIG_PATH}" \
@@ -81,14 +87,16 @@ function set_kube_system_configmap_from_file(){
   local HYPERKUBE_IMAGE_NAME="$1"
   local KUBE_ETC="$2"
   local KUBECONFIG_PATH="$3"
-  local CM_NAME="$4"
-  local CM_KEY="$5"
-  local CM_DATA_FILE_PATH="$6"
+  local KUBELET_VARLIB="$4"
+  local CM_NAME="$5"
+  local CM_KEY="$6"
+  local CM_DATA_FILE_PATH="$7"
 
   until docker run \
     --net=host \
     --rm=true \
     --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${KUBELET_VARLIB}":"${KUBELET_VARLIB}":ro \
     --volume="${CM_DATA_FILE_PATH}:${CM_DATA_FILE_PATH}":ro \
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl \
@@ -378,13 +386,15 @@ function ntp_updater(){
 function set_node_schedulable(){
   local NODE_NAME="$1"
   local KUBECONFIG_PATH="$2"
-  local HYPERKUBE_IMAGE_NAME="$3"
+  local KUBELET_VARLIB="$3"
+  local HYPERKUBE_IMAGE_NAME="$4"
 
   echo "Setting this node schedulable..." 1>&2
   until docker run \
     --net=host \
     --rm=true \
     --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${KUBELET_VARLIB}":"${KUBELET_VARLIB}":ro \
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl \
      --kubeconfig "${KUBECONFIG_PATH}" \
@@ -397,14 +407,16 @@ function set_node_schedulable(){
 function update_node_labels(){
   local NODE_NAME="$1"
   local KUBECONFIG_PATH="$2"
-  local HYPERKUBE_IMAGE_NAME="$3"
-  local NODE_LABELS="$(echo "$4" | sed 's/,/ /g')"
+  local KUBELET_VARLIB="$3"
+  local HYPERKUBE_IMAGE_NAME="$4"
+  local NODE_LABELS="$(echo "$5" | sed 's/,/ /g')"
 
   echo "Update role label for this node..." 1>&2
   until docker run \
     --net=host \
     --rm=true \
     --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
+    --volume="${KUBELET_VARLIB}":"${KUBELET_VARLIB}":ro \
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl \
      --kubeconfig "${KUBECONFIG_PATH}" \
@@ -417,6 +429,9 @@ function show_usage(){
   USAGE="Usage: ${0##*/} [options...]
 Options:
 -i, --ip=IPADDR                     Host IP address (Required)
+    --token=TOKEN                   Boostrap token
+    --ca-hash=CA_HASH              To verify the TLS boostrap seed host CA cert
+    --unsafe-skip-ca-verification   Skip valid the hash of TLS boostrap seed host CA cert
 -p, --worker                        Run as k8s worker
 -t, --target-host                   The k8s host need to join
 -a, --apiserver-port=PORT           Apiserver port (Default: 6443)
@@ -438,7 +453,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:r:h"
-  local LONGOPTS="ip-cidr:,target-host:,apiserver-port:,apiserver-insecure-port:,etcd-port:,creator,worker,version:,cni-plugin:,registry:,forced-worker,reset-labels,enable-keystone,help"
+  local LONGOPTS="ip-cidr:,token:,ca-hash:,unsafe-skip-ca-verification,target-host:,apiserver-port:,apiserver-insecure-port:,etcd-port:,creator,worker,version:,cni-plugin:,registry:,forced-worker,reset-labels,enable-keystone,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -450,6 +465,18 @@ function get_options(){
           -i|--ip-cidr)
               export EX_IPCIDR="$2"
               shift 2
+              ;;
+             --token)
+              export EX_TOKEN="$2"
+              shift 2
+              ;;
+             --ca-hash)
+              export EX_CA_HASH="$2"
+              shift 2
+              ;;
+             --unsafe-skip-ca-verification)
+              export EX_UNSAFE_SKIP_CA_VERIFICATION="true"
+              shift
               ;;
           -a|--apiserver-port)
               export EX_APISERVER_PORT="$2"
@@ -516,6 +543,18 @@ function get_options(){
               ;;
       esac
   done
+
+  if [[ -n "${EX_TOKEN}" ]] \
+    && ! echo "${EX_TOKEN}" | grep -q '^[a-z0-9]\{6\}\.[a-z0-9]\{16\}$'; then
+    echo "wrong boostrap token: ${EX_TOKEN}" 1>&2
+    exit 1
+  fi
+  if [[ -n "${EX_TOKEN}" ]] \
+    && [[ -z "${EX_CA_HASH}" ]] \
+    && [[ "${EX_UNSAFE_SKIP_CA_VERIFICATION}" != "true" ]]; then
+    echo "use '--ca-hash=CA_HASH' or '--unsafe-skip-ca-verification'" 1>&2
+    exit 1
+  fi
 
   local IPCIDR_PATTERN="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\/[0-9]\{1,2\}"
   if [[ -z "$(echo "${EX_IPCIDR}" | grep -o "${IPCIDR_PATTERN}")" ]] || \
@@ -656,6 +695,10 @@ function main(){
   local IPADDR="$(echo "${IPCIDR}" | cut -d '/' -f 1)"
   local NODE_NAME="${EX_NODE_NAME:-$(hostname)}" && unset EX_NODE_NAME
   local CNI_PLUGIN="${EX_CNI_PLUGIN}" && unset EX_CNI_PLUGIN
+  local TOKEN="${EX_TOKEN}" && unset EX_TOKEN
+  local CA_HASH="${EX_CA_HASH}" && unset EX_CA_HASH
+  local UNSAFE_SKIP_CA_VERIFICATION="${EX_UNSAFE_SKIP_CA_VERIFICATION}" && unset EX_UNSAFE_SKIP_CA_VERIFICATION
+  local BOOTSTRAP_TOKEN="${TOKEN}"
   local ETCD_PROXY=""
   local APIHOST=""
   local APISERVER=""
@@ -691,6 +734,23 @@ function main(){
   local HYPERKUBE_IMAGE_NAME="${REGISTRY}/hyperkube-amd64:v${K8S_VERSION}"
   local K8S_VER_MAJOR_MINOR="$(echo "${K8S_VERSION}" | grep -o '^[0-9]\+.[0-9]\+')"
 
+  # echo "Cleaning up kube-proxy old iptables rules..." 1>&2
+  cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE_NAME}" 2>/dev/null || true
+
+  # Remove old/duplicate iptables rules
+  while read -r RM_RULE_CMD; do
+    bash -c "${RM_RULE_CMD}"
+  done < <(iptables-save \
+           | grep 'comment k8sup' \
+           | grep 10.0.0.1/32 \
+           | sed "s/^-A/-D/g" \
+           | sed -n 's|\(^.*$\)|iptables -w -t nat \1|p')
+  # Remove old route rules
+  if ip route | grep -w "^10.0.0.1 dev" 1>/dev/null; then
+    ip route delete "10.0.0.1"
+  fi
+
+  # echo "Getting or generating certs..." 1>&2
   if [[ "${CREATOR}" == "true" ]]; then
     APIHOST="127.0.0.1:6443"
 
@@ -744,14 +804,19 @@ function main(){
 
     mkdir -p "${BT_DIR}"
     cp -rf "${BT_LOCAL_DIR}"/. "${BT_DIR}"
-    local BOOTSTRAP_TOKEN_ID="$(head -c 3 /dev/urandom | od -An -t x | tail -c 7)"
-    local BOOTSTRAP_TOKEN_SECRET="$(head -c 8 /dev/urandom | od -An -t x | tr -d ' ')"
-    local BOOTSTRAP_TOKEN="${BOOTSTRAP_TOKEN_ID}.${BOOTSTRAP_TOKEN_SECRET}"
+    if [[ -z "${BOOTSTRAP_TOKEN}" ]]; then
+      local BOOTSTRAP_TOKEN_ID="$(od -An -t x -N 3 /dev/urandom | tail -c 7)"
+      local BOOTSTRAP_TOKEN_SECRET="$(od -An -t x -N 8 /dev/urandom | tr -d ' ')"
+      local BOOTSTRAP_TOKEN="${BOOTSTRAP_TOKEN_ID}.${BOOTSTRAP_TOKEN_SECRET}"
+    else
+      local BOOTSTRAP_TOKEN_ID="${BOOTSTRAP_TOKEN:0:6}"
+      local BOOTSTRAP_TOKEN_SECRET="${BOOTSTRAP_TOKEN:7:16}"
+    fi
     local BOOTSTRAP_TOKEN_ID_BASE64="$(echo -n "${BOOTSTRAP_TOKEN_ID}" | base64 -w 0)"
     local BOOTSTRAP_TOKEN_SECRET_BASE64="$(echo -n "${BOOTSTRAP_TOKEN_SECRET}" | base64 -w 0)"
     local CA_CERT_BASE64="$(base64 -w 0 ${KUBE_ETC}/k8s-assets/tls/ca.crt)"
     local EXPIRATION_RFC3339_BASE64="$(date -d '+ +24 hour' "+%Y-%m-%dT%TZ" | tr -d '\n' | base64 -w 0)"
-    local HTTPS_KUBE_APISERVER_IP_PORT="${APISERVER_CLUSTER_IP}:443"
+    local BOOTSTRAP_KUBE_APISERVER_IP_PORT="https://${APISERVER_CLUSTER_IP}:443"
     sed -i "s|{{ K8S_VER_MAJOR_MINOR }}|${K8S_VER_MAJOR_MINOR}|g" "${BT_DIR}/kubelet-config.yaml"
     sed -i "s|{{ KUBEDNS_CLUSTER_IP }}|${KUBEDNS_CLUSTER_IP}|g" "${BT_DIR}/kubelet-config.yaml"
     sed -i "s|{{ EXPIRATION_RFC3339_BASE64 }}|${EXPIRATION_RFC3339_BASE64}|g" "${BT_DIR}/bootstrap-token-srcret.yaml"
@@ -759,7 +824,7 @@ function main(){
     sed -i "s|{{ BOOTSTRAP_TOKEN_SECRET_BASE64 }}|${BOOTSTRAP_TOKEN_SECRET_BASE64}|g" "${BT_DIR}/bootstrap-token-srcret.yaml"
     sed -i "s|{{ BOOTSTRAP_TOKEN_ID }}|${BOOTSTRAP_TOKEN_ID}|g" "${BT_DIR}/bootstrap-token-srcret.yaml"
     sed -i "s|{{ CA_CERT_BASE64 }}|${CA_CERT_BASE64}|g" "${BT_DIR}/cluster-info.yaml"
-    sed -i "s|{{ HTTPS_KUBE_APISERVER_IP_PORT }}|${HTTPS_KUBE_APISERVER_IP_PORT}|g" "${BT_DIR}/cluster-info.yaml"
+    sed -i "s|{{ BOOTSTRAP_KUBE_APISERVER_IP_PORT }}|${BOOTSTRAP_KUBE_APISERVER_IP_PORT}|g" "${BT_DIR}/cluster-info.yaml"
 
     local APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
     if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
@@ -863,43 +928,72 @@ function main(){
     cp -f "${KUBE_ETC}/k8s-assets/auth/kubeconfig" "${KUBE_ETC}/kubeconfig"
     cp -f "${KUBE_ETC}/k8s-assets/tls/ca.crt" "${KUBE_ETC}/ca.crt"
 
+    # Write an empty kubelet-config
+    mkdir -p "/var/lib/kubelet"
+    echo "kind: KubeletConfiguration" > "${KUBELET_VARLIB}/config.yaml"
+    echo "apiVersion: kubelet.config.k8s.io/v1beta1" >> "${KUBELET_VARLIB}/config.yaml"
+
+    local CA_HASH="$(openssl x509 -pubkey -in "${KUBE_ETC}/ca.crt" \
+      | openssl rsa -pubin -outform der 2>/dev/null \
+      | openssl dgst -sha256 -hex \
+      | sed 's/^.* //')"
+
+    # Add a new route rule
+    echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
+    iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 \
+      -m comment --comment "k8sup" -j DNAT --to-dest "${APIHOST}"
   else
     APIHOST="${TARGET_HOST}"
 
-    TARGET_HOST_IP="$(echo "${TARGET_HOST}" | cut -d ':' -f 1)"
-    until TMP="$(curl -s "${TARGET_HOST_IP}:23555/kubeconfig")"; do
-      echo "Trying to get kubeconfig..." 1>&2
-      sleep 1
+    # Add a new route rule
+    echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
+    iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 \
+      -m comment --comment "k8sup" -j DNAT --to-dest "${APIHOST}"
+
+    local CLUSTER_INFO RC
+    while true; do
+      echo "Try to get cluster-info from seed host: https://${APISERVER_CLUSTER_IP}:443 ..."
+      CLUSTER_INFO="$(curl -ksf https://${APISERVER_CLUSTER_IP}:443/api/v1/namespaces/kube-public/configmaps/cluster-info)"
+      RC="$?"
+    if [[ -n "${CLUSTER_INFO}" ]] && [[ "${RC}" == "0" ]]; then
+      break
+    else
+      sleep 5
+    fi
     done
-    echo "${TMP}" | jq -r . | base64 -d > "${KUBE_ETC}/kubeconfig"
-    until TMP="$(curl -s "${TARGET_HOST_IP}:23555/kubeletca")"; do
-      echo "Trying to get kubelet ca.crt..." 1>&2
-      sleep 1
+    local CA_CERT_BASE64="$(echo "${CLUSTER_INFO}" | jq -r '.data.kubeconfig' | sed -n 's|    certificate-authority-data: \(.*\)|\1|p')"
+    local CA_CERT="$(echo "${CA_CERT_BASE64}" | base64 -d)"
+    local BOOTSTRAP_KUBE_APISERVER_IP_PORT="$(echo "${CLUSTER_INFO}" | jq -r '.data.kubeconfig' | sed -n 's|    server: \(.*\)|\1|p')"
+    echo "${CA_CERT}" > "${KUBE_ETC}/ca.crt"
+    local CA_HASH_LOCAL="$(openssl x509 -pubkey -in <(echo "${CA_CERT}") \
+      | openssl rsa -pubin -outform der 2>/dev/null \
+      | openssl dgst -sha256 -hex \
+      | sed 's/^.* //')"
+    if [[ "${UNSAFE_SKIP_CA_VERIFICATION}" != "true" ]]; then
+      if [[ "${CA_HASH}" != "${CA_HASH_LOCAL}" ]]; then
+        echo "CA cert hash verification failed" 1>&2
+        exit 1
+      fi
+    else
+      CA_HASH="${CA_HASH_LOCAL}"
+    fi
+    cp "/workdir/assets/k8sup/kube-conf/kubeconfig/bootstrap-kubelet.conf" "${KUBE_ETC}/bootstrap-kubelet.conf"
+    sed -i "s|{{ BOOTSTRAP_TOKEN }}|${BOOTSTRAP_TOKEN}|g" "${KUBE_ETC}/bootstrap-kubelet.conf"
+    sed -i "s|{{ CA_CERT_BASE64 }}|${CA_CERT_BASE64}|g" "${KUBE_ETC}/bootstrap-kubelet.conf"
+    sed -i "s|{{ BOOTSTRAP_KUBE_APISERVER_IP_PORT }}|${BOOTSTRAP_KUBE_APISERVER_IP_PORT}|g" "${KUBE_ETC}/bootstrap-kubelet.conf"
+    while true; do
+      echo "Try to get kubelet-config from the seed host: ${BOOTSTRAP_KUBE_APISERVER_IP_PORT} ..."
+      local KUBELET_CONFIG="$(curl -ks -H "Authorization: Bearer ${BOOTSTRAP_TOKEN}" \
+        "${BOOTSTRAP_KUBE_APISERVER_IP_PORT}/api/v1/namespaces/kube-system/configmaps/kubelet-config-1.11" \
+        | jq -r '.data.kubelet')"
+      if [[ -n "${KUBELET_CONFIG}" ]] && [[ "${KUBELET_CONFIG}" != "null" ]]; then
+        break
+      else
+        sleep 5
+      fi
     done
-    echo "${TMP}" | jq -r . | base64 -d > "${KUBE_ETC}/ca.crt"
+    echo "${KUBELET_CONFIG}" > "${KUBELET_VARLIB}/config.yaml"
   fi
-
-  # echo "Cleaning up kube-proxy old iptables rules..." 1>&2
-  cleanup_old_kubeproxy_iptables "${HYPERKUBE_IMAGE_NAME}" 2>/dev/null || true
-
-  # echo "Getting or generating certs..." 1>&2
-
-  echo "Preparing a temporary iptable rule: 10.0.0.1:443 -> ${APIHOST} ..."
-  # Remove old/duplicate iptables rules
-  while read -r RM_RULE_CMD; do
-    bash -c "${RM_RULE_CMD}"
-  done < <(iptables-save \
-           | grep 'comment k8sup' \
-           | grep 10.0.0.1/32 \
-           | sed "s/^-A/-D/g" \
-           | sed -n 's|\(^.*$\)|iptables -w -t nat \1|p')
-  # Remove old route rules
-  if ip route | grep -w "^10.0.0.1 dev" 1>/dev/null; then
-    ip route delete "10.0.0.1"
-  fi
-  # Add a new route rule
-  iptables -w -t nat -I OUTPUT --dest 10.0.0.1 -p tcp --dport 443 \
-    -m comment --comment "k8sup" -j DNAT --to-dest "${APIHOST}"
 
   # Make sure that this host will use the right interface while accessing API server
   local IFACE="$(ip addr | grep -B2 "inet ${IPCIDR}" | sed -n "s|^[0-9]\+: \(.*\): .*|\1|p" | cut -d '@' -f 1)"
@@ -953,6 +1047,9 @@ function main(){
       /hyperkube kubelet \
           --allow-privileged=true \
           --kubeconfig="${KUBECONFIG_PATH}" \
+          --bootstrap-kubeconfig="${KUBE_ETC}/bootstrap-kubelet.conf" \
+          --config="${KUBELET_VARLIB}/config.yaml" \
+          --resolv-conf=/run/systemd/resolve/resolv.conf \
           --client-ca-file="${KUBE_ETC}/ca.crt" \
           --v="${K8S_DEBUG_LEVEL}" \
           --node-ip="${IPADDR}" \
@@ -972,8 +1069,8 @@ function main(){
           --node-labels="${NODE_LABELS}"
 
   if [[ "${CREATOR}" == "true" ]]; then
-    set_basic_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" &
-    set_kube_system_configmap_from_file "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "abac-policy" "abac-policy-file.jsonl" "${KUBE_ETC}/abac-policy-file.jsonl" &
+    set_basic_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" &
+    set_kube_system_configmap_from_file "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "abac-policy" "abac-policy-file.jsonl" "${KUBE_ETC}/abac-policy-file.jsonl" &
 
     docker run \
     --rm=true \
@@ -998,26 +1095,29 @@ function main(){
     sleep 1
   done
 
-  set_node_schedulable "${NODE_NAME}" "${KUBECONFIG_PATH}" "${HYPERKUBE_IMAGE_NAME}"
-  update_node_labels "${NODE_NAME}" "${KUBECONFIG_PATH}" "${HYPERKUBE_IMAGE_NAME}" "${NODE_LABELS}"
+  set_node_schedulable "${NODE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}"
+  update_node_labels "${NODE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "${HYPERKUBE_IMAGE_NAME}" "${NODE_LABELS}"
 
   if [[ "${CREATOR}" == "true" ]]; then
     echo "Try to start NTP server..." 1>&2
-    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "ntp-server"
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "ntp-server"
 
     # New url: https://<NODE_IP>/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
     echo "Try to start kubernetes-dashboard..." 1>&2
-    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "kubernetes-dashboard"
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "kubernetes-dashboard"
 
     echo "Try to set the bootstrap token up" 1>&2
-    run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${BT_DIR}:/yaml" "create -f /yaml"
-  fi
-
-  if [[ "${WORKER}" == "false" ]]; then
-    /opt/bin/kubelet-cert-distributor &
+    run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "${BT_DIR}:/yaml" "create -f /yaml"
   fi
 
   check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
+
+  if [[ -n "${BOOTSTRAP_TOKEN}" ]]; then
+    echo -e "\033[1;31mBootstrap token: ${BOOTSTRAP_TOKEN}\033[0m"
+  fi
+  if [[ -n "${CA_HASH}" ]]; then
+    echo -e "\033[1;31mSeed host CA hash: ${CA_HASH}\033[0m"
+  fi
 
   echo "kubelet started!" 1>&2
 }

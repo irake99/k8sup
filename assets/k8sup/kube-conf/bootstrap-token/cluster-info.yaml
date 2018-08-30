@@ -5,7 +5,7 @@ data:
     clusters:
     - cluster:
         certificate-authority-data: {{ CA_CERT_BASE64 }}
-        server: https://{{ HTTPS_KUBE_APISERVER_IP_PORT }}
+        server: {{ BOOTSTRAP_KUBE_APISERVER_IP_PORT }}
       name: ""
     contexts: []
     current-context: ""
