@@ -207,13 +207,41 @@ If you want to delete etcd data:
 $ sudo rm -rf /var/lib/etcd/*
 ```
 
-<!---TODO: Need to update--->
-To access the dashboard:
+---
+
+Dashboard:
+
+1. Get a Bearer Token of the 'admin-user' Service Account:
 ```
-Browse https://<your-master-node-ip>:6443/ui
-user:     admin
-password: admin
+$ SECRET="$(kubectl -n kube-system get sa admin-user -o yaml \
+    | awk '/admin-user-token/ {print $3}')"; \
+  kubectl -n kube-system describe secret "${SECRET}" \
+  | sed -n 's/token:\s*\(.*\)/\1/p'
 ```
+
+2. Use SSH tunnel to connect your local machine to the one of master node.
+
+   SSH tunnel example:
+```
+$ SSH_USER="core"
+$ K8S_NODE_IP="192.168.56.101"
+$ ssh "${SSH_USER}@${K8S_NODE_IP}" -L 8001:localhost:8001
+```
+
+3. Create a secure channel to your kube-apiserver. Run the following command on the node where you connected by SSH tunnel:
+```
+$ kubectl proxy
+```
+Now access Dashboard at:
+```
+http://localhost:8001/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
+```
+
+4. Use the Bearer Token to login the Dashboard.
+
+In other words, the Dashboard can **only** be accessed from the machine where the command is executed. So You can use SSH tunnel to connect your local machine to the one of master node then start kubectl proxy **or** run kubectl proxy directly on your local machine with your kubeconfig.
+
+---
 
 NOTE:
 
