@@ -6,7 +6,8 @@ Default behavior:
 1. If only one cluster is discovered, join it automatically.
 2. If more than one cluster are discovered, start a new cluster.
 
-You can specify the same cluster ID to multiple nodes that it will make them become the same cluster. Conversely, You can also specify a different cluster ID to start node(s) as another cluster.
+About cluster ID:  
+You can specify the same cluster ID (or name) to multiple nodes that it will make them become the same cluster. Conversely, You can also specify a different cluster ID (or name) to start node(s) as another cluster.
 
 ```
 Options:
@@ -35,24 +36,29 @@ Options:
 
 ---
 
+About bootstrap token:  
 You can use '--ca-hash=CA_HASH' after the seed (first) host started and prompted (deploy method 1), or use '--unsafe-skip-ca-verification' on all hosts at the same time (deploy method 2).
 
-Deploy method 1:
+Examples:
 
-Put the token and CA hash and run k8s on the seed host:
+Deploy method 1 on CoreOS:
+
+Put the token and CA hash and run k8s on the seed node:
 ```
+$ CLUSTER_ID_OR_NAME="my-cluster"
+$ NETADDR="192.168.56.0/24"
 $ docker pull cdxvirt/k8sup:k8s-1.11
 $ docker run -d \
     --privileged \
     --net=host \
     --pid=host \
     --restart=always \
-    -v $(which docker):/bin/docker:ro \
+    -v /run/torcx/bin/docker:/bin/docker:ro \
     -v /run/systemd:/run/systemd \
     -v /etc/modprobe.d/:/etc/modprobe.d \
     -v /etc/systemd/network/:/etc/systemd/network \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /usr/lib/:/host/lib:ro \
+    -v /run/torcx/unpack/docker/lib:/host/lib:ro \
     -v /lib/modules:/lib/modules:ro \
     -v /etc/cni:/etc/cni \
     -v /var/lib/cni:/var/lib/cni \
@@ -61,9 +67,11 @@ $ docker run -d \
     -v /etc/kubernetes:/etc/kubernetes \
     --name=k8sup \
     cdxvirt/k8sup:k8s-1.11 \
-    --network={your-subnet-id/mask}
+    --cluster="${CLUSTER_ID_OR_NAME}" \
+    --network="${NETADDR}"; \
+      && docker logs -f k8sup
 ```
-And you will get the prompt of boostrap token and seed host CA hash like this:
+And you will get the prompt of boostrap token and seed node CA hash like this:
 ```
 Bootstrap token: a40d40.9290474d10999472
 Seed host CA hash: aa1f1751d09e231d9705b9ba513d380ee83f5087d0a5dbd8cd0f1d49432dee24
@@ -71,18 +79,22 @@ Seed host CA hash: aa1f1751d09e231d9705b9ba513d380ee83f5087d0a5dbd8cd0f1d49432de
 
 Then run k8s on all other hosts:
 ```
+$ TOKEN="a40d40.9290474d10999472"
+$ CA_HASH="aa1f1751d09e231d9705b9ba513d380ee83f5087d0a5dbd8cd0f1d49432dee24"
+$ CLUSTER_ID_OR_NAME="my-cluster"
+$ NETADDR="192.168.56.0/24"
 $ docker pull cdxvirt/k8sup:k8s-1.11
 $ docker run -d \
     --privileged \
     --net=host \
     --pid=host \
     --restart=always \
-    -v $(which docker):/bin/docker:ro \
+    -v /run/torcx/bin/docker:/bin/docker:ro \
     -v /run/systemd:/run/systemd \
     -v /etc/modprobe.d/:/etc/modprobe.d \
     -v /etc/systemd/network/:/etc/systemd/network \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /usr/lib/:/host/lib:ro \
+    -v /run/torcx/unpack/docker/lib:/host/lib:ro \
     -v /lib/modules:/lib/modules:ro \
     -v /etc/cni:/etc/cni \
     -v /var/lib/cni:/var/lib/cni \
@@ -91,34 +103,38 @@ $ docker run -d \
     -v /etc/kubernetes:/etc/kubernetes \
     --name=k8sup \
     cdxvirt/k8sup:k8s-1.11 \
-    --token={your-token} \
-    --ca-hash={your-ca-hash} \
-    --network={your-subnet-id/mask}
+    --token="${TOKEN}" \
+    --ca-hash="${CA_HASH}" \
+    --cluster="${CLUSTER_ID_OR_NAME}" \
+    --network="${NETADDR}"; \
+      && docker logs -f k8sup
 ```
 
 ---
 
-Deploy method 2:
+Deploy method 2 on CoreOS:
 
 Generate a new bootstrap token:
 ```
-TOKEN="$(od -An -t x -N 12 /dev/urandom | tr -d ' ' | tail -c 23 | sed 's/./&./6')"
+$ TOKEN="$(od -An -t x -N 12 /dev/urandom | tr -d ' ' | tail -c 23 | sed 's/./&./6')"
 ```
 
 Run k8s on all hosts at the same time:
 ```
+$ CLUSTER_ID_OR_NAME="my-cluster"
+$ NETADDR="192.168.56.0/24"
 $ docker pull cdxvirt/k8sup:k8s-1.11
 $ docker run -d \
     --privileged \
     --net=host \
     --pid=host \
     --restart=always \
-    -v $(which docker):/bin/docker:ro \
+    -v /run/torcx/bin/docker:/bin/docker:ro \
     -v /run/systemd:/run/systemd \
     -v /etc/modprobe.d/:/etc/modprobe.d \
     -v /etc/systemd/network/:/etc/systemd/network \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /usr/lib/:/host/lib:ro \
+    -v /run/torcx/unpack/docker/lib:/host/lib:ro \
     -v /lib/modules:/lib/modules:ro \
     -v /etc/cni:/etc/cni \
     -v /var/lib/cni:/var/lib/cni \
@@ -129,60 +145,56 @@ $ docker run -d \
     cdxvirt/k8sup:k8s-1.11 \
     --token=${TOKEN} \
     --unsafe-skip-ca-verification \
-    --network={your-subnet-id/mask}
+    --cluster="${CLUSTER_ID_OR_NAME}" \
+    --network="${NETADDR}"; \
+      && docker logs -f k8sup
 ```
 
 ---
 
-Stop k8s:
+Download kubectl:
 ```
-$ docker run \
-    --privileged \
-    --net=host \
-    --pid=host \
-    --rm=true \
-    -v $(which docker):/bin/docker:ro \
-    -v /run/systemd:/run/systemd \
-    -v /etc/modprobe.d/:/etc/modprobe.d \
-    -v /etc/systemd/network/:/etc/systemd/network \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /usr/lib/:/host/lib:ro \
-    -v /lib/modules:/lib/modules:ro \
-    -v /usr/sbin/modprobe:/usr/sbin/modprobe:ro \
-    -v /opt/bin:/opt/bin:rw \
-    -v /etc/cni:/etc/cni \
-    -v /var/lib/cni:/var/lib/cni \
-    -v /var/lib/etcd:/var/lib/etcd \
-    -v /var/lib/kubelet:/var/lib/kubelet \
-    -v /etc/kubernetes:/etc/kubernetes \
-    --entrypoint=/workdir/assets/k8sup/kube-down \
-    cdxvirt/k8sup:k8s-1.11
+$ sudo -i
+  RELEASE="$(curl -sSL "https://dl.k8s.io/release/stable.txt")"; \
+  mkdir -p /opt/bin; \
+  cd /opt/bin; \
+  curl -L --remote-name-all \
+  "https://storage.googleapis.com/kubernetes-release/release/${RELEASE}/bin/linux/amd64/kubectl"; \
+  chmod +x kubectl
 ```
 
-Remove k8s from node:
+Setup kubectl:
 ```
-$ docker run \
-    --privileged \
-    --net=host \
-    --pid=host \
-    --rm=true \
-    -v $(which docker):/bin/docker:ro \
-    -v /run/systemd:/run/systemd \
-    -v /etc/modprobe.d/:/etc/modprobe.d \
-    -v /etc/systemd/network/:/etc/systemd/network \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /usr/lib/:/host/lib:ro \
-    -v /lib/modules:/lib/modules:ro \
-    -v /usr/sbin/modprobe:/usr/sbin/modprobe:ro \
-    -v /opt/bin:/opt/bin:rw \
-    -v /etc/cni:/etc/cni \
-    -v /var/lib/cni:/var/lib/cni \
-    -v /var/lib/etcd:/var/lib/etcd \
-    -v /var/lib/kubelet:/var/lib/kubelet \
-    -v /etc/kubernetes:/etc/kubernetes \
-    --entrypoint=/workdir/assets/k8sup/kube-down \
-    cdxvirt/k8sup:k8s-1.11 \
-    --remove
+$ sudo mkdir -p /root/.kube; \
+  sudo cp -i /etc/kubernetes/kubeconfig /root/.kube/config; \
+  echo "alias kubectl='sudo kubectl'" >> ~/.bashrc; source ~/.bashrc
+```
+
+---
+
+Stop k8sup on a node and **remove** the node from the cluster:
+```
+$ kubectl delete node "$(hostname)"; \
+  etcdctl member remove "$(etcdctl member list \
+    | grep "$(hostname)" \
+    | awk '{print $1}' \
+    | sed 's/.$//')" ;\
+  docker rm -fv k8sup-kubelet k8sup-etcd k8sup; \
+  docker rm -fv $(docker ps -a --filter name=k8s_ -q); \
+  awk '$2 ~ path {print $2}' path=/var/lib/kubelet /proc/mounts \
+    | sudo xargs -r umount; \
+  sudo rm -rf \
+    /var/lib/etcd/* \
+    /var/lib/kubelet \
+    /etc/kubernetes
+```
+
+Stop k8sup on a node and **keep** the node in the cluster:
+```
+$ docker rm -fv k8sup-kubelet k8sup-etcd k8sup; \
+  docker rm -fv $(docker ps -a --filter name=k8s_ -q); \
+  awk '$2 ~ path {print $2}' path=/var/lib/kubelet /proc/mounts \
+    | sudo xargs -r umount
 ```
 
 Show k8sup log and Cluster ID:
