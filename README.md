@@ -232,10 +232,8 @@ $ ssh "${SSH_USER}@${K8S_NODE_IP}" -L 8001:localhost:8001
 ```
 $ kubectl proxy
 ```
-Now access Dashboard at:
-```
+Now access Dashboard at:  
 http://localhost:8001/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
-```
 
 4. Use the Bearer Token to login the Dashboard.
 
