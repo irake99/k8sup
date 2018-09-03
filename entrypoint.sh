@@ -67,6 +67,7 @@ function get_all_authorized_keys_from_k8s_secrets(){
     if [[ "$?" != "0" ]]; then
       # Failed to get the response from the kube-apiserver
       # Try again
+      sleep "${INTERVAL}"
       continue
     fi
     KEYS="$(echo "${RESPONSE}" | jq -r '.data[]?' 2>/dev/null)"
