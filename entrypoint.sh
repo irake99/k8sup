@@ -56,7 +56,7 @@ function get_all_authorized_keys_from_k8s_secrets(){
     touch "${KEY_FILE}"
     chmod 600 "${KEY_FILE}"
   fi
-  URL="https://10.0.0.1:443/api/v1/namespaces/default/secrets/k8sup-authorized-keys"
+  URL="https://10.0.0.1:443/api/v1/namespaces/kube-system/secrets/k8sup-authorized-keys"
   while true; do
     DECODED_KEYS=""
     RESPONSE="$(curl -sf "${URL}" \
