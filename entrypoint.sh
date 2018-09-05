@@ -1,56 +1,31 @@
 #!/bin/bash
 
 # Environment variables
-ENV_KUBECONFIG_PATH="/etc/kubernetes/kubeconfig"
-ENV_PKI="/etc/kubernetes/pki"
+ENV_CA_FILEPATH="/etc/kubernetes/ca.crt"
+ENV_TOKEN_PATH="/etc/kubernetes/tokens/admin"
+ENV_INTERVAL="10"
 
 # Make alias work in non-interactive environment
 shopt -s expand_aliases
 
-function get_tls_data(){
-  local DATA DATA_PATH DATA_KEY="$1"
-  DATA="$(sed -n "s|\s*${DATA_KEY}-data: \(.*\)|\1|p" "${ENV_KUBECONFIG_PATH}")"
-  if [[ -n "${DATA}" ]]; then
-    echo "${DATA}" | base64 -d
-    return 0
-  fi
-  DATA_PATH="$(sed -n "s|\s*${DATA_KEY}: \(.*\)|\1|p" "${ENV_KUBECONFIG_PATH}")"
-  if [[ -s "${DATA_PATH}" ]]; then
-    cat "${DATA_PATH}"
-    return 0
-  else
-    echo "could not get TLS data of ${DATA_KEY}" 1>&2
-    return 1
-  fi
-}
-
-function make_k8s_tls_certs(){
-  local ENV_PKI CA CERT KEY
-  until [[ -s "${ENV_KUBECONFIG_PATH}" ]]; do
-    echo "[sync_ssh_keys] wait for ${ENV_KUBECONFIG_PATH} existing..." 1>&2
-    sleep 5
+function get_admin_token(){
+  until [[ -s "${ENV_TOKEN_PATH}" ]]; do
+    sleep "${ENV_INTERVAL}"
   done
-  CA="$(get_tls_data "certificate-authority")" || exit "$?"
-  CERT="$(get_tls_data "client-certificate")" || exit "$?"
-  KEY="$(get_tls_data "client-key")" || exit "$?"
-
-  ENV_PKI="/etc/kubernetes/pki"
-  mkdir -p "${ENV_PKI}"
-  echo "${CA}"   > "${ENV_PKI}/ca.crt"
-  echo "${CERT}" > "${ENV_PKI}/kubelet.crt"
-  echo "${KEY}"  > "${ENV_PKI}/kubelet.key"
+  cat "${ENV_TOKEN_PATH}"
 }
 
 function hold_until_kube_apiserver_started(){
   local URL="https://10.0.0.1:443/api/v1/namespaces/kube-public/configmaps/cluster-info"
-  until curl -ksf "${URL}" &>/dev/null; do
+  until curl -ksf "${URL}" &>/dev/null \
+    && [[ -s "${ENV_TOKEN_PATH}" ]]; do
     sleep 1
   done
 }
 
 function get_all_authorized_keys_from_k8s_secrets(){
-  local INTERVAL="10"
-  local KEYS DECODED_KEYS URL RESPONSE KEY_FILE=~/".ssh/authorized_keys"
+  local KEYS DECODED_KEYS URL RESPONSE TOKEN KEY_FILE=~/".ssh/authorized_keys"
+  TOKEN="$(get_admin_token)"
   if [[ ! -f "${KEY_FILE}" ]]; then
     mkdir -p ~/".ssh"
     touch "${KEY_FILE}"
@@ -60,14 +35,13 @@ function get_all_authorized_keys_from_k8s_secrets(){
   while true; do
     DECODED_KEYS=""
     RESPONSE="$(curl -sf "${URL}" \
-              --cacert "${ENV_PKI}/ca.crt" \
-              --cert "${ENV_PKI}/kubelet.crt" \
-              --key "${ENV_PKI}/kubelet.key" \
-              2>/dev/null)"
+                  --cacert "${ENV_CA_FILEPATH}" \
+                  -H "Authorization: Bearer ${TOKEN}" \
+                  2>/dev/null)"
     if [[ "$?" != "0" ]]; then
       # Failed to get the response from the kube-apiserver
       # Try again
-      sleep "${INTERVAL}"
+      sleep "${ENV_INTERVAL}"
       continue
     fi
     KEYS="$(echo "${RESPONSE}" | jq -r '.data[]?' 2>/dev/null)"
@@ -77,7 +51,7 @@ function get_all_authorized_keys_from_k8s_secrets(){
         > "${KEY_FILE}"
         echo "authorized_keys updated!"
       fi
-      sleep "${INTERVAL}"
+      sleep "${ENV_INTERVAL}"
       continue
     fi
     # Decode line by line, because this base64 command doesn't support multiple line decoding
@@ -91,7 +65,7 @@ function get_all_authorized_keys_from_k8s_secrets(){
       echo "${DECODED_KEYS}" > "${KEY_FILE}"
       echo "authorized_keys updated!"
     fi
-    sleep "${INTERVAL}"
+    sleep "${ENV_INTERVAL}"
   done
 }
 
@@ -114,7 +88,6 @@ function main(){
     hold_until_kube_apiserver_started
 
     # Try to get client ssh keys from k8s secrets
-    make_k8s_tls_certs
     get_all_authorized_keys_from_k8s_secrets &
   fi
 
