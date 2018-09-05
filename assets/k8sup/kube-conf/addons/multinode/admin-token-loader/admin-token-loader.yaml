@@ -22,7 +22,7 @@ spec:
         - sh
         - -e
         - -c
-        - cat /var/run/secrets/kubernetes.io/serviceaccount/token > /tokens/admin && echo 'succeeded'; tail -f /dev/null
+        - (umask 066; touch '/tokens/admin') && cat /var/run/secrets/kubernetes.io/serviceaccount/token > '/tokens/admin' && echo 'succeeded'; tail -f /dev/null
         volumeMounts:
         - name: tokens
           mountPath: /tokens
