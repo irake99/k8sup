@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  namespace: kube-system
+  name: admin-token-loader
+  labels:
+    name: admin-token-loader
+spec:
+  selector:
+    matchLabels:
+      name: admin-token-loader
+  template:
+    metadata:
+      name: admin-token-loader
+      labels:
+        name: admin-token-loader
+    spec:
+      containers:
+      - name: token
+        image: busybox
+        command:
+        - sh
+        - -e
+        - -c
+        - cat /var/run/secrets/kubernetes.io/serviceaccount/token > /tokens/admin && echo 'succeeded'; tail -f /dev/null
+        volumeMounts:
+        - name: tokens
+          mountPath: /tokens
+      serviceAccountName: admin-user
+      volumes:
+      - name: tokens
+        hostPath:
+          path: /etc/kubernetes/tokens

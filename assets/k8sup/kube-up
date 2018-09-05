@@ -24,12 +24,16 @@ function run_kubectl(){
   local VOLUME="$4"
   local CMD="$5"
 
+  if [[ -n "${VOLUME}" ]]; then
+    local VOLUME_OPT="--volume=${VOLUME}"
+  fi
+
   until docker run \
     --net=host \
     --rm=true \
     --volume="${KUBECONFIG_PATH}":"${KUBECONFIG_PATH}":ro \
     --volume="${KUBELET_VARLIB}":"${KUBELET_VARLIB}":ro \
-    --volume="${VOLUME}" \
+    ${VOLUME_OPT} \
     "${HYPERKUBE_IMAGE_NAME}" \
     /hyperkube kubectl \
      --kubeconfig "${KUBECONFIG_PATH}" \
@@ -1108,6 +1112,9 @@ function main(){
 
     echo "Try to set the bootstrap token up" 1>&2
     run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "${BT_DIR}:/yaml" "create -f /yaml"
+
+    echo "Try to start admin-token-loader..." 1>&2
+    start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "admin-token-loader"
   fi
 
   check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
