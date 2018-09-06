@@ -63,11 +63,14 @@ function start_addon(){
   done
 }
 
-function set_basic_auth_secret(){
+function set_static_auth_secret(){
   local HYPERKUBE_IMAGE_NAME="$1"
   local KUBE_ETC="$2"
   local KUBECONFIG_PATH="$3"
   local KUBELET_VARLIB="$4"
+  local SECRET_NAME="$5"
+  local AUTH_FILENAME="$6"
+  local AUTH_FILE_CONTENT="$7"
 
   until docker run \
     --net=host \
@@ -79,12 +82,12 @@ function set_basic_auth_secret(){
      --kubeconfig "${KUBECONFIG_PATH}" \
      -n kube-system \
      create secret generic \
-     basic-auth \
-     --from-literal=basic_auth.csv="admin,admin,admin" 2>/dev/null; do
+     "${SECRET_NAME}" \
+     --from-literal="${AUTH_FILENAME}"="${AUTH_FILE_CONTENT}" 2>/dev/null; do
        sleep 1
   done
 
-  echo "Set basic auth succeed" 1>&2
+  echo "Set static auth ${AUTH_FILENAME} secret succeeded" 1>&2
 }
 
 function set_kube_system_configmap_from_file(){
@@ -899,6 +902,11 @@ function main(){
       sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/basic_auth\n          name: basic-auth\n          readOnly: true|g' "${APISERVER_YAML_FILE}"
       sed -i 's|        - apiserver|        - apiserver\n        - --basic-auth-file=/etc/kubernetes/basic_auth/basic_auth.csv|g' "${APISERVER_YAML_FILE}"
     fi
+    if ! grep -q 'token-auth-file' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: token-auth\n        secret:\n          secretName: token-auth|g' "${APISERVER_YAML_FILE}"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/token_auth\n          name: token-auth\n          readOnly: true|g' "${APISERVER_YAML_FILE}"
+      sed -i 's|        - apiserver|        - apiserver\n        - --token-auth-file=/etc/kubernetes/token_auth/token_auth.csv|g' "${APISERVER_YAML_FILE}"
+    fi
     if ! grep -q 'ABAC' "${APISERVER_YAML_FILE}"; then
       sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "${APISERVER_YAML_FILE}"
       sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "${APISERVER_YAML_FILE}"
@@ -1073,7 +1081,9 @@ function main(){
           --node-labels="${NODE_LABELS}"
 
   if [[ "${CREATOR}" == "true" ]]; then
-    set_basic_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" &
+    local STATIC_TOKEN="$(od -An -t x -N 16 /dev/urandom | tr -d ' ')"
+    set_static_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "basic-auth" "basic_auth.csv" "admin,admin,admin" &
+    set_static_auth_secret "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "token-auth" "token_auth.csv" "${STATIC_TOKEN},admin,admin" &
     set_kube_system_configmap_from_file "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "abac-policy" "abac-policy-file.jsonl" "${KUBE_ETC}/abac-policy-file.jsonl" &
 
     docker run \
@@ -1119,6 +1129,9 @@ function main(){
 
   check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
 
+  if [[ -n "${STATIC_TOKEN}" ]]; then
+    echo -e "\033[1;32mAdmin static token: ${STATIC_TOKEN}\033[0m"
+  fi
   if [[ -n "${BOOTSTRAP_TOKEN}" ]]; then
     echo -e "\033[1;31mBootstrap token: ${BOOTSTRAP_TOKEN}\033[0m"
   fi
