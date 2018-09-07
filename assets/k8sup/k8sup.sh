@@ -488,6 +488,7 @@ function kube_up(){
   local FORCED_WORKER="${EX_FORCED_WORKER}" && unset EX_FORCED_WORKER
   local ETCD_CLIENT_PORT="${EX_ETCD_CLIENT_PORT}" && unset EX_ETCD_CLIENT_PORT
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
+  local MAX_MASTER_SIZE="${EX_MAX_MASTER_SIZE}" && unset EX_MAX_MASTER_SIZE
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
   local CNI_PLUGIN="${EX_CNI_PLUGIN}" && unset EX_CNI_PLUGIN
   local CREATOR="${EX_CREATOR}" && unset EX_CREATOR
@@ -526,6 +527,9 @@ function kube_up(){
   if [[ -n "${UNSAFE_SKIP_CA_VERIFICATION}" ]]; then
     local UNSAFE_SKIP_CA_VERIFICATION_OPT="--unsafe-skip-ca-verification"
   fi
+  if [[ -n "${MAX_MASTER_SIZE}" ]]; then
+    MAX_MASTER_SIZE_OPT="--max-master-size=${MAX_MASTER_SIZE}"
+  fi
 
   /workdir/assets/k8sup/kube-up --ip-cidr="${IP_AND_MASK}" \
     "${TARGET_HOST_OPT}" \
@@ -533,6 +537,7 @@ function kube_up(){
     ${CNI_PLUGIN_OPT} \
     ${REGISTRY_OPTION} \
     ${FORCED_WORKER_OPT} \
+    ${MAX_MASTER_SIZE_OPT} \
     ${ENABLE_KEYSTONE_OPT} \
     ${CREATOR_OPT} \
     ${K8S_INSECURE_PORT_OPT} \
@@ -637,7 +642,7 @@ Options:
     --ca-hash=CA_HASH              To verify the TLS boostrap seed host CA cert
     --unsafe-skip-ca-verification  Skip valid the hash of TLS boostrap seed host CA cert
     --k8s-version=VERSION          Specify k8s version (Default: 1.11.2)
-    --max-etcd-members=NUM         Maximum etcd member size (Default: 3)
+    --max-master-size=NUM          Maximum master node size (Default: 3)
     --cni-plugin=CNI_PLUGIN        CNI plugin (flannel, calico, or canal). (default \"flannel\")
     --new                          Force to start a new cluster
     --restore                      Try to restore etcd data and start a new cluster
@@ -671,7 +676,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="n:c:r:vh"
-  local LONGOPTS="network:,cluster:,token:,ca-hash:,unsafe-skip-ca-verification,k8s-version:,flannel-version:,etcd-version:,max-etcd-members:,cni-plugin:,k8s-insecure-port:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
+  local LONGOPTS="network:,cluster:,token:,ca-hash:,unsafe-skip-ca-verification,k8s-version:,flannel-version:,etcd-version:,max-master-size:,cni-plugin:,k8s-insecure-port:,new,worker,debug,restore,restart,rejoin-etcd,start-kube-svcs-only,start-etcd-only,registry:,enable-keystone,version,help"
   local PARSED_OPTIONS=""
   local K8SUP_VERSION="0.9.0"
 
@@ -717,8 +722,8 @@ function get_options(){
               export EX_ETCD_VERSION="$2"
               shift 2
               ;;
-             --max-etcd-members)
-              export EX_MAX_ETCD_MEMBER_SIZE="$2"
+             --max-master-size)
+              export EX_MAX_MASTER_SIZE="$2"
               shift 2
               ;;
              --new)
@@ -842,8 +847,8 @@ function get_options(){
     export EX_CNI_PLUGIN="flannel"
   fi
 
-  if [[ -z "${EX_MAX_ETCD_MEMBER_SIZE}" ]]; then
-    export EX_MAX_ETCD_MEMBER_SIZE="3"
+  if [[ -z "${EX_MAX_MASTER_SIZE}" ]]; then
+    export EX_MAX_MASTER_SIZE="3"
   fi
 
   if [[ -z "${EX_K8S_INSECURE_PORT}" ]]; then
@@ -913,7 +918,7 @@ function main(){
   IP_AND_MASK="$(get_ipaddr_and_mask_from_netinfo "${NETWORK}")" || exit 1
   local IPADDR="$(echo "${IP_AND_MASK}" | cut -d '/' -f 1)"
   local NEW_CLUSTER="${EX_NEW_CLUSTER}" && unset EX_NEW_CLUSTER
-  local MAX_ETCD_MEMBER_SIZE="${EX_MAX_ETCD_MEMBER_SIZE}" && unset EX_MAX_ETCD_MEMBER_SIZE
+  local MAX_MASTER_SIZE="${EX_MAX_MASTER_SIZE}" && unset EX_MAX_MASTER_SIZE
   local RESTORE_ETCD="${EX_RESTORE_ETCD}" && unset EX_RESTORE_ETCD
   local ENABLE_KEYSTONE="${EX_ENABLE_KEYSTONE}" && unset EX_ENABLE_KEYSTONE
   local K8S_INSECURE_PORT="${EX_K8S_INSECURE_PORT}" && unset EX_K8S_INSECURE_PORT
@@ -1060,7 +1065,7 @@ function main(){
   docker stop k8sup-etcd k8sup-kubelet k8sup-certs &>/dev/null || true
   docker rm -v k8sup-etcd k8sup-kubelet k8sup-certs &>/dev/null || true
   if [[ "${CREATOR}" == "true" ]]; then
-    etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_ETCD_MEMBER_SIZE}" \
+    etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_MASTER_SIZE}" \
     "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" || exit 1
 
     local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/bin/dnssd-registering' | grep -v grep | awk '{print $1}')"
@@ -1104,6 +1109,7 @@ function main(){
   echo "export EX_K8S_INSECURE_PORT=${K8S_INSECURE_PORT}" >> "${CONFIG_FILE}"
   echo "export EX_NODE_NAME=${NODE_NAME}" >> "${CONFIG_FILE}"
   echo "export EX_IP_AND_MASK=${IP_AND_MASK}" >> "${CONFIG_FILE}"
+  echo "export EX_MAX_MASTER_SIZE=${MAX_MASTER_SIZE}" >> "${CONFIG_FILE}"
   echo "export EX_REGISTRY=${K8S_REGISTRY}" >> "${CONFIG_FILE}"
   echo "export EX_CLUSTER_ID=${CLUSTER_ID}" >> "${CONFIG_FILE}"
   echo "export EX_SUBNET_ID_AND_MASK=${SUBNET_ID_AND_MASK}" >> "${CONFIG_FILE}"

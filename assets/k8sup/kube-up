@@ -439,6 +439,7 @@ Options:
     --token=TOKEN                   Boostrap token
     --ca-hash=CA_HASH              To verify the TLS boostrap seed host CA cert
     --unsafe-skip-ca-verification   Skip valid the hash of TLS boostrap seed host CA cert
+    --max-master-size=NUM           Maximum master node size (Default: 3)
 -p, --worker                        Run as k8s worker
 -t, --target-host                   The k8s host need to join
 -a, --apiserver-port=PORT           Apiserver port (Default: 6443)
@@ -460,7 +461,7 @@ Options:
 function get_options(){
   local PROGNAME="${0##*/}"
   local SHORTOPTS="i:wa:v:r:h"
-  local LONGOPTS="ip-cidr:,token:,ca-hash:,unsafe-skip-ca-verification,target-host:,apiserver-port:,apiserver-insecure-port:,etcd-port:,creator,worker,version:,cni-plugin:,registry:,forced-worker,reset-labels,enable-keystone,help"
+  local LONGOPTS="ip-cidr:,token:,ca-hash:,unsafe-skip-ca-verification,target-host:,apiserver-port:,apiserver-insecure-port:,max-master-size:,etcd-port:,creator,worker,version:,cni-plugin:,registry:,forced-worker,reset-labels,enable-keystone,help"
   local PARSED_OPTIONS=""
 
   PARSED_OPTIONS="$(getopt -o "${SHORTOPTS}" --long "${LONGOPTS}" -n "${PROGNAME}" -- "$@")" || exit 1
@@ -511,6 +512,10 @@ function get_options(){
               ;;
           -v|--version)
               export EX_K8S_VERSION="$2"
+              shift 2
+              ;;
+             --max-master-size)
+              export EX_MAX_MASTER_SIZE="$2"
               shift 2
               ;;
              --cni-plugin)
@@ -568,6 +573,10 @@ function get_options(){
    [[ -z "$(ip addr | sed -nr "s/.*inet ([^ ]+) .*/\1/p" | grep -w "${EX_IPCIDR}")" ]]; then
     echo "IP/CIDR error, exiting..." 1>&2
     exit 1
+  fi
+
+  if [[ -z "${EX_MAX_MASTER_SIZE}" ]]; then
+    export EX_MAX_MASTER_SIZE="3"
   fi
 
   if [[ "${EX_CREATOR}" != "true" ]]; then
@@ -701,6 +710,7 @@ function main(){
   local CREATOR="${EX_CREATOR}" && unset EX_CREATOR
   local IPADDR="$(echo "${IPCIDR}" | cut -d '/' -f 1)"
   local NODE_NAME="${EX_NODE_NAME:-$(hostname)}" && unset EX_NODE_NAME
+  local MAX_MASTER_SIZE="${EX_MAX_MASTER_SIZE}" && unset EX_MAX_MASTER_SIZE
   local CNI_PLUGIN="${EX_CNI_PLUGIN}" && unset EX_CNI_PLUGIN
   local TOKEN="${EX_TOKEN}" && unset EX_TOKEN
   local CA_HASH="${EX_CA_HASH}" && unset EX_CA_HASH
@@ -1125,6 +1135,9 @@ function main(){
 
     echo "Try to start admin-token-loader..." 1>&2
     start_addon "${HYPERKUBE_IMAGE_NAME}" "${KUBE_ETC}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "admin-token-loader"
+
+    echo "Try to set the max-master-size to '${MAX_MASTER_SIZE}'..." 1>&2
+    run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "" "create configmap k8sup-conf --from-literal=MAX_MASTER_SIZE='${MAX_MASTER_SIZE}'"
   fi
 
   check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
