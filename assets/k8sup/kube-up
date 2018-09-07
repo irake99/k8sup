@@ -910,7 +910,7 @@ function main(){
     if ! grep -q 'ABAC' "${APISERVER_YAML_FILE}"; then
       sed -i 's|      volumes:$|      volumes:\n      - name: abac-policy\n        configMap:\n          name: abac-policy|g' "${APISERVER_YAML_FILE}"
       sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/kubernetes/abac-policy\n          name: abac-policy\n          readOnly: true|g' "${APISERVER_YAML_FILE}"
-      sed -i 's|RBAC|RBAC,ABAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "${APISERVER_YAML_FILE}"
+      sed -i 's|RBAC|ABAC,RBAC\n        - --authorization-policy-file=/etc/kubernetes/abac-policy/abac-policy-file.jsonl|g' "${APISERVER_YAML_FILE}"
     fi
     CONTROLLER_MANAGER_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/kube-controller-manager.yaml"
     if ! grep -q 'tokencleaner' "${CONTROLLER_MANAGER_YAML_FILE}"; then
