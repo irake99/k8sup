@@ -1060,18 +1060,16 @@ function main(){
     fi
   fi
 
-  # Update DNS-SD info
-  echo "Running etcd"
-  docker stop k8sup-etcd k8sup-kubelet k8sup-certs &>/dev/null || true
-  docker rm -v k8sup-etcd k8sup-kubelet k8sup-certs &>/dev/null || true
   if [[ "${CREATOR}" == "true" ]]; then
-    etcd_creator "${IPADDR}" "${NODE_NAME}" "${CLUSTER_ID}" "${MAX_MASTER_SIZE}" \
-    "${ETCD_CLIENT_PORT}" "${NEW_CLUSTER}" "${RESTORE_ETCD}" || exit 1
-
+    # Update DNS-SD info
     local OLD_MDNS_PID="$(ps axo pid,user,command | grep '/workdir/bin/dnssd-registering' | grep -v grep | awk '{print $1}')"
     [[ -n "${OLD_MDNS_PID}" ]] && kill ${OLD_MDNS_PID} && wait ${OLD_MDNS_PID} 2>/dev/null || true
     [[ -z "${CLUSTER_ID}" ]] && { echo "Error: No such cluster ID!" 1>&2; exit 1; }
     /workdir/bin/dnssd-registering -IPMask "${IP_AND_MASK}" -port "${K8S_PORT}" -clusterID "${CLUSTER_ID}" -creator "${CREATOR}" -started "false" -unix-nano-time "${UNIX_NANO_TIME}" 2>/dev/null &
+
+    # Make sure this is a master node
+    ROLE="master"
+    WORKER="false"
   else
     echo "This is a follower node and try to join other nodes:" 1>&2
     echo "${TARGET_HOST_LIST}" 1>&2
@@ -1079,17 +1077,10 @@ function main(){
       echo "require bootstrap token" 1>&2
       exit 1
     fi
-    if [[ "${WORKER}" == "true" ]]; then
-      local PROXY="on"
-    else
-      local PROXY="off"
-    fi
-    PROXY="$(etcd_follower "${IPADDR}" "${NODE_NAME}" "${TARGET_HOST_LIST}" "${PROXY}")" || exit 1
-  fi
-  if [[ "${PROXY}" == "on" ]]; then
+
+    # Make non-seed node as worker node before join to cluster
+    ROLE="worker"
     WORKER="true"
-  else
-    WORKER="false"
   fi
   echo "K8S worker node: ${WORKER}" 1>&2
 

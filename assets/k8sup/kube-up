@@ -609,13 +609,15 @@ function get_options(){
     export EX_CNI_PLUGIN="flannel"
   fi
 
-  if [[ "${EX_WORKER}" == "true" ]] && [[ "${EX_CREATOR}" == "true" ]]; then
-    echo "The role only can be either a creator or a worker, exiting..." 1>&2
-    exit 1
-  fi
-
-  if [[ "${EX_WORKER}" != "true" ]]; then
-    export EX_WORKER="false"
+  if [[ "${EX_CREATOR}" == "true" ]]; then
+    if [[ "${EX_WORKER}" == "true" ]]; then
+      echo "The role only can be either a creator or a worker, exiting..." 1>&2
+      exit 1
+    else
+      export EX_WORKER="false"
+    fi
+  else
+    export EX_WORKER="true"
   fi
 
   if [[ "${EX_ENABLE_KEYSTONE}" != "true" ]]; then
@@ -798,6 +800,16 @@ function main(){
       --service-cidr="10.0.0.0/24" \
       --network-provider="${CNI_PLUGIN}"
 
+    # Prepare the etcd static pod
+    local ETCD_VERSION="3.2.18"
+    mkdir -p "${KUBE_ETC}/secrets" "${KUBE_CONF_PATH}"
+    cp -rf "${KUBE_ETC}/k8s-assets/tls/etcd" "${KUBE_ETC}/secrets/etcd"
+    cp -f "${KUBE_ETC}/k8s-assets/tls/ca.crt" "${KUBE_ETC}/secrets"
+    cp "/workdir/assets/k8sup/kube-conf/etcd/etcd.yaml" "${KUBE_CONF_PATH}"
+    sed -i "s|{{ NODE_NAME }}|${NODE_NAME}|g" "${KUBE_CONF_PATH}/etcd.yaml"
+    sed -i "s|{{ ETCD_VERSION }}|${ETCD_VERSION}|g" "${KUBE_CONF_PATH}/etcd.yaml"
+
+    #---
     # Generate ca, certs, and keys
     OPENSSL_CONF_FILE_PATH="/etc/ssl/openssl.cnf"
     openssl genrsa -out "${KUBE_ETC}/front-proxy-ca.key" 2048
@@ -844,13 +856,6 @@ function main(){
     sed -i "s|{{ BOOTSTRAP_KUBE_APISERVER_IP_PORT }}|${BOOTSTRAP_KUBE_APISERVER_IP_PORT}|g" "${BT_DIR}/cluster-info.yaml"
 
     local APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
-    if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
-      sed -i '/--etcd-cafile=/d' "${APISERVER_YAML_FILE}"
-      sed -i '/--etcd-certfile=/d' "${APISERVER_YAML_FILE}"
-      sed -i '/--etcd-keyfile=/d' "${APISERVER_YAML_FILE}"
-      sed -i '/--etcd-quorum-read=/d' "${APISERVER_YAML_FILE}"
-      sed -i 's/--etcd-servers=https:\/\/.*:2379/--etcd-servers=http:\/\/127.0.0.1:2379/g' "${APISERVER_YAML_FILE}"
-    fi
     if ! grep -q 'kubelet-preferred-address' "${APISERVER_YAML_FILE}"; then
       sed -i 's|    - apiserver|    - apiserver\n    - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
         "${APISERVER_YAML_FILE}"
@@ -860,13 +865,6 @@ function main(){
         "${APISERVER_YAML_FILE}"
     fi
     APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
-    if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
-      sed -i '/--etcd-cafile=/d' "${APISERVER_YAML_FILE}"
-      sed -i '/--etcd-certfile=/d' "${APISERVER_YAML_FILE}"
-      sed -i '/--etcd-keyfile=/d' "${APISERVER_YAML_FILE}"
-      sed -i '/--etcd-quorum-read=/d' "${APISERVER_YAML_FILE}"
-      sed -i 's/--etcd-servers=https:\/\/.*:2379/--etcd-servers=http:\/\/127.0.0.1:2379/g' "${APISERVER_YAML_FILE}"
-    fi
     if ! grep -q 'kubelet-preferred-address' "${APISERVER_YAML_FILE}"; then
       sed -i 's|    - apiserver|    - apiserver\n        - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
         "${APISERVER_YAML_FILE}"
