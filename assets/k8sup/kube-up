@@ -800,14 +800,51 @@ function main(){
       --service-cidr="10.0.0.0/24" \
       --network-provider="${CNI_PLUGIN}"
 
+
+    # Generate etcd ca, certs, and keys
+    ETCD_NAMESPACE="kube-system"
+    ETCD_DN="etcd-cluster"
+    ETCD_CERT_PATH="${KUBE_ETC}/secrets/etcd"
+    OPENSSL_CONF_FILE_PATH="${KUBE_ETC}/openssl.cnf"
+    K8S_CACERT_FILE="${KUBE_ETC}/k8s-assets/tls/ca.crt"
+    K8S_CAKEY_FILE="${KUBE_ETC}/k8s-assets/tls/ca.key"
+    rm -f "${ETCD_CERT_PATH}/"*
+    rm -f "${KUBE_ETC}/k8s-assets/tls/etcd-client"*
+    mkdir -p "${ETCD_CERT_PATH}"
+    cp -f "/etc/ssl/openssl.cnf" "${OPENSSL_CONF_FILE_PATH}"
+    sed -i "s/\[ v3_req \]/[ v3_req ]\nsubjectAltName = @alt_names/g" \
+      "${OPENSSL_CONF_FILE_PATH}"
+    echo '[ alt_names ]' >> "${OPENSSL_CONF_FILE_PATH}"
+    echo "DNS.1 = *.${ETCD_DN}" >> "${OPENSSL_CONF_FILE_PATH}"
+    echo "DNS.2 = *.${ETCD_DN}.${ETCD_NAMESPACE}" >> "${OPENSSL_CONF_FILE_PATH}"
+    echo "DNS.3 = *.${ETCD_DN}.${ETCD_NAMESPACE}.svc" >> "${OPENSSL_CONF_FILE_PATH}"
+    echo "DNS.4 = *.${ETCD_DN}.${ETCD_NAMESPACE}.svc.cluster.local" >> "${OPENSSL_CONF_FILE_PATH}"
+    echo "IP.1 = 127.0.0.1" >> "${OPENSSL_CONF_FILE_PATH}"
+    CERT_NAMES="healthcheck-client etcd-client server peer"
+    for CERT_NAME in ${CERT_NAMES}; do
+      cp -f "${K8S_CACERT_FILE}" "${ETCD_CERT_PATH}/${CERT_NAME}-ca.crt"
+      openssl genrsa -out "${ETCD_CERT_PATH}/${CERT_NAME}.key" 2048
+      openssl req -new -key "${ETCD_CERT_PATH}/${CERT_NAME}.key" \
+        -out "${ETCD_CERT_PATH}/${CERT_NAME}.csr" -subj "/CN=*.${ETCD_DN}" \
+        -config ${OPENSSL_CONF_FILE_PATH} -extensions v3_req -reqexts v3_req
+      openssl x509 -req -in "${ETCD_CERT_PATH}/${CERT_NAME}.csr" \
+        -CA "${K8S_CACERT_FILE}" -CAkey "${K8S_CAKEY_FILE}" \
+        -CAcreateserial -out "${ETCD_CERT_PATH}/${CERT_NAME}.crt" -days 36500 \
+        -extensions v3_req -extfile ${OPENSSL_CONF_FILE_PATH}
+    done
+    rm -f "${ETCD_CERT_PATH}"/*.csr
+    cp "${ETCD_CERT_PATH}/etcd-client"* "${KUBE_ETC}/k8s-assets/tls/"
+
+
     # Prepare the etcd static pod
+    mkdir -p "${KUBE_CONF_PATH}"
     local ETCD_VERSION="3.2.18"
-    mkdir -p "${KUBE_ETC}/secrets" "${KUBE_CONF_PATH}"
-    cp -rf "${KUBE_ETC}/k8s-assets/tls/etcd" "${KUBE_ETC}/secrets/etcd"
+    local ETCD_SEED_DN="node1.${ETCD_DN}.${ETCD_NAMESPACE}.svc"
     cp -f "${KUBE_ETC}/k8s-assets/tls/ca.crt" "${KUBE_ETC}/secrets"
     cp "/workdir/assets/k8sup/kube-conf/etcd/etcd.yaml" "${KUBE_CONF_PATH}"
     sed -i "s|{{ NODE_NAME }}|${NODE_NAME}|g" "${KUBE_CONF_PATH}/etcd.yaml"
     sed -i "s|{{ ETCD_VERSION }}|${ETCD_VERSION}|g" "${KUBE_CONF_PATH}/etcd.yaml"
+    sed -i "s|{{ ETCD_DOMAIN_NAME }}|${ETCD_SEED_DN}|g" "${KUBE_CONF_PATH}/etcd.yaml"
 
     #---
     # Generate ca, certs, and keys
@@ -856,6 +893,9 @@ function main(){
     sed -i "s|{{ BOOTSTRAP_KUBE_APISERVER_IP_PORT }}|${BOOTSTRAP_KUBE_APISERVER_IP_PORT}|g" "${BT_DIR}/cluster-info.yaml"
 
     local APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/bootstrap-manifests/bootstrap-apiserver.yaml"
+    if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
+      sed -i "s/--etcd-servers=https:\/\/.*:2379/--etcd-servers=https:\/\/${ETCD_SEED_DN}:2379/g" "${APISERVER_YAML_FILE}"
+    fi
     if ! grep -q 'kubelet-preferred-address' "${APISERVER_YAML_FILE}"; then
       sed -i 's|    - apiserver|    - apiserver\n    - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
         "${APISERVER_YAML_FILE}"
@@ -865,6 +905,9 @@ function main(){
         "${APISERVER_YAML_FILE}"
     fi
     APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
+    if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
+      sed -i "s/--etcd-servers=https:\/\/.*:2379/--etcd-servers=https:\/\/${ETCD_SEED_DN}:2379/g" "${APISERVER_YAML_FILE}"
+    fi
     if ! grep -q 'kubelet-preferred-address' "${APISERVER_YAML_FILE}"; then
       sed -i 's|    - apiserver|    - apiserver\n        - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP|g' \
         "${APISERVER_YAML_FILE}"
@@ -1136,6 +1179,19 @@ function main(){
 
     echo "Try to set the max-master-size to '${MAX_MASTER_SIZE}'..." 1>&2
     run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "" "create configmap k8sup-conf --from-literal=MAX_MASTER_SIZE='${MAX_MASTER_SIZE}'"
+
+    echo "Try to upload etcd certs'..." 1>&2
+    ETCD_SECRETS="${KUBE_ETC}/secrets/etcd"
+    run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" \
+      "${KUBE_ETC}:${KUBE_ETC}:ro" \
+      "-n kube-system \
+        create secret generic etcd \
+        --from-file=peer-ca.crt='${ETCD_SECRETS}/peer-ca.crt' \
+        --from-file=peer.crt='${ETCD_SECRETS}/peer.crt' \
+        --from-file=peer.key='${ETCD_SECRETS}/peer.key' \
+        --from-file=server-ca.crt='${ETCD_SECRETS}/server-ca.crt' \
+        --from-file=server.crt='${ETCD_SECRETS}/server.crt' \
+        --from-file=server.key='${ETCD_SECRETS}/server.key'"
   fi
 
   check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"

@@ -13,15 +13,15 @@ spec:
   containers:
   - command:
     - etcd
-    - --advertise-client-urls=https://127.0.0.1:2379
+    - --advertise-client-urls=https://{{ ETCD_DOMAIN_NAME }}:2379
     - --cert-file=/etc/kubernetes/secrets/etcd/server.crt
     - --client-cert-auth=true
     - --data-dir=/var/etcd/data
-    - --initial-advertise-peer-urls=https://127.0.0.1:2380
-    - --initial-cluster={{ NODE_NAME }}=https://127.0.0.1:2380
+    - --initial-advertise-peer-urls=https://{{ ETCD_DOMAIN_NAME }}:2380
+    - --initial-cluster={{ NODE_NAME }}=https://{{ ETCD_DOMAIN_NAME }}:2380
     - --key-file=/etc/kubernetes/secrets/etcd/server.key
-    - --listen-client-urls=https://127.0.0.1:2379
-    - --listen-peer-urls=https://127.0.0.1:2380
+    - --listen-client-urls=https://0.0.0.0:2379
+    - --listen-peer-urls=https://0.0.0.0:2380
     - --name={{ NODE_NAME }}
     - --peer-cert-file=/etc/kubernetes/secrets/etcd/peer.crt
     - --peer-client-cert-auth=true
@@ -36,7 +36,7 @@ spec:
         command:
         - /bin/sh
         - -ec
-        - ETCDCTL_API=3 etcdctl --endpoints=https://[127.0.0.1]:2379 --cacert=/etc/kubernetes/secrets/etcd/ca.crt
+        - ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/secrets/etcd/healthcheck-client-ca.crt
           --cert=/etc/kubernetes/secrets/etcd/healthcheck-client.crt --key=/etc/kubernetes/secrets/etcd/healthcheck-client.key
           get foo
       failureThreshold: 8
