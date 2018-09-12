@@ -972,6 +972,22 @@ function main(){
       sed -i 's|        - controller-manager|        - controller-manager\n        - --service-account-private-key-file=/etc/kubernetes/secrets/sa.key|g' \
         "${CONTROLLER_MANAGER_YAML_FILE}"
     fi
+    COREDNS_DEPLOY_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/coredns-deployment.yaml"
+    if ! grep -q 'etcd-hosts' "${COREDNS_DEPLOY_YAML_FILE}"; then
+      sed -i 's|      volumes:$|      volumes:\n        - name: etcd-hosts\n          configMap:\n            name: etcd-hosts|g' "${COREDNS_DEPLOY_YAML_FILE}"
+      sed -i 's|          volumeMounts:|          volumeMounts:\n            - name: etcd-hosts\n              mountPath: /etc/coredns/hosts\n              readOnly: true|g' "${COREDNS_DEPLOY_YAML_FILE}"
+    fi
+    COREDNS_CONFIG_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/coredns-config.yaml"
+    if ! grep -q 'etcd-cluster.kube-system.svc' "${COREDNS_CONFIG_YAML_FILE}"; then
+      ETCD_DN_SETTING="
+      etcd-cluster.kube-system.svc {
+        hosts /etc/coredns/hosts/etcd-hosts
+        prometheus
+        errors stdout
+        log stdout
+      }"
+      echo "${ETCD_DN_SETTING}" | sed 's/^      /    /g' >> "${COREDNS_CONFIG_YAML_FILE}"
+    fi
 
     # Add front-proxy secrets
     KUBE_APISERVER_SECRET_FILE_PATH="${KUBE_ETC}/k8s-assets/manifests/kube-apiserver-secret.yaml"
@@ -1179,6 +1195,9 @@ function main(){
 
     echo "Try to set the max-master-size to '${MAX_MASTER_SIZE}'..." 1>&2
     run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "" "create configmap k8sup-conf --from-literal=MAX_MASTER_SIZE='${MAX_MASTER_SIZE}'"
+
+    echo "Try to set the seed etcd hosts file..." 1>&2
+    run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "" "-n kube-system create configmap etcd-hosts --from-literal=etcd-hosts='${IPADDR} ${ETCD_SEED_DN}'"
 
     echo "Try to upload etcd certs'..." 1>&2
     ETCD_SECRETS="${KUBE_ETC}/secrets/etcd"
