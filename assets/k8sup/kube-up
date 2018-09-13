@@ -803,7 +803,7 @@ function main(){
 
     # Generate etcd ca, certs, and keys
     ETCD_NAMESPACE="kube-system"
-    ETCD_DN="etcd-cluster"
+    ETCD_DN="etcd"
     ETCD_CERT_PATH="${KUBE_ETC}/secrets/etcd"
     OPENSSL_CONF_FILE_PATH="${KUBE_ETC}/openssl.cnf"
     K8S_CACERT_FILE="${KUBE_ETC}/k8s-assets/tls/ca.crt"
@@ -816,9 +816,8 @@ function main(){
       "${OPENSSL_CONF_FILE_PATH}"
     echo '[ alt_names ]' >> "${OPENSSL_CONF_FILE_PATH}"
     echo "DNS.1 = *.${ETCD_DN}" >> "${OPENSSL_CONF_FILE_PATH}"
-    echo "DNS.2 = *.${ETCD_DN}.${ETCD_NAMESPACE}" >> "${OPENSSL_CONF_FILE_PATH}"
-    echo "DNS.3 = *.${ETCD_DN}.${ETCD_NAMESPACE}.svc" >> "${OPENSSL_CONF_FILE_PATH}"
-    echo "DNS.4 = *.${ETCD_DN}.${ETCD_NAMESPACE}.svc.cluster.local" >> "${OPENSSL_CONF_FILE_PATH}"
+    echo "DNS.2 = *.${ETCD_DN}.cdxvirt" >> "${OPENSSL_CONF_FILE_PATH}"
+    echo "DNS.3 = *.${ETCD_DN}.cdxvirt.local" >> "${OPENSSL_CONF_FILE_PATH}"
     echo "IP.1 = 127.0.0.1" >> "${OPENSSL_CONF_FILE_PATH}"
     CERT_NAMES="healthcheck-client etcd-client server peer"
     for CERT_NAME in ${CERT_NAMES}; do
@@ -839,12 +838,31 @@ function main(){
     # Prepare the etcd static pod
     mkdir -p "${KUBE_CONF_PATH}"
     local ETCD_VERSION="3.2.18"
-    local ETCD_SEED_DN="node1.${ETCD_DN}.${ETCD_NAMESPACE}.svc"
+    local ETCD_SEED_DN="$(hostname).${ETCD_DN}.cdxvirt.local"
     cp -f "${KUBE_ETC}/k8s-assets/tls/ca.crt" "${KUBE_ETC}/secrets"
     cp "/workdir/assets/k8sup/kube-conf/etcd/etcd.yaml" "${KUBE_CONF_PATH}"
     sed -i "s|{{ NODE_NAME }}|${NODE_NAME}|g" "${KUBE_CONF_PATH}/etcd.yaml"
     sed -i "s|{{ ETCD_VERSION }}|${ETCD_VERSION}|g" "${KUBE_CONF_PATH}/etcd.yaml"
     sed -i "s|{{ ETCD_DOMAIN_NAME }}|${ETCD_SEED_DN}|g" "${KUBE_CONF_PATH}/etcd.yaml"
+    sed -i "s|{{ KUBEDNS_CLUSTER_IP }}|${KUBEDNS_CLUSTER_IP}|g" "${KUBE_CONF_PATH}/etcd.yaml"
+
+    #--- set etcd domain name to the zone file
+    ZONEFILE_DIR_PATH="/etc/kubernetes/coredns/zones"
+    ZONEFILE_NAME="${ETCD_DN}.cdxvirt.local"
+    ZONEFILE_PATH="${ZONEFILE_DIR_PATH}/${ZONEFILE_NAME}"
+    mkdir -p "${ZONEFILE_DIR_PATH}"
+    ZONEFILE="\$ORIGIN etcd.cdxvirt.local.
+    @ 3600 IN SOA coredns.kube-system. coredns.kube-system.svc.cluster.local. (
+        $(date +%Y%m%d)00 ; serial
+        7200       ; refresh (2 hours)
+        3600       ; retry (1 hour)
+        1209600    ; expire (2 weeks)
+        3600       ; minimum (1 hour)
+        )
+    3600 IN NS coredns.kube-system.svc.cluster.local.
+
+    $(hostname)   IN A     ${IPADDR}"
+    echo "${ZONEFILE}" | sed 's/^    //g' > "${ZONEFILE_PATH}"
 
     #---
     # Generate ca, certs, and keys
@@ -973,20 +991,20 @@ function main(){
         "${CONTROLLER_MANAGER_YAML_FILE}"
     fi
     COREDNS_DEPLOY_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/coredns-deployment.yaml"
-    if ! grep -q 'etcd-hosts' "${COREDNS_DEPLOY_YAML_FILE}"; then
-      sed -i 's|      volumes:$|      volumes:\n        - name: etcd-hosts\n          configMap:\n            name: etcd-hosts|g' "${COREDNS_DEPLOY_YAML_FILE}"
-      sed -i 's|          volumeMounts:|          volumeMounts:\n            - name: etcd-hosts\n              mountPath: /etc/coredns/hosts\n              readOnly: true|g' "${COREDNS_DEPLOY_YAML_FILE}"
+    if ! grep -q 'coredns-zonefiles' "${COREDNS_DEPLOY_YAML_FILE}"; then
+      sed -i 's|      volumes:$|      volumes:\n        - name: coredns-zonefiles\n          configMap:\n            name: coredns-zonefiles|g' "${COREDNS_DEPLOY_YAML_FILE}"
+      sed -i 's|          volumeMounts:|          volumeMounts:\n            - name: coredns-zonefiles\n              mountPath: /etc/coredns/zones\n              readOnly: true|g' "${COREDNS_DEPLOY_YAML_FILE}"
     fi
     COREDNS_CONFIG_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/coredns-config.yaml"
-    if ! grep -q 'etcd-cluster.kube-system.svc' "${COREDNS_CONFIG_YAML_FILE}"; then
-      ETCD_DN_SETTING="
-      etcd-cluster.kube-system.svc {
-        hosts /etc/coredns/hosts/etcd-hosts
+    if ! grep -q "${ETCD_DN}.cdxvirt.local" "${COREDNS_CONFIG_YAML_FILE}"; then
+      ETCD_COREFILE_SETTING="
+      ${ETCD_DN}.cdxvirt.local {
+        file /etc/coredns/zones/${ZONEFILE_NAME}
         prometheus
         errors stdout
         log stdout
       }"
-      echo "${ETCD_DN_SETTING}" | sed 's/^      /    /g' >> "${COREDNS_CONFIG_YAML_FILE}"
+      echo "${ETCD_COREFILE_SETTING}" | sed 's/^      /    /g' >> "${COREDNS_CONFIG_YAML_FILE}"
     fi
 
     # Add front-proxy secrets
@@ -1196,8 +1214,8 @@ function main(){
     echo "Try to set the max-master-size to '${MAX_MASTER_SIZE}'..." 1>&2
     run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "" "create configmap k8sup-conf --from-literal=MAX_MASTER_SIZE='${MAX_MASTER_SIZE}'"
 
-    echo "Try to set the seed etcd hosts file..." 1>&2
-    run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "" "-n kube-system create configmap etcd-hosts --from-literal=etcd-hosts='${IPADDR} ${ETCD_SEED_DN}'"
+    echo "Try to set the seed etcd zone file..." 1>&2
+    run_kubectl "${HYPERKUBE_IMAGE_NAME}" "${KUBECONFIG_PATH}" "${KUBELET_VARLIB}" "${KUBE_ETC}:${KUBE_ETC}:ro" "-n kube-system create configmap coredns-zonefiles --from-file='${ZONEFILE_NAME}'='${ZONEFILE_PATH}'"
 
     echo "Try to upload etcd certs'..." 1>&2
     ETCD_SECRETS="${KUBE_ETC}/secrets/etcd"
