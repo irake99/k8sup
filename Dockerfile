@@ -13,6 +13,7 @@ RUN apt-get -y update && \
     iptables \
     bc \
     kmod \
+    dnsutils \
     uuid-runtime \
     ntpdate \
     libltdl7 \

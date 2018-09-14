@@ -51,7 +51,21 @@ spec:
       name: etcd-certs
     - mountPath: /etc/kubernetes/secrets/etcd/ca.crt
       name: etcd-certs-ca
+    - mountPath: /etc/hosts
+      name: etcd-hosts
+      readOnly: true
   hostNetwork: true
+  dnsPolicy: None
+  dnsConfig:
+    nameservers:
+      - {{ KUBEDNS_CLUSTER_IP }}
+    searches:
+      - kube-system.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+    options:
+      - name: ndots
+        value: "2"
   priorityClassName: system-cluster-critical
   volumes:
   - hostPath:
@@ -66,4 +80,8 @@ spec:
       path: /etc/kubernetes/secrets/ca.crt
       type: File
     name: etcd-certs-ca
+  - hostPath:
+      path: /etc/kubernetes/etcd-hosts
+      type: File
+    name: etcd-hosts
 status: {}

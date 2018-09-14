@@ -839,6 +839,7 @@ function main(){
     mkdir -p "${KUBE_CONF_PATH}"
     local ETCD_VERSION="3.2.18"
     local ETCD_SEED_DN="$(hostname).${ETCD_DN}.cdxvirt.local"
+    echo "${IPADDR} ${ETCD_SEED_DN}" > "${KUBE_ETC}/etcd-hosts"
     cp -f "${KUBE_ETC}/k8s-assets/tls/ca.crt" "${KUBE_ETC}/secrets"
     cp "/workdir/assets/k8sup/kube-conf/etcd/etcd.yaml" "${KUBE_CONF_PATH}"
     sed -i "s|{{ NODE_NAME }}|${NODE_NAME}|g" "${KUBE_CONF_PATH}/etcd.yaml"
@@ -922,6 +923,10 @@ function main(){
       sed -i 's|--secure-port=443|--secure-port=6443|g' \
         "${APISERVER_YAML_FILE}"
     fi
+    if ! grep -q 'etcd-hosts' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|  volumes:$|  volumes:\n  - name: etcd-hosts\n    hostPath: \n      path: /etc/kubernetes/etcd-hosts\n      type: File|g' "${APISERVER_YAML_FILE}"
+      sed -i 's|    volumeMounts:|    volumeMounts:\n    - mountPath: /etc/hosts\n      name: etcd-hosts\n      readOnly: true|g' "${APISERVER_YAML_FILE}"
+    fi
     APISERVER_YAML_FILE="${KUBE_ETC}/k8s-assets/manifests/kube-apiserver.yaml"
     if grep -q '\--etcd-cafile=' "${APISERVER_YAML_FILE}"; then
       sed -i "s/--etcd-servers=https:\/\/.*:2379/--etcd-servers=https:\/\/${ETCD_SEED_DN}:2379/g" "${APISERVER_YAML_FILE}"
@@ -965,6 +970,14 @@ function main(){
     if ! grep -q 'service-account-key-file' "${APISERVER_YAML_FILE}"; then
       sed -i 's|    - apiserver|    - apiserver\n        - --service-account-key-file=/etc/kubernetes/secrets/sa.pub|g' \
         "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q 'dnsConfig' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|dnsPolicy:.*|dnsPolicy: None|g' "${APISERVER_YAML_FILE}"
+      sed -i "s|      hostNetwork: .*|      hostNetwork: true\n      dnsPolicy: None\n      dnsConfig:\n        nameservers:\n          - ${KUBEDNS_CLUSTER_IP}\n        searches:\n          - kube-system.svc.cluster.local\n          - svc.cluster.local\n          - cluster.local\n        options:\n          - name: ndots\n            value: \"2\"|g" "${APISERVER_YAML_FILE}"
+    fi
+    if ! grep -q 'etcd-hosts' "${APISERVER_YAML_FILE}"; then
+      sed -i 's|      volumes:$|      volumes:\n      - name: etcd-hosts\n        hostPath:\n          path: /etc/kubernetes/etcd-hosts\n          type: File|g' "${APISERVER_YAML_FILE}"
+      sed -i 's|        volumeMounts:|        volumeMounts:\n        - mountPath: /etc/hosts\n          name: etcd-hosts\n          readOnly: true|g' "${APISERVER_YAML_FILE}"
     fi
     if ! grep -q 'basic-auth' "${APISERVER_YAML_FILE}"; then
       sed -i 's|      volumes:$|      volumes:\n      - name: basic-auth\n        secret:\n          secretName: basic-auth|g' "${APISERVER_YAML_FILE}"
@@ -1229,6 +1242,14 @@ function main(){
         --from-file=server-ca.crt='${ETCD_SECRETS}/server-ca.crt' \
         --from-file=server.crt='${ETCD_SECRETS}/server.crt' \
         --from-file=server.key='${ETCD_SECRETS}/server.key'"
+
+    # Remove the unneeded seed etcd node domain name mapping
+    until dig +time=3 +tries=1 @${KUBEDNS_CLUSTER_IP} "${ETCD_SEED_DN}" \
+      | grep -q 'ANSWER SECTION'; do
+        echo "Waiting for CoreDNS started..." 1>&2
+        sleep 20
+    done
+    cat "/dev/null" > "${KUBE_ETC}/etcd-hosts"
   fi
 
   check_and_run_ntp_update "${K8SUP_NTPSERVER_CLUSTER_IP}"
