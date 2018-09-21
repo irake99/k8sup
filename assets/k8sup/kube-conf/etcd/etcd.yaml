@@ -10,6 +10,8 @@ metadata:
   name: etcd
   namespace: kube-system
 spec:
+  nodeSelector:
+    node-role.kubernetes.io/master: ""
   containers:
   - command:
     - etcd
