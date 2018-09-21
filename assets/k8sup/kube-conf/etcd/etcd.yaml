@@ -16,21 +16,20 @@ spec:
   - command:
     - etcd
     - --advertise-client-urls=https://{{ ETCD_DOMAIN_NAME }}:2379
-    - --cert-file=/etc/kubernetes/secrets/etcd/server.crt
+    - --cert-file=/etc/kubernetes/secrets/etcd/etcd-client.crt
     - --client-cert-auth=true
     - --data-dir=/var/etcd/data
     - --initial-advertise-peer-urls=https://{{ ETCD_DOMAIN_NAME }}:2380
     - --initial-cluster={{ NODE_NAME }}=https://{{ ETCD_DOMAIN_NAME }}:2380
-    - --key-file=/etc/kubernetes/secrets/etcd/server.key
+    - --key-file=/etc/kubernetes/secrets/etcd/etcd-client.key
     - --listen-client-urls=https://0.0.0.0:2379
     - --listen-peer-urls=https://0.0.0.0:2380
     - --name={{ NODE_NAME }}
-    - --peer-cert-file=/etc/kubernetes/secrets/etcd/peer.crt
     - --peer-client-cert-auth=true
-    - --peer-key-file=/etc/kubernetes/secrets/etcd/peer.key
-    - --peer-trusted-ca-file=/etc/kubernetes/secrets/etcd/ca.crt
     - --snapshot-count=10000
-    - --trusted-ca-file=/etc/kubernetes/secrets/etcd/ca.crt
+    - --trusted-ca-file=/etc/kubernetes/secrets/etcd/etcd-client-ca.crt
+    - --peer-auto-tls=true
+    - --auto-tls=true
     image: k8s.gcr.io/etcd-amd64:{{ ETCD_VERSION }}
     imagePullPolicy: IfNotPresent
     livenessProbe:
@@ -38,8 +37,8 @@ spec:
         command:
         - /bin/sh
         - -ec
-        - ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/secrets/etcd/healthcheck-client-ca.crt
-          --cert=/etc/kubernetes/secrets/etcd/healthcheck-client.crt --key=/etc/kubernetes/secrets/etcd/healthcheck-client.key
+        - ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/secrets/etcd/etcd-client-ca.crt
+          --cert=/etc/kubernetes/secrets/etcd/etcd-client.crt --key=/etc/kubernetes/secrets/etcd/etcd-client.key
           get foo
       failureThreshold: 8
       initialDelaySeconds: 15
@@ -51,8 +50,6 @@ spec:
       name: etcd-data
     - mountPath: /etc/kubernetes/secrets/etcd
       name: etcd-certs
-    - mountPath: /etc/kubernetes/secrets/etcd/ca.crt
-      name: etcd-certs-ca
     - mountPath: /etc/hosts
       name: etcd-hosts
       readOnly: true
@@ -78,10 +75,6 @@ spec:
       path: /etc/kubernetes/secrets/etcd
       type: DirectoryOrCreate
     name: etcd-certs
-  - hostPath:
-      path: /etc/kubernetes/secrets/ca.crt
-      type: File
-    name: etcd-certs-ca
   - hostPath:
       path: /etc/kubernetes/etcd-hosts
       type: File
